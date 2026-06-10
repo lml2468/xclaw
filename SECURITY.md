@@ -40,9 +40,12 @@ documented* limitations before exposing a bot to untrusted users:
   session a *starting* working directory, not a chroot/jail. An agent with Bash
   can still reach absolute paths outside it. Isolation across spaces relies on
   running one bot per space with a separate `cwdBase`.
-- **Tokens are currently stored in plaintext** in `~/.xclaw/config.json` and are
-  injected into the agent subprocess environment. Keychain/secret-store
-  integration is planned but not yet implemented. Protect that file accordingly.
+- **Token storage.** The macOS app stores bot tokens in the **Keychain** and
+  injects them into the daemon at runtime over the control bus (`secret.inject`);
+  the core holds them in memory only and never writes them to disk. Tokens may
+  still be placed **in plaintext** in `~/.xclaw/config.json` for headless/no-GUI
+  deployments — protect that file accordingly. Tokens are also passed into the
+  agent subprocess environment at turn time.
 - **IM wire crypto is constrained by protocol compatibility.** The Octo/WuKongIM
   connector (`core/im/octo/`) reproduces the upstream handshake byte-for-byte
   (curve25519 DH → MD5-derived AES-128-CBC, IV from the server salt). These

@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now **optional** — a bot without one waits ("awaiting secret") until injected,
   then connects. This is the core-side half of moving secrets to the macOS
   Keychain.
+- macOS app stores bot tokens (`octoToken`, `gatewayToken`) in the **Keychain**
+  instead of plaintext `config.json`, and injects them to the core at runtime
+  (`secret.inject`) after connecting. Plaintext tokens left in an existing
+  `config.json` are migrated into the Keychain and stripped from the file on
+  launch. `config.json` remains a supported plaintext fallback for headless
+  deployments.
 
 ### Changed
 - Formatted the entire `core/` tree with `gofmt`.

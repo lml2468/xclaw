@@ -57,6 +57,10 @@ final class AppModel {
             return
         }
 
+        // Migrate any plaintext tokens still in config.json into the Keychain,
+        // then rewrite the file without them (one-time, automatic).
+        migrateLegacyTokensIfNeeded()
+
         let cfg = CoreSupervisor.Config(
             binaryPath: bin,
             socketPath: socketPath,
@@ -153,7 +157,47 @@ final class AppModel {
         // Probe health and fetch the bot roster immediately, then poll it.
         _ = try? c.send(type: "health", body: [String: String]())
         _ = try? c.send(type: "bots.list", body: [String: String]())
+        injectSecrets(on: c)
         startBotPolling(on: c)
+    }
+
+    /// Sends each configured bot's tokens (Keychain, with a config-file fallback
+    /// for headless setups) to the core via secret.inject. The core holds them in
+    /// memory only; a bot waiting on "awaiting secret" connects once injected.
+    private func injectSecrets(on c: ControlClient) {
+        let bots = (try? ConfigStore.load()) ?? []
+        for b in bots {
+            let octo = Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto)) ?? b.octoToken
+            if !octo.isEmpty {
+                _ = try? c.send(type: "secret.inject",
+                                body: SecretInjectBody(botId: b.id, kind: Keychain.kindOcto, value: octo))
+            }
+            let gw = Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway)) ?? b.gatewayToken
+            if !gw.isEmpty {
+                _ = try? c.send(type: "secret.inject",
+                                body: SecretInjectBody(botId: b.id, kind: Keychain.kindGateway, value: gw))
+            }
+        }
+    }
+
+    /// Moves any plaintext tokens left in config.json into the Keychain, then
+    /// rewrites the file without them. No-op once the file is clean.
+    private func migrateLegacyTokensIfNeeded() {
+        guard let bots = try? ConfigStore.load() else { return }
+        var migrated = false
+        for b in bots {
+            if !b.octoToken.isEmpty {
+                try? Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto), value: b.octoToken)
+                migrated = true
+            }
+            if !b.gatewayToken.isEmpty {
+                try? Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway), value: b.gatewayToken)
+                migrated = true
+            }
+        }
+        if migrated {
+            try? ConfigStore.save(bots) // save() strips tokens from the file
+        }
     }
 
     private func startBotPolling(on c: ControlClient) {
@@ -199,11 +243,22 @@ final class AppModel {
 
     // MARK: - Config editing
 
-    /// Loads the on-disk bot configs into `configBots` for the editor.
+    /// Loads the on-disk bot configs into `configBots` for the editor, overlaying
+    /// each bot's tokens from the Keychain (falling back to any legacy value in
+    /// the file).
     func loadConfig() {
         configError = nil
         do {
-            configBots = try ConfigStore.load()
+            var bots = try ConfigStore.load()
+            for i in bots.indices {
+                if let t = Keychain.get(account: Keychain.account(bot: bots[i].id, kind: Keychain.kindOcto)) {
+                    bots[i].octoToken = t
+                }
+                if let t = Keychain.get(account: Keychain.account(bot: bots[i].id, kind: Keychain.kindGateway)) {
+                    bots[i].gatewayToken = t
+                }
+            }
+            configBots = bots
         } catch {
             configError = "\(error)"
         }
@@ -226,13 +281,19 @@ final class AppModel {
         configBots.removeAll { $0.id == id }
     }
 
-    /// Validates and writes the editable config to disk. Sets needsRestart so the
-    /// UI can prompt; returns true on success.
+    /// Validates and writes the editable config to disk (tokens go to the
+    /// Keychain, not the file). Sets needsRestart so the UI can prompt; returns
+    /// true on success.
     @discardableResult
     func saveConfig() -> Bool {
         configError = nil
         do {
-            try ConfigStore.save(configBots)
+            try ConfigStore.save(configBots) // strips tokens from the file
+            // Persist tokens to the Keychain (empty value deletes the item).
+            for b in configBots {
+                try Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto), value: b.octoToken)
+                try Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway), value: b.gatewayToken)
+            }
             needsRestart = true
             return true
         } catch {

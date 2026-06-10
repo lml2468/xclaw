@@ -5,6 +5,13 @@ import XClawCore
 struct XClawApp: App {
     @State private var model = AppModel()
 
+    init() {
+        // Start the core on launch — a menu-bar (LSUIElement) app may never open
+        // a window, so we can't rely on a view's onAppear to boot the daemon.
+        let m = model
+        Task { @MainActor in m.start() }
+    }
+
     var body: some Scene {
         // Menu bar presence: status + quick actions.
         MenuBarExtra("XClaw", systemImage: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle") {

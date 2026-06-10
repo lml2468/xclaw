@@ -292,7 +292,8 @@ func mergeSDK(dst *SDKConfig, src *SDKConfig) {
 		dst.GatewayToken = src.GatewayToken
 	}
 	// env merges per-key (global base + per-bot overrides/additions), not whole
-	// replacement — so a bot can add GH_TOKEN without dropping a global OCTO_BOT_ID.
+	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a
+	// globally-shared key.
 	if len(src.Env) > 0 {
 		if dst.Env == nil {
 			dst.Env = map[string]string{}

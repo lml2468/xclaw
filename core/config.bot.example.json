@@ -6,9 +6,9 @@
     "_comment_gateway": "Model-gateway routing (driver-neutral). Mapped per driver: claude→ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN, codex→OPENAI_BASE_URL/OPENAI_API_KEY.",
     "gatewayBaseUrl": "https://your-model-gateway.example/v1",
     "gatewayToken": "sk-your-gateway-token",
-    "_comment_env": "Extra env vars injected into the agent CLI (merged per-key over the global sdk.env). Useful for OCTO_BOT_ID, GH_TOKEN, GLAB_TOKEN, etc.",
+    "_comment_env": "Extra env vars injected into THIS bot's agent CLI. Per-bot identity vars like OCTO_BOT_ID belong here (never in the global config — that would give every bot the same id). Globally-shared vars can go in the global config's sdk.env; per-bot entries merge over them by key.",
     "env": {
-      "OCTO_BOT_ID": "this-bot",
+      "OCTO_BOT_ID": "this-bot-octo-id",
       "GH_TOKEN": "ghp_xxx"
     }
   },

@@ -13,14 +13,15 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
 	  "apiUrl":"https://octo.example",
-	  "sdk":{"driver":"claude","env":{"OCTO_BOT_ID":"global-id","SHARED":"global"},
+	  "sdk":{"driver":"claude","env":{"SHARED_DEFAULT":"global","SHARED":"global"},
 	         "gatewayBaseUrl":"https://gw.example/v1"},
 	  "bots":[{"id":"alpha"}]
 	}`)
-	// per-bot adds GH_TOKEN, overrides SHARED, sets its own gateway token.
+	// per-bot adds its own OCTO_BOT_ID (a per-bot identity, never global) + a
+	// GH_TOKEN, overrides SHARED, and sets its own gateway token.
 	writeFile(t, filepath.Join(dir, "alpha", "config.json"), `{
 	  "octoToken":"bf_a",
-	  "sdk":{"env":{"GH_TOKEN":"ghp_x","SHARED":"perbot"},
+	  "sdk":{"env":{"OCTO_BOT_ID":"alpha-bot","GH_TOKEN":"ghp_x","SHARED":"perbot"},
 	         "gatewayToken":"sk-ant-xyz"}
 	}`)
 
@@ -29,8 +30,11 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	env := bots[0].SDK.Env
-	if env["OCTO_BOT_ID"] != "global-id" {
+	if env["SHARED_DEFAULT"] != "global" {
 		t.Fatalf("global env key lost: %v", env)
+	}
+	if env["OCTO_BOT_ID"] != "alpha-bot" {
+		t.Fatalf("per-bot OCTO_BOT_ID missing: %v", env)
 	}
 	if env["GH_TOKEN"] != "ghp_x" {
 		t.Fatalf("per-bot env key missing: %v", env)
@@ -43,7 +47,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	de := bots[0].DriverEnv()
 	joined := strings.Join(de, "\n")
 	for _, want := range []string{
-		"OCTO_BOT_ID=global-id", "GH_TOKEN=ghp_x", "SHARED=perbot",
+		"SHARED_DEFAULT=global", "OCTO_BOT_ID=alpha-bot", "GH_TOKEN=ghp_x", "SHARED=perbot",
 		"ANTHROPIC_BASE_URL=https://gw.example/v1", "ANTHROPIC_AUTH_TOKEN=sk-ant-xyz",
 	} {
 		if !strings.Contains(joined, want) {

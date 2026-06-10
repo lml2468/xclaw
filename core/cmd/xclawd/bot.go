@@ -181,7 +181,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
-		WithSystemPrompt(cfg.Agent.SystemPrompt)
+		WithSystemPrompt(cfg.SystemPrompt)
 	connector.SetGateway(gw)
 
 	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st}

@@ -76,15 +76,41 @@ func TestPerBotFilePrecedence(t *testing.T) {
 	}
 }
 
-func TestSoulOverridesSystemPrompt(t *testing.T) {
+func TestSystemPromptFromSoulOnly(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x","agent":{"systemPrompt":"global-prompt"}}`)
+	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
 	writeFile(t, filepath.Join(dir, "default", "SOUL.md"), "  you are a helpful bot  ")
 
 	bots, _ := Load(cfg)
-	if bots[0].Agent.SystemPrompt != "you are a helpful bot" {
-		t.Fatalf("SOUL.md should win + be trimmed: %q", bots[0].Agent.SystemPrompt)
+	if bots[0].SystemPrompt != "you are a helpful bot" {
+		t.Fatalf("SOUL.md should be trimmed: %q", bots[0].SystemPrompt)
+	}
+}
+
+func TestSystemPromptCombinesSoulAndAgents(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
+	writeFile(t, filepath.Join(dir, "default", "SOUL.md"), "I am Nova.")
+	writeFile(t, filepath.Join(dir, "default", "AGENTS.md"), "Always reply in Chinese.")
+
+	bots, _ := Load(cfg)
+	want := "I am Nova.\n\nAlways reply in Chinese."
+	if bots[0].SystemPrompt != want {
+		t.Fatalf("SOUL.md + AGENTS.md should combine: %q", bots[0].SystemPrompt)
+	}
+}
+
+func TestSystemPromptAgentsOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
+	writeFile(t, filepath.Join(dir, "default", "AGENTS.md"), "Be concise.")
+
+	bots, _ := Load(cfg)
+	if bots[0].SystemPrompt != "Be concise." {
+		t.Fatalf("AGENTS.md alone should apply: %q", bots[0].SystemPrompt)
 	}
 }
 

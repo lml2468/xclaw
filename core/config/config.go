@@ -16,12 +16,12 @@ import (
 	"strings"
 )
 
-// AgentConfig holds the agent's per-bot settings (model, system prompt,
-// model-gateway routing, env). On disk this is the "agent" block.
+// AgentConfig holds the agent's per-bot settings (model, model-gateway routing,
+// env). On disk this is the "agent" block. The bot's behavior/persona prompt is
+// NOT here — it lives in SOUL.md / AGENTS.md files (see Resolved.SystemPrompt).
 type AgentConfig struct {
 	Model           string            `json:"model,omitempty"`
 	MaxTurns        *int              `json:"maxTurns,omitempty"`
-	SystemPrompt    string            `json:"systemPrompt,omitempty"`
 	SettingSources  []string          `json:"settingSources,omitempty"`
 	ToolProgress    *bool             `json:"toolProgress,omitempty"`
 	// Model-gateway routing. DriverEnv maps these to the claude env var names
@@ -42,14 +42,13 @@ type ContextConfig struct {
 	HistoryLimit    int `json:"historyLimit,omitempty"`
 }
 
-// BotOverride is an inline entry in the global bots[] list. Note model /
-// systemPrompt are FLAT here (vs nested agent.* in a per-bot file).
+// BotOverride is an inline entry in the global bots[] list. Note model is FLAT
+// here (vs nested agent.* in a per-bot file).
 type BotOverride struct {
-	ID           string `json:"id,omitempty"`
-	BotToken     string `json:"botToken,omitempty"`
-	APIURL       string `json:"apiUrl,omitempty"`
-	Model        string `json:"model,omitempty"`
-	SystemPrompt string `json:"systemPrompt,omitempty"`
+	ID       string `json:"id,omitempty"`
+	BotToken string `json:"botToken,omitempty"`
+	APIURL   string `json:"apiUrl,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // File is the on-disk shape of a config.json (global or per-bot).
@@ -75,6 +74,10 @@ type Resolved struct {
 	RateLimit RateLimitConfig
 	Context   ContextConfig
 	MaxResponseChars int
+
+	// SystemPrompt is the bot's operator-trusted persona/behavior prompt,
+	// assembled from SOUL.md + AGENTS.md in the bot dir (not from config).
+	SystemPrompt string
 
 	// Derived (never from file).
 	BaseDir    string
@@ -193,22 +196,16 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		// shallow-merge agent/rateLimit/context: global → perBotFile keys
 		mergeAgent(&r.Agent, global.Agent)
 		mergeAgent(&r.Agent, perBot.Agent)
-		// model/systemPrompt: SOUL.md > perBotFile.agent > inlineBot > global
+		// model: perBotFile.agent > inlineBot > global (handled by mergeAgent)
 		if bot.Model != "" {
 			r.Agent.Model = bot.Model
 		}
 		if perBot.Agent != nil && perBot.Agent.Model != "" {
 			r.Agent.Model = perBot.Agent.Model
 		}
-		sysPrompt := firstNonEmpty(
-			soul(botRoot),
-			agentSystemPrompt(perBot.Agent),
-			bot.SystemPrompt,
-			agentSystemPrompt(global.Agent),
-		)
-		if sysPrompt != "" {
-			r.Agent.SystemPrompt = sysPrompt
-		}
+		// System prompt: assembled from the bot's SOUL.md + AGENTS.md files (not
+		// configurable). SOUL.md is identity/persona; AGENTS.md is behavior norms.
+		r.SystemPrompt = soul(botRoot)
 		mergeRate(&r.RateLimit, global.RateLimit)
 		mergeRate(&r.RateLimit, perBot.RateLimit)
 		mergeCtx(&r.Context, global.Context)
@@ -249,13 +246,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-func agentSystemPrompt(s *AgentConfig) string {
-	if s == nil {
-		return ""
-	}
-	return s.SystemPrompt
 }
 
 func mergeAgent(dst *AgentConfig, src *AgentConfig) {
@@ -311,14 +301,21 @@ func mergeCtx(dst *ContextConfig, src *ContextConfig) {
 	}
 }
 
-// soul reads <botRoot>/SOUL.md (trimmed); "" if absent/empty. Highest-precedence
-// systemPrompt source.
+// soul assembles the bot's operator-trusted system prompt from two files in its
+// dir: SOUL.md (identity/persona) followed by AGENTS.md (behavior norms). Each
+// is trimmed; missing/empty files are skipped. Returns "" if neither exists.
 func soul(botRoot string) string {
-	data, err := os.ReadFile(filepath.Join(botRoot, "SOUL.md"))
-	if err != nil {
-		return ""
+	var parts []string
+	for _, name := range []string{"SOUL.md", "AGENTS.md"} {
+		data, err := os.ReadFile(filepath.Join(botRoot, name))
+		if err != nil {
+			continue
+		}
+		if s := strings.TrimSpace(string(data)); s != "" {
+			parts = append(parts, s)
+		}
 	}
-	return strings.TrimSpace(string(data))
+	return strings.Join(parts, "\n\n")
 }
 
 // DriverEnv builds the KEY=VALUE environment to layer onto the claude CLI's

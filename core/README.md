@@ -59,7 +59,7 @@ safety/       prompt-injection defense: SanitizeDisplayName / Escape{Role,Sectio
 groupctx/     per-channel group context window + cursor + @mention resolution;
               renders the [Recent group messages] delta for injection.
 config/       two-layer bot-first config (~/.xclaw): global + per-bot, derived
-              dirs, SOUL.md, slug + SSRF validation.
+              dirs, SOUL.md + AGENTS.md prompt, slug + SSRF validation.
 fixtures/     recorded stream-json turn (text + tool_use + result)
 ```
 
@@ -89,8 +89,14 @@ connector, each under `~/.xclaw/<id>/`. Layout:
 ~/.xclaw/
   config.json          # global: apiUrl + shared defaults + bots[] (NO token)
   <id>/config.json     # per-bot: octoToken + overrides
+  <id>/SOUL.md         # per-bot identity/persona (operator-trusted system prompt)
+  <id>/AGENTS.md       # per-bot behavior norms (appended after SOUL.md)
   <id>/{data,workspace,memory,skills}/   # derived, per-bot isolated
 ```
+
+The system prompt is file-based, not a config field: SOUL.md (who the bot is)
+followed by AGENTS.md (how it should behave) are concatenated and passed to the
+agent as the operator-trusted prompt. Either file may be omitted.
 
 ## Notes / next
 

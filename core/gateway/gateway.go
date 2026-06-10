@@ -41,8 +41,8 @@ type Gateway struct {
 	// Optional group-context (set via WithGroupContext). When set, group
 	// messages get a [Recent group messages] delta injected into the prompt.
 	groups *groupctx.GroupContext
-	// Operator-trusted system prompt (SOUL.md / config). Appended after the
-	// non-overridable security prefix.
+	// Operator-trusted system prompt (assembled from SOUL.md + AGENTS.md).
+	// Appended after the non-overridable security prefix.
 	systemPrompt string
 }
 
@@ -57,7 +57,7 @@ func (g *Gateway) WithGroupContext(gc *groupctx.GroupContext) *Gateway {
 	return g
 }
 
-// WithSystemPrompt sets the operator-trusted system prompt (SOUL.md / config).
+// WithSystemPrompt sets the operator-trusted system prompt (SOUL.md + AGENTS.md).
 func (g *Gateway) WithSystemPrompt(p string) *Gateway {
 	g.systemPrompt = p
 	return g

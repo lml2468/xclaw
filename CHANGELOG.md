@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (previously the stdout reader closed the channel while stderr could still be
   sending, and `Wait` could run before stderr was drained). Adds a `WaitDelay`
   so a lingering grandchild can't hang the turn after context cancellation.
+- macOS app resilience & idioms: `CoreSupervisor` now trips a circuit breaker
+  (reports `.failed` after repeated immediate crashes) instead of restarting a
+  broken daemon forever; `ControlClient` drops a force-unwrap, logs malformed
+  envelopes/frame errors via unified `os.Logger` instead of dropping them
+  silently; previously-swallowed app send/migration errors are now logged.
+  Status indicators gained VoiceOver labels. The unnecessary
+  `disable-library-validation` entitlement was removed (the app exec's the
+  daemon as a subprocess, never loading it in-process).
 
 <!--
 Going forward, summarize notable changes here under Added / Changed / Deprecated

@@ -104,8 +104,12 @@ final class AppModel {
     /// Clears the selected bot's GUI session resume mapping.
     func reset() {
         guard let client else { return }
-        _ = try? client.send(type: "session.reset",
-                             body: SessionSendBody(uid: localUID, text: "", botId: selectedBotID))
+        do {
+            try client.send(type: "session.reset",
+                            body: SessionSendBody(uid: localUID, text: "", botId: selectedBotID))
+        } catch {
+            Log.app.error("reset failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - private
@@ -126,6 +130,14 @@ final class AppModel {
             lastError = err
             connected = false
             // Drop the stale connection; reconnect after the new daemon is up.
+            consumeTask?.cancel()
+            pollTask?.cancel()
+            client?.disconnect()
+            client = nil
+        case .failed(let reason):
+            coreState = "failed"
+            lastError = reason
+            connected = false
             consumeTask?.cancel()
             pollTask?.cancel()
             client?.disconnect()
@@ -155,8 +167,12 @@ final class AppModel {
         connected = true
         consumeEvents(from: c)
         // Probe health and fetch the bot roster immediately, then poll it.
-        _ = try? c.send(type: "health", body: [String: String]())
-        _ = try? c.send(type: "bots.list", body: [String: String]())
+        do {
+            try c.send(type: "health", body: [String: String]())
+            try c.send(type: "bots.list", body: [String: String]())
+        } catch {
+            Log.app.error("initial probe failed: \(error.localizedDescription, privacy: .public)")
+        }
         injectSecrets(on: c)
         startBotPolling(on: c)
     }
@@ -167,16 +183,19 @@ final class AppModel {
     private func injectSecrets(on c: ControlClient) {
         let bots = (try? ConfigStore.load()) ?? []
         for b in bots {
-            let octo = Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto)) ?? b.octoToken
-            if !octo.isEmpty {
-                _ = try? c.send(type: "secret.inject",
-                                body: SecretInjectBody(botId: b.id, kind: Keychain.kindOcto, value: octo))
-            }
-            let gw = Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway)) ?? b.gatewayToken
-            if !gw.isEmpty {
-                _ = try? c.send(type: "secret.inject",
-                                body: SecretInjectBody(botId: b.id, kind: Keychain.kindGateway, value: gw))
-            }
+            inject(on: c, botID: b.id, kind: Keychain.kindOcto,
+                   value: Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto)) ?? b.octoToken)
+            inject(on: c, botID: b.id, kind: Keychain.kindGateway,
+                   value: Keychain.get(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway)) ?? b.gatewayToken)
+        }
+    }
+
+    private func inject(on c: ControlClient, botID: String, kind: String, value: String) {
+        guard !value.isEmpty else { return }
+        do {
+            try c.send(type: "secret.inject", body: SecretInjectBody(botId: botID, kind: kind, value: value))
+        } catch {
+            Log.app.error("secret.inject(\(kind, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -185,18 +204,25 @@ final class AppModel {
     private func migrateLegacyTokensIfNeeded() {
         guard let bots = try? ConfigStore.load() else { return }
         var migrated = false
-        for b in bots {
-            if !b.octoToken.isEmpty {
-                try? Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto), value: b.octoToken)
-                migrated = true
+        do {
+            for b in bots {
+                if !b.octoToken.isEmpty {
+                    try Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindOcto), value: b.octoToken)
+                    migrated = true
+                }
+                if !b.gatewayToken.isEmpty {
+                    try Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway), value: b.gatewayToken)
+                    migrated = true
+                }
             }
-            if !b.gatewayToken.isEmpty {
-                try? Keychain.set(account: Keychain.account(bot: b.id, kind: Keychain.kindGateway), value: b.gatewayToken)
-                migrated = true
+            if migrated {
+                try ConfigStore.save(bots) // save() strips tokens from the file
+                Log.keychain.notice("migrated plaintext token(s) from config.json into the Keychain")
             }
-        }
-        if migrated {
-            try? ConfigStore.save(bots) // save() strips tokens from the file
+        } catch {
+            // Leave the file as-is if migration fails; tokens still work as a
+            // plaintext fallback. Surface why so it's diagnosable.
+            Log.keychain.error("token migration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -111,6 +111,7 @@ struct ConsoleView: View {
                         Circle()
                             .fill(bot.connected ? Color.green : Color.orange)
                             .frame(width: 8, height: 8)
+                            .accessibilityHidden(true) // status is in the text below
                         VStack(alignment: .leading, spacing: 1) {
                             Text(bot.id).font(.body)
                             Text(bot.connected ? "connected" : "offline")
@@ -120,6 +121,7 @@ struct ConsoleView: View {
                         if !bot.sessions.isEmpty {
                             Text("\(bot.sessions.count)")
                                 .font(.caption2).foregroundStyle(.secondary)
+                                .accessibilityLabel("\(bot.sessions.count) sessions")
                         }
                     }
                     .tag(bot.id)
@@ -133,15 +135,18 @@ struct ConsoleView: View {
             Circle()
                 .fill(model.connected ? Color.green : Color.orange)
                 .frame(width: 10, height: 10)
+                .accessibilityLabel(model.connected ? "Bus connected" : "Bus disconnected")
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.selectedBotID ?? "xclaw core").font(.headline)
                 Text(model.coreState).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Reset") { model.reset() }
+                .help("Clear this bot's conversation memory")
             Button(model.connected ? "Restart" : "Start") {
                 model.stop(); model.start()
             }
+            .help("Restart the xclawd core process")
         }
         .padding(12)
     }

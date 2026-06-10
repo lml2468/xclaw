@@ -67,8 +67,33 @@ func supervisorRestartsOnExit() async throws {
     #expect(restarts >= 1, "states observed: \(snap)")
 }
 
-// MARK: - helpers
+@Test
+func supervisorTripsCircuitBreakerOnCrashLoop() async throws {
+    // A daemon that exits immediately every time → after maxConsecutiveFailures
+    // the supervisor must give up with .failed rather than restart forever.
+    let script = makeFakeDaemon(body: "exit 1")
+    defer { try? FileManager.default.removeItem(atPath: script) }
 
+    let states = StateBox()
+    let sup = CoreSupervisor(
+        config: .init(binaryPath: script, socketPath: "/tmp/fake3.sock"),
+        onState: { states.append($0) }
+    )
+    sup.maxConsecutiveFailures = 3
+    sup.initialBackoff = 0.02 // keep the test fast
+
+    sup.start()
+    var failed = false
+    for _ in 0..<100 { // up to ~5s
+        try await Task.sleep(for: .milliseconds(50))
+        failed = states.snapshot.contains { if case .failed = $0 { return true }; return false }
+        if failed { break }
+    }
+    sup.stop()
+    #expect(failed, "expected .failed after a crash loop; states: \(states.snapshot)")
+}
+
+// MARK: - helpers
 /// Thread-safe collector for supervisor state callbacks (called off-main).
 final class StateBox: @unchecked Sendable {
     private let lock = NSLock()

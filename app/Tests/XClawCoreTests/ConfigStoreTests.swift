@@ -10,20 +10,22 @@ private func withTempBase(_ body: (URL) throws -> Void) rethrows {
 }
 
 @Test
-func configSaveLoadRoundTrip() throws {
+func configSaveStripsTokensFromFile() throws {
     try withTempBase { base in
         let bots = [
             BotConfig(id: "alpha", apiURL: "https://octo.example", octoToken: "bf_a"),
             BotConfig(id: "beta", apiURL: "https://octo.example", octoToken: "bf_b"),
         ]
         try ConfigStore.save(bots, base: base)
+        // Non-secret fields persist; tokens are NOT written to the file.
         let loaded = try ConfigStore.load(base: base)
         #expect(loaded.count == 2)
-        let a = loaded.first { $0.id == "alpha" }
-        #expect(a?.octoToken == "bf_a")
-        let b = loaded.first { $0.id == "beta" }
-        #expect(b?.octoToken == "bf_b")
-        #expect(b?.apiURL == "https://octo.example")
+        #expect(loaded.allSatisfy { $0.octoToken.isEmpty })
+        #expect(loaded.first { $0.id == "beta" }?.apiURL == "https://octo.example")
+        // And not present in the raw JSON either.
+        let raw = try String(contentsOf: base.appendingPathComponent("config.json"), encoding: .utf8)
+        #expect(!raw.contains("bf_a") && !raw.contains("bf_b"))
+        #expect(!raw.contains("octoToken"))
     }
 }
 
@@ -37,10 +39,13 @@ func configGatewayAndEnvRoundTrip() throws {
         try ConfigStore.save([bot], base: base)
         let loaded = try ConfigStore.load(base: base)
         let a = loaded.first { $0.id == "alpha" }
+        // Non-secret gateway/env settings persist; the gateway token does not.
         #expect(a?.gatewayBaseURL == "https://gw.example/v1")
-        #expect(a?.gatewayToken == "sk-tok")
+        #expect(a?.gatewayToken.isEmpty == true)
         #expect(a?.env["OCTO_BOT_ID"] == "alpha")
         #expect(a?.env["GH_TOKEN"] == "ghp_x")
+        let raw = try String(contentsOf: base.appendingPathComponent("config.json"), encoding: .utf8)
+        #expect(!raw.contains("sk-tok") && !raw.contains("gatewayToken"))
     }
 }
 

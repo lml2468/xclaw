@@ -82,7 +82,7 @@ private struct BotForm: View {
                 TextField("API URL", text: $bot.apiURL)
                     .textContentType(.URL)
                 SecureField("Bot Token (bf_…)", text: $bot.octoToken)
-                    .help("Stored inline in ~/.xclaw/config.json (plaintext for now).")
+                    .help("Stored in your macOS Keychain, not in config.json.")
             }
             Section {
                 TextField("Gateway Base URL", text: $bot.gatewayBaseURL)

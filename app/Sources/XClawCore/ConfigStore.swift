@@ -2,10 +2,13 @@ import Foundation
 
 /// Read/write the daemon's single ~/.xclaw/config.json from the GUI, producing
 /// JSON the Go `config.Load` parses. Every bot is inlined in the global config's
-/// bots[] array (id + octoToken + agent overrides). The bot's persona/behavior
+/// bots[] array (id + apiUrl + agent overrides). The bot's persona/behavior
 /// prompt is NOT here — it lives in SOUL.md / AGENTS.md under ~/.xclaw/<id>/.
 ///
-/// Token is stored inline (plaintext, as today; Keychain is a later step).
+/// Secrets are NOT written by `save` — `octoToken` / `gatewayToken` live in the
+/// Keychain (see Keychain.swift) and are injected at runtime. `load` still reads
+/// any tokens present in the file (legacy / headless), so callers can migrate
+/// them into the Keychain.
 public struct BotConfig: Sendable, Equatable, Identifiable {
     public var id: String
     public var apiURL: String
@@ -101,6 +104,10 @@ public enum ConfigStore {
     /// config.json: every bot inlined in bots[]. Validates slugs + uniqueness.
     /// Prunes per-bot directories whose bot was removed (keeps SOUL.md/AGENTS.md
     /// dirs of live bots intact).
+    ///
+    /// Secrets are intentionally NOT written here: `octoToken` and
+    /// `gatewayToken` are always omitted from the file (they belong in the
+    /// Keychain, injected at runtime via secret.inject). `env` stays in the file.
     public static func save(_ bots: [BotConfig], base: URL? = nil) throws {
         let base = base ?? baseDir
         var seen = Set<String>()
@@ -116,11 +123,11 @@ public enum ConfigStore {
             bots: bots.map { b in
                 ConfigFile.Bot(
                     id: b.id,
-                    octoToken: b.octoToken.isEmpty ? nil : b.octoToken,
+                    octoToken: nil, // secret → Keychain, never the file
                     apiUrl: b.apiURL.isEmpty ? nil : b.apiURL,
                     agent: ConfigFile.Agent(
                         gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
-                        gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
+                        gatewayToken: nil, // secret → Keychain, never the file
                         env: b.env.isEmpty ? nil : b.env))
             })
         try writeJSON(file, to: globalConfigURL(base))

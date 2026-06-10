@@ -90,6 +90,17 @@ public struct SessionHistoryBody: Codable, Sendable {
     }
 }
 
+/// Injects one secret into the core (held in memory only, never persisted).
+/// Mirrors the Go control.SecretInjectBody / proto secret.inject.
+public struct SecretInjectBody: Codable, Sendable {
+    public var botId: String
+    public var kind: String
+    public var value: String
+    public init(botId: String, kind: String, value: String) {
+        self.botId = botId; self.kind = kind; self.value = value
+    }
+}
+
 // MARK: - Event / response bodies (server → client)
 
 public struct OKBody: Codable, Sendable { public var ok: Bool }

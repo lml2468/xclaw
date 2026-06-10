@@ -48,3 +48,11 @@ func (b *bucket) take(now time.Time) {
 		b.tokens--
 	}
 }
+
+// idleSince reports whether the bucket has gone untouched (no peek/take, which
+// both refresh lastRefill) for longer than idle. Callers pass idle >= window, so
+// such a bucket has fully refilled — evicting and recreating it yields an
+// identical full bucket. A never-used bucket (zero lastRefill) is not idle.
+func (b *bucket) idleSince(now time.Time, idle time.Duration) bool {
+	return !b.lastRefill.IsZero() && now.Sub(b.lastRefill) > idle
+}

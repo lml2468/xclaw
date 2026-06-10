@@ -23,6 +23,16 @@ import (
 	"github.com/lml2468/xclaw/core/store"
 )
 
+// Reaper cadence for a running bot. reapInterval is how often the sweep runs;
+// routerReapIdle is how long a session's lock / rate-limit buckets must sit
+// untouched before they're evicted (well under the store's 7-day TTL, but far
+// longer than the rate-limit window so an evicted bucket is always fully
+// refilled).
+const (
+	reapInterval   = time.Hour
+	routerReapIdle = time.Hour
+)
+
 // configFlagSet reports whether -config was passed on the command line (so an
 // empty value still selects config mode with the default path).
 func configFlagSet() bool {
@@ -157,18 +167,38 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		return fmt.Errorf("bot %s: store: %w", cfg.BotID, err)
 	}
 	defer st.Close()
-	if n, _ := st.CleanupExpired(store.DefaultTTL); n > 0 {
-		fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
+
+	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
+
+	// Periodic reaper: enforce the session/sandbox TTLs and bound the router's
+	// per-session maps over the daemon's lifetime (a one-shot startup sweep would
+	// let everything accumulate). Runs once now, then on a ticker until ctx done.
+	reap := func() {
+		if n, _ := st.CleanupExpired(store.DefaultTTL); n > 0 {
+			fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
+		}
+		// Reclaim per-session cwd sandboxes idle past the TTL (memory lives outside, untouched).
+		sandbox.CleanupExpiredCwds(cfg.CwdBase, sandbox.DefaultCwdTTL)
+		rt.Reap(routerReapIdle)
 	}
-	// Reclaim per-session cwd sandboxes idle past the TTL (memory lives outside, untouched).
-	sandbox.CleanupExpiredCwds(cfg.CwdBase, sandbox.DefaultCwdTTL)
+	reap()
+	go func() {
+		t := time.NewTicker(reapInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				reap()
+			}
+		}
+	}()
 
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
 	drv := agent.NewClaudeDriver("")
 	drv.Env = cfg.DriverEnv()
-
-	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
 
 	if cfg.APIURL == "" || cfg.OctoToken == "" {
 		return fmt.Errorf("bot %s: config mode requires apiUrl + octoToken", cfg.BotID)

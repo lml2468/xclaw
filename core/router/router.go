@@ -92,7 +92,7 @@ type Router struct {
 	now func() time.Time
 
 	locksMu sync.Mutex
-	locks   map[string]*sync.Mutex // one mutex per session key
+	locks   map[string]*lockEntry // one lock per session key (refcounted for eviction)
 
 	rlMu    sync.Mutex
 	global  *bucket
@@ -100,12 +100,22 @@ type Router struct {
 	perSess map[string]*bucket
 }
 
+// lockEntry is a per-session serialization lock plus the bookkeeping Reap needs
+// to evict it safely: refs counts in-flight holders, lastUse marks when the last
+// holder released. An entry is only evictable when refs == 0 (no goroutine is
+// blocked on or holding mu) and it has been idle past the reap threshold.
+type lockEntry struct {
+	mu      sync.Mutex
+	refs    int       // in-flight acquirers; guarded by Router.locksMu
+	lastUse time.Time // set on release; guarded by Router.locksMu
+}
+
 // New constructs a Router.
 func New(cfg Config) *Router {
 	return &Router{
 		cfg:     cfg.withDefaults(),
 		now:     time.Now,
-		locks:   make(map[string]*sync.Mutex),
+		locks:   make(map[string]*lockEntry),
 		perUser: make(map[string]*bucket),
 		perSess: make(map[string]*bucket),
 	}
@@ -170,9 +180,8 @@ func (r *Router) RouteAndHandle(ctx context.Context, msg InboundMessage, handler
 	}
 
 	// Serialize within the session.
-	lock := r.lockFor(key)
-	lock.Lock()
-	defer lock.Unlock()
+	e := r.acquire(key)
+	defer r.release(e)
 
 	if err := handler(ctx, key, msg); err != nil {
 		return Accepted, err
@@ -180,15 +189,64 @@ func (r *Router) RouteAndHandle(ctx context.Context, msg InboundMessage, handler
 	return Accepted, nil
 }
 
-func (r *Router) lockFor(key string) *sync.Mutex {
+// acquire returns the (locked) per-session entry for key, creating it if needed
+// and bumping its in-flight refcount so Reap won't evict it mid-turn.
+func (r *Router) acquire(key string) *lockEntry {
 	r.locksMu.Lock()
-	defer r.locksMu.Unlock()
-	m, ok := r.locks[key]
+	e, ok := r.locks[key]
 	if !ok {
-		m = &sync.Mutex{}
-		r.locks[key] = m
+		e = &lockEntry{}
+		r.locks[key] = e
 	}
-	return m
+	e.refs++
+	r.locksMu.Unlock()
+	e.mu.Lock()
+	return e
+}
+
+// release unlocks the entry and records the release time, dropping its refcount
+// so it becomes eligible for reaping once idle.
+func (r *Router) release(e *lockEntry) {
+	e.mu.Unlock()
+	r.locksMu.Lock()
+	e.refs--
+	e.lastUse = r.now()
+	r.locksMu.Unlock()
+}
+
+// Reap evicts per-session locks and rate-limit buckets that have been idle
+// longer than idle, bounding the three maps in a long-running daemon. A reaped
+// entry is recreated in its initial state on the next turn for that key — which
+// is equivalent to its idle state — so eviction never changes behavior. idle
+// must exceed the rate-limit window (a bucket idle that long is necessarily full
+// again). Returns the number of locks and buckets evicted.
+func (r *Router) Reap(idle time.Duration) (locks, buckets int) {
+	now := r.now()
+
+	r.locksMu.Lock()
+	for k, e := range r.locks {
+		if e.refs == 0 && !e.lastUse.IsZero() && now.Sub(e.lastUse) > idle {
+			delete(r.locks, k)
+			locks++
+		}
+	}
+	r.locksMu.Unlock()
+
+	r.rlMu.Lock()
+	for k, b := range r.perUser {
+		if b.idleSince(now, idle) {
+			delete(r.perUser, k)
+			buckets++
+		}
+	}
+	for k, b := range r.perSess {
+		if b.idleSince(now, idle) {
+			delete(r.perSess, k)
+			buckets++
+		}
+	}
+	r.rlMu.Unlock()
+	return locks, buckets
 }
 
 // allow checks all three buckets; only consumes a token from each if ALL pass

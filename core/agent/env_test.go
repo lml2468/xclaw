@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,48 @@ func TestClaudeDriverInjectsEnv(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("injected env var did not reach the spawned CLI")
+	}
+}
+
+// TestClaudeDriverDrainsStdoutAndStderr spawns a fake "claude" that writes to
+// both stdout (stream-json) and stderr, then exits non-zero. The driver must
+// deliver events from both streams and close the channel cleanly — exercising
+// the WaitGroup join that prevents a send-on-closed-channel panic when stderr
+// emits around the time stdout reaches EOF.
+func TestClaudeDriverDrainsStdoutAndStderr(t *testing.T) {
+	bin := writeFakeBin(t, `
+echo '{"type":"system","subtype":"init","session_id":"s1"}'
+echo 'a warning on stderr' 1>&2
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}'
+exit 3
+`)
+	d := NewClaudeDriver(bin)
+
+	ch, err := d.Query(context.Background(), Request{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var session, text, stderrErr, exitErr bool
+	for ev := range ch { // must drain to a clean close (no panic)
+		switch {
+		case ev.Kind == KindSessionStarted && ev.SessionID == "s1":
+			session = true
+		case ev.Kind == KindTextDelta && ev.Text == "hi":
+			text = true
+		case ev.Kind == KindError && ev.Recoverable && ev.Err == "a warning on stderr":
+			stderrErr = true
+		case ev.Kind == KindError && strings.Contains(ev.Err, "claude exited"):
+			exitErr = true
+		}
+	}
+	if !session || !text {
+		t.Fatalf("missing stdout events: session=%v text=%v", session, text)
+	}
+	if !stderrErr {
+		t.Fatal("stderr line was not surfaced as a recoverable error event")
+	}
+	if !exitErr {
+		t.Fatal("non-zero exit was not surfaced as an error event")
 	}
 }

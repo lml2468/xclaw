@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls now use the connector's run context instead of `context.Background()`,
   and previously-swallowed errors (gateway turn, send-typing, send-reply) are
   now logged.
+- `ClaudeDriver.Query` no longer risks a send-on-closed-channel panic: the
+  stdout and stderr readers are now joined with a `WaitGroup` so the event
+  channel is closed exactly once, after both finish and after `cmd.Wait`
+  (previously the stdout reader closed the channel while stderr could still be
+  sending, and `Wait` could run before stderr was drained). Adds a `WaitDelay`
+  so a lingering grandchild can't hang the turn after context cancellation.
 
 <!--
 Going forward, summarize notable changes here under Added / Changed / Deprecated

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ClaudeDriver drives Claude Code headlessly via:
@@ -72,6 +74,10 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 		cmd.Dir = req.Cwd
 	}
 	cmd.Env = mergedEnv(d.Env)
+	// On ctx cancellation, CommandContext kills the process; WaitDelay bounds how
+	// long Wait then blocks if a grandchild keeps the output pipe open, so the
+	// reader goroutines can't hang the turn indefinitely.
+	cmd.WaitDelay = 10 * time.Second
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -91,9 +97,18 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 
 	out := make(chan AgentEvent, 64)
 
-	// Drain stderr in the background; emit any non-empty lines as recoverable
-	// errors (e.g. node warnings) without blocking the child on a full pipe.
+	// Two readers feed `out`; a WaitGroup joins them so the channel is closed
+	// exactly once, AFTER both have finished. Closing from a single reader (e.g.
+	// stdout) while the other (stderr) is still sending would panic on a send to
+	// a closed channel — and calling cmd.Wait before both pipes are fully drained
+	// violates the exec contract.
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Drain stderr; emit any non-empty lines as recoverable errors (e.g. node
+	// warnings) without blocking the child on a full pipe.
 	go func() {
+		defer wg.Done()
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
@@ -106,7 +121,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}()
 
 	go func() {
-		defer close(out)
+		defer wg.Done()
 		sc := bufio.NewScanner(stdout)
 		// stream-json lines can be large (tool inputs with file contents).
 		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -119,6 +134,11 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 				out <- ev
 			}
 		}
+	}()
+
+	go func() {
+		defer close(out)
+		wg.Wait()
 		if err := cmd.Wait(); err != nil {
 			out <- AgentEvent{
 				Kind: KindError,

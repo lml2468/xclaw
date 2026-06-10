@@ -190,3 +190,79 @@ func TestCronFireBypassesGateAndLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestReapEvictsIdleAndRecreates(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	r := New(Config{MaxPerMinute: 5})
+	r.SetClock(func() time.Time { return now })
+	h := func(ctx context.Context, key string, m InboundMessage) error { return nil }
+
+	for _, uid := range []string{"u1", "u2"} {
+		if d, _ := r.RouteAndHandle(context.Background(),
+			InboundMessage{ChannelType: ChannelDM, FromUID: uid}, h); d != Accepted {
+			t.Fatalf("%s should be accepted, got %s", uid, d)
+		}
+	}
+	if len(r.locks) != 2 || len(r.perUser) != 2 || len(r.perSess) != 2 {
+		t.Fatalf("want 2 of each, got locks=%d perUser=%d perSess=%d",
+			len(r.locks), len(r.perUser), len(r.perSess))
+	}
+
+	// Not idle long enough yet: nothing evicted.
+	if locks, buckets := r.Reap(time.Hour); locks != 0 || buckets != 0 {
+		t.Fatalf("nothing should be idle yet, evicted locks=%d buckets=%d", locks, buckets)
+	}
+
+	// Advance past the idle threshold: everything evicted.
+	now = base.Add(2 * time.Hour)
+	locks, buckets := r.Reap(time.Hour)
+	if locks != 2 || buckets != 4 {
+		t.Fatalf("want locks=2 buckets=4, got locks=%d buckets=%d", locks, buckets)
+	}
+	if len(r.locks) != 0 || len(r.perUser) != 0 || len(r.perSess) != 0 {
+		t.Fatalf("maps not emptied: locks=%d perUser=%d perSess=%d",
+			len(r.locks), len(r.perUser), len(r.perSess))
+	}
+
+	// A reaped key still routes correctly afterward (recreated on demand).
+	if d, _ := r.RouteAndHandle(context.Background(),
+		InboundMessage{ChannelType: ChannelDM, FromUID: "u1"}, h); d != Accepted {
+		t.Fatalf("post-reap route should be accepted, got %s", d)
+	}
+	if len(r.locks) != 1 {
+		t.Fatalf("want 1 lock after recreate, got %d", len(r.locks))
+	}
+}
+
+// TestReapSkipsInFlight proves the refcount guard: a lock held by an in-flight
+// turn is never evicted, even while idle entries around it are reaped.
+func TestReapSkipsInFlight(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	r := New(Config{MaxPerMinute: 5})
+	r.SetClock(func() time.Time { return now })
+	noop := func(ctx context.Context, key string, m InboundMessage) error { return nil }
+
+	// Seed an idle session "old".
+	r.RouteAndHandle(context.Background(), InboundMessage{ChannelType: ChannelDM, FromUID: "old"}, noop)
+
+	// Now run a turn for "active" whose handler reaps while it holds the lock.
+	now = base.Add(2 * time.Hour)
+	var reapedLocks int
+	active := func(ctx context.Context, key string, m InboundMessage) error {
+		reapedLocks, _ = r.Reap(time.Hour) // "old" is idle (evict); "active" is in-flight (keep)
+		return nil
+	}
+	r.RouteAndHandle(context.Background(), InboundMessage{ChannelType: ChannelDM, FromUID: "active"}, active)
+
+	if reapedLocks != 1 {
+		t.Fatalf("only the idle lock should be reaped, got %d", reapedLocks)
+	}
+	if _, ok := r.locks["old"]; ok {
+		t.Fatal("idle lock 'old' should have been evicted")
+	}
+	if _, ok := r.locks["active"]; !ok {
+		t.Fatal("in-flight lock 'active' must survive reaping")
+	}
+}

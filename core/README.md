@@ -91,7 +91,7 @@ connector, each under `~/.xclaw/<id>/`. Layout:
   <id>/config.json     # per-bot: octoToken + overrides
   <id>/SOUL.md         # per-bot identity/persona (operator-trusted system prompt)
   <id>/AGENTS.md       # per-bot behavior norms (appended after SOUL.md)
-  <id>/{data,workspace,memory,skills}/   # derived, per-bot isolated
+  <id>/data/           # derived, per-bot isolated SQLite + state
 ```
 
 The system prompt is file-based, not a config field: SOUL.md (who the bot is)

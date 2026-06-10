@@ -20,7 +20,8 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	gc := groupctx.New(6000)
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
 		WithGroupContext(gc).
-		WithSystemPrompt("you are XClaw")
+		WithSystemPrompt("you are XClaw").
+		WithModel("claude-opus-4-8")
 
 	// alice chats in the group WITHOUT mentioning the bot — observed as
 	// background, no turn triggered.
@@ -63,6 +64,10 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	}
 	if !strings.Contains(second.SystemAppend, "you are XClaw") {
 		t.Fatalf("SOUL prompt missing from system prompt:\n%s", second.SystemAppend)
+	}
+	// The configured model override reaches the driver.
+	if second.Model != "claude-opus-4-8" {
+		t.Fatalf("model override not passed to driver: %q", second.Model)
 	}
 }
 

@@ -44,6 +44,8 @@ type Gateway struct {
 	// Operator-trusted system prompt (assembled from SOUL.md + AGENTS.md).
 	// Appended after the non-overridable security prefix.
 	systemPrompt string
+	// Optional model override passed to the driver (empty = driver default).
+	model string
 }
 
 // New constructs a Gateway.
@@ -60,6 +62,12 @@ func (g *Gateway) WithGroupContext(gc *groupctx.GroupContext) *Gateway {
 // WithSystemPrompt sets the operator-trusted system prompt (SOUL.md + AGENTS.md).
 func (g *Gateway) WithSystemPrompt(p string) *Gateway {
 	g.systemPrompt = p
+	return g
+}
+
+// WithModel sets the model override passed to the driver on each turn.
+func (g *Gateway) WithModel(m string) *Gateway {
+	g.model = m
 	return g
 }
 
@@ -127,6 +135,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	events, err := g.driver.Query(ctx, agent.Request{
 		Prompt:       prompt,
 		SessionID:    resumeID,
+		Model:        g.model,
 		SystemAppend: g.buildSystemPrompt(),
 	})
 	if err != nil {

@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-bot config. Place at ~/.xclaw/<id>/config.json. Holds this bot's token + overrides. data/, workspace/, memory/, skills/ are derived siblings — do not set them.",
+  "_comment": "Per-bot config. Place at ~/.xclaw/<id>/config.json. Holds this bot's token + overrides. data/ is a derived sibling — do not set it. The bot's persona/behavior lives in SOUL.md + AGENTS.md in this same dir.",
   "octoToken": "bf_your_bot_token_here",
   "agent": {
     "model": "claude-opus-4-8",

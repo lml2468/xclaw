@@ -1,10 +1,10 @@
-// Package config implements XClaw's two-layer, bot-first configuration, ported
-// from cc-channel-octo's config.ts.
+// Package config implements XClaw's two-layer, bot-first configuration.
 //
-// Global ~/.xclaw/config.json holds shared defaults + a bots[] list (never a
-// token). Per-bot ~/.xclaw/<id>/config.json holds that bot's token + overrides.
-// Per-bot directories (data/workspace/memory/skills) are DERIVED from baseDir +
-// id — never configurable — so a bot can't escape its own subtree.
+// Global ~/.xclaw/config.json holds shared defaults + a bots[] list. Per-bot
+// ~/.xclaw/<id>/config.json holds that bot's token + overrides. The per-bot data
+// directory (~/.xclaw/<id>/data) is DERIVED from baseDir + id, never configurable
+// — so a bot can't escape its own subtree. The bot's persona/behavior prompt
+// lives in SOUL.md + AGENTS.md in the same dir, not in config.
 package config
 
 import (
@@ -16,86 +16,64 @@ import (
 	"strings"
 )
 
-// AgentConfig holds the agent's per-bot settings (model, model-gateway routing,
-// env). On disk this is the "agent" block. The bot's behavior/persona prompt is
-// NOT here — it lives in SOUL.md / AGENTS.md files (see Resolved.SystemPrompt).
+// AgentConfig is the on-disk "agent" block: the model and the model-gateway
+// routing (base URL + token) plus any extra env vars injected into the agent CLI.
 type AgentConfig struct {
-	Model           string            `json:"model,omitempty"`
-	MaxTurns        *int              `json:"maxTurns,omitempty"`
-	SettingSources  []string          `json:"settingSources,omitempty"`
-	ToolProgress    *bool             `json:"toolProgress,omitempty"`
-	// Model-gateway routing. DriverEnv maps these to the claude env var names
-	// (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN) for the spawned CLI.
+	Model          string            `json:"model,omitempty"`
 	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
 	GatewayToken   string            `json:"gatewayToken,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 }
 
-// RateLimitConfig mirrors rateLimit.*.
+// RateLimitConfig mirrors the on-disk rateLimit block.
 type RateLimitConfig struct {
 	MaxPerMinute int `json:"maxPerMinute,omitempty"`
 }
 
-// ContextConfig mirrors context.*.
+// ContextConfig mirrors the on-disk context block.
 type ContextConfig struct {
 	MaxContextChars int `json:"maxContextChars,omitempty"`
-	HistoryLimit    int `json:"historyLimit,omitempty"`
 }
 
-// BotOverride is an inline entry in the global bots[] list. Note model is FLAT
-// here (vs nested agent.* in a per-bot file).
-type BotOverride struct {
-	ID       string `json:"id,omitempty"`
-	BotToken string `json:"botToken,omitempty"`
-	APIURL   string `json:"apiUrl,omitempty"`
-	Model    string `json:"model,omitempty"`
+// BotEntry is one entry in the global config's bots[] list — just the id; the
+// bot's own settings live in ~/.xclaw/<id>/config.json.
+type BotEntry struct {
+	ID string `json:"id,omitempty"`
 }
 
-// File is the on-disk shape of a config.json (global or per-bot).
+// File is the on-disk shape of a config.json (global or per-bot). Bots[] is only
+// meaningful in the global file.
 type File struct {
-	BotToken        string           `json:"botToken,omitempty"`
-	APIURL          string           `json:"apiUrl,omitempty"`
-	OctoToken       string           `json:"octoToken,omitempty"` // xclaw: Octo bot token
-	Agent           *AgentConfig     `json:"agent,omitempty"`
-	RateLimit       *RateLimitConfig `json:"rateLimit,omitempty"`
-	Context         *ContextConfig   `json:"context,omitempty"`
-	MaxResponseChars *int            `json:"maxResponseChars,omitempty"`
-	Bots            []BotOverride    `json:"bots,omitempty"`
+	APIURL    string           `json:"apiUrl,omitempty"`
+	OctoToken string           `json:"octoToken,omitempty"`
+	Agent     *AgentConfig     `json:"agent,omitempty"`
+	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
+	Context   *ContextConfig   `json:"context,omitempty"`
+	Bots      []BotEntry       `json:"bots,omitempty"`
 }
 
 // Resolved is a single bot's fully-resolved, ready-to-run configuration.
 type Resolved struct {
-	BotID    string
-	BotToken string
-	APIURL   string
+	BotID     string
+	APIURL    string
 	OctoToken string
 
 	Agent     AgentConfig
 	RateLimit RateLimitConfig
 	Context   ContextConfig
-	MaxResponseChars int
 
-	// SystemPrompt is the bot's operator-trusted persona/behavior prompt,
-	// assembled from SOUL.md + AGENTS.md in the bot dir (not from config).
+	// SystemPrompt is the operator-trusted persona/behavior prompt, assembled
+	// from SOUL.md + AGENTS.md in the bot dir (not from config).
 	SystemPrompt string
 
-	// Derived (never from file).
-	BaseDir    string
-	DataDir    string
-	CwdBase    string
-	MemoryBase string
-	SkillsDir  string
-	GlobalSkillsDir string
+	// DataDir is the bot's derived SQLite/data directory (~/.xclaw/<id>/data).
+	DataDir string
 }
 
 func defaults() Resolved {
 	return Resolved{
-		Agent: AgentConfig{
-			SettingSources: []string{"project"},
-		},
-		RateLimit:        RateLimitConfig{MaxPerMinute: 5},
-		Context:          ContextConfig{MaxContextChars: 6000, HistoryLimit: 40},
-		MaxResponseChars: 512 * 1024,
+		RateLimit: RateLimitConfig{MaxPerMinute: 5},
+		Context:   ContextConfig{MaxContextChars: 6000},
 	}
 }
 
@@ -148,17 +126,16 @@ func readFile(path string) (File, error) {
 	return f, nil
 }
 
-// resolveBots expands the global config into one Resolved per bot, applying the
-// perBotFile ?? inlineBot ?? global precedence.
+// resolveBots expands the global config into one Resolved per bot, applying
+// perBotFile-over-global precedence.
 func resolveBots(global File, baseDir string) ([]Resolved, error) {
 	entries := global.Bots
 	if len(entries) == 0 {
-		entries = []BotOverride{{ID: "default", BotToken: global.BotToken}}
+		entries = []BotEntry{{ID: "default"}}
 	}
 
 	var out []Resolved
 	seenID := map[string]bool{}
-	seenToken := map[string]bool{}
 
 	for i, bot := range entries {
 		id := bot.ID
@@ -181,51 +158,26 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 
 		r := defaults()
 		r.BotID = id
-		r.BaseDir = baseDir
 		r.DataDir = filepath.Join(botRoot, "data")
-		r.CwdBase = filepath.Join(botRoot, "workspace")
-		r.MemoryBase = filepath.Join(botRoot, "memory")
-		r.SkillsDir = filepath.Join(botRoot, "skills")
-		r.GlobalSkillsDir = filepath.Join(baseDir, "skills")
 
-		// precedence: perBotFile ?? inlineBot ?? global
-		r.BotToken = firstNonEmpty(perBot.BotToken, bot.BotToken, global.BotToken)
-		r.APIURL = firstNonEmpty(perBot.APIURL, bot.APIURL, global.APIURL)
+		// precedence: perBotFile ?? global
+		r.APIURL = firstNonEmpty(perBot.APIURL, global.APIURL)
 		r.OctoToken = firstNonEmpty(perBot.OctoToken, global.OctoToken)
 
 		// shallow-merge agent/rateLimit/context: global → perBotFile keys
 		mergeAgent(&r.Agent, global.Agent)
 		mergeAgent(&r.Agent, perBot.Agent)
-		// model: perBotFile.agent > inlineBot > global (handled by mergeAgent)
-		if bot.Model != "" {
-			r.Agent.Model = bot.Model
-		}
-		if perBot.Agent != nil && perBot.Agent.Model != "" {
-			r.Agent.Model = perBot.Agent.Model
-		}
-		// System prompt: assembled from the bot's SOUL.md + AGENTS.md files (not
-		// configurable). SOUL.md is identity/persona; AGENTS.md is behavior norms.
-		r.SystemPrompt = soul(botRoot)
 		mergeRate(&r.RateLimit, global.RateLimit)
 		mergeRate(&r.RateLimit, perBot.RateLimit)
 		mergeCtx(&r.Context, global.Context)
 		mergeCtx(&r.Context, perBot.Context)
-		if global.MaxResponseChars != nil {
-			r.MaxResponseChars = *global.MaxResponseChars
-		}
-		if perBot.MaxResponseChars != nil {
-			r.MaxResponseChars = *perBot.MaxResponseChars
-		}
+
+		// System prompt: SOUL.md (identity) + AGENTS.md (behavior), file-based.
+		r.SystemPrompt = soul(botRoot)
 
 		// validation
-		if r.BotToken == "" && r.OctoToken == "" {
-			return nil, fmt.Errorf("bot %q: missing botToken/octoToken", id)
-		}
-		if r.BotToken != "" {
-			if seenToken[r.BotToken] {
-				return nil, fmt.Errorf("duplicate botToken across bots")
-			}
-			seenToken[r.BotToken] = true
+		if r.OctoToken == "" {
+			return nil, fmt.Errorf("bot %q: missing octoToken", id)
 		}
 		if r.APIURL != "" && !isAllowedURL(r.APIURL) {
 			return nil, fmt.Errorf("bot %q: unsafe apiUrl %q (must be https:// or http://localhost; SSRF protection)", id, r.APIURL)
@@ -255,15 +207,6 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src.Model != "" {
 		dst.Model = src.Model
 	}
-	if src.MaxTurns != nil {
-		dst.MaxTurns = src.MaxTurns
-	}
-	if len(src.SettingSources) > 0 {
-		dst.SettingSources = src.SettingSources
-	}
-	if src.ToolProgress != nil {
-		dst.ToolProgress = src.ToolProgress
-	}
 	if src.GatewayBaseURL != "" {
 		dst.GatewayBaseURL = src.GatewayBaseURL
 	}
@@ -290,14 +233,8 @@ func mergeRate(dst *RateLimitConfig, src *RateLimitConfig) {
 }
 
 func mergeCtx(dst *ContextConfig, src *ContextConfig) {
-	if src == nil {
-		return
-	}
-	if src.MaxContextChars > 0 {
+	if src != nil && src.MaxContextChars > 0 {
 		dst.MaxContextChars = src.MaxContextChars
-	}
-	if src.HistoryLimit > 0 {
-		dst.HistoryLimit = src.HistoryLimit
 	}
 }
 

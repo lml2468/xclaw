@@ -51,12 +51,12 @@ func TestMultiBotIsolation(t *testing.T) {
 	if b.Context.MaxContextChars != 9000 {
 		t.Fatalf("beta context = %d, want override 9000", b.Context.MaxContextChars)
 	}
-	// derived dirs are under each bot's own subtree, and distinct
+	// derived data dirs are under each bot's own subtree, and distinct
 	if a.DataDir != filepath.Join(dir, "alpha", "data") ||
 		b.DataDir != filepath.Join(dir, "beta", "data") {
 		t.Fatalf("data dirs wrong: %q %q", a.DataDir, b.DataDir)
 	}
-	if a.CwdBase == b.CwdBase || a.MemoryBase == b.MemoryBase {
-		t.Fatalf("workspace/memory not isolated between bots")
+	if a.DataDir == b.DataDir {
+		t.Fatalf("data dirs not isolated between bots")
 	}
 }

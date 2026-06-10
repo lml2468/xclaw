@@ -33,15 +33,12 @@ func TestSingleBotDefaults(t *testing.T) {
 		t.Fatalf("botID = %q", b.BotID)
 	}
 	// defaults applied
-	if b.RateLimit.MaxPerMinute != 5 || b.Context.MaxContextChars != 6000 ||
-		b.MaxResponseChars != 512*1024 {
+	if b.RateLimit.MaxPerMinute != 5 || b.Context.MaxContextChars != 6000 {
 		t.Fatalf("defaults wrong: %+v", b)
 	}
-	// derived paths
-	if b.DataDir != filepath.Join(dir, "default", "data") ||
-		b.CwdBase != filepath.Join(dir, "default", "workspace") ||
-		b.MemoryBase != filepath.Join(dir, "default", "memory") {
-		t.Fatalf("derived paths wrong: %+v", b)
+	// derived data dir
+	if b.DataDir != filepath.Join(dir, "default", "data") {
+		t.Fatalf("derived data dir wrong: %+v", b)
 	}
 }
 
@@ -51,9 +48,10 @@ func TestPerBotFilePrecedence(t *testing.T) {
 	writeFile(t, cfg, `{
 	  "apiUrl":"https://octo.example",
 	  "context":{"maxContextChars":1000},
-	  "bots":[{"id":"alpha","model":"inline-model"}]
+	  "agent":{"model":"global-model"},
+	  "bots":[{"id":"alpha"}]
 	}`)
-	// per-bot file overrides inline + global
+	// per-bot file overrides global
 	writeFile(t, filepath.Join(dir, "alpha", "config.json"),
 		`{"octoToken":"bf_alpha","agent":{"model":"perbot-model"},"context":{"maxContextChars":2000}}`)
 
@@ -117,7 +115,7 @@ func TestSystemPromptAgentsOnly(t *testing.T) {
 func TestSlugRejection(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[{"id":"../escape","botToken":"t"}]}`)
+	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[{"id":"../escape"}]}`)
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("path-traversal id must be rejected")
 	}
@@ -148,18 +146,6 @@ func TestMissingTokenRejected(t *testing.T) {
 	writeFile(t, cfg, `{"apiUrl":"https://o"}`) // no token anywhere
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("missing token must be rejected")
-	}
-}
-
-func TestDuplicateTokenRejected(t *testing.T) {
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[
-	  {"id":"a","botToken":"same"},
-	  {"id":"b","botToken":"same"}
-	]}`)
-	if _, err := Load(cfg); err == nil {
-		t.Fatal("duplicate token must be rejected")
 	}
 }
 

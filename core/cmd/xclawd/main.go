@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mlamp/mlclaw/agent"
-	"github.com/mlamp/mlclaw/store"
+	"github.com/lml2468/xclaw/core/agent"
+	"github.com/lml2468/xclaw/core/store"
 )
 
 func main() {
@@ -89,7 +89,7 @@ func main() {
 
 // consume renders the normalized event stream and persists the session id —
 // exactly what the real gateway's stream-relay + session-store would do.
-func consume(events <-chan agent.AgentEvent, st *store.SessionStore, sessionKey string) {
+func consume(events <-chan agent.AgentEvent, st *store.Store, sessionKey string) {
 	var (
 		fullText strings.Builder
 		toolN    int
@@ -128,7 +128,7 @@ func consume(events <-chan agent.AgentEvent, st *store.SessionStore, sessionKey 
 	}
 
 	if newSess != "" {
-		if err := st.SaveResume(sessionKey, "claude", newSess, time.Now().Unix()); err != nil {
+		if err := st.SaveResume(sessionKey, "claude", newSess); err != nil {
 			fmt.Fprintf(os.Stderr, "save resume: %v\n", err)
 		} else {
 			fmt.Printf("✓ persisted resume id %s for key %s\n", newSess, sessionKey)

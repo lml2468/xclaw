@@ -1,8 +1,14 @@
 # Build output
-/MLClaw
+/xclawd
 /ccd
 *.exe
 /dist/
+core/xclawd
+
+# Swift
+app/.build/
+app/.swiftpm/
+*.xcodeproj/xcuserdata/
 
 # Local databases / runtime state
 *.db

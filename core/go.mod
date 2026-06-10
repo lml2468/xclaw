@@ -1,4 +1,4 @@
-module github.com/mlamp/mlclaw
+module github.com/lml2468/xclaw/core
 
 go 1.26.4
 

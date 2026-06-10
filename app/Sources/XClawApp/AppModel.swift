@@ -15,7 +15,6 @@ final class AppModel {
     var bots: [AppState.BotView] = []
     var selectedBotID: String?
     var lastError: String?
-    var driver: String = "claude"
 
     // Config editing.
     var configBots: [BotConfig] = []
@@ -42,8 +41,7 @@ final class AppModel {
     /// Boots the core and connects the control bus. Defaults to multi-bot config
     /// mode when ~/.xclaw/config.json exists; otherwise surfaces a needs-config
     /// state (the app shouldn't silently run an empty single-bot daemon).
-    func start(driver: String = "claude") {
-        self.driver = driver
+    func start() {
         CorePaths.ensureSupportDir()
 
         guard let bin = CorePaths.resolveBinary() else {

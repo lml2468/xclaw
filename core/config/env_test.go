@@ -7,13 +7,14 @@ import (
 )
 
 // global sdk.env is the base; per-bot env adds/overrides per key (not whole
-// replacement), and the gateway vars are mapped per driver by DriverEnv.
+// replacement), and the gateway vars are mapped to the claude env names by
+// DriverEnv.
 func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
 	  "apiUrl":"https://octo.example",
-	  "sdk":{"driver":"claude","env":{"SHARED_DEFAULT":"global","SHARED":"global"},
+	  "sdk":{"env":{"SHARED_DEFAULT":"global","SHARED":"global"},
 	         "gatewayBaseUrl":"https://gw.example/v1"},
 	  "bots":[{"id":"alpha"}]
 	}`)
@@ -53,31 +54,6 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("claude DriverEnv missing %q in:\n%s", want, joined)
 		}
-	}
-}
-
-// codex maps the same neutral gateway fields to OPENAI_* names.
-func TestGatewayVarsCodexMapping(t *testing.T) {
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{
-	  "apiUrl":"https://octo.example",
-	  "sdk":{"driver":"codex","gatewayBaseUrl":"https://gw.example/v1","gatewayToken":"sk-openai"},
-	  "bots":[{"id":"c"}]
-	}`)
-	writeFile(t, filepath.Join(dir, "c", "config.json"), `{"octoToken":"bf_c"}`)
-	bots, err := Load(cfg)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	joined := strings.Join(bots[0].DriverEnv(), "\n")
-	for _, want := range []string{"OPENAI_BASE_URL=https://gw.example/v1", "OPENAI_API_KEY=sk-openai"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("codex DriverEnv missing %q in:\n%s", want, joined)
-		}
-	}
-	if strings.Contains(joined, "ANTHROPIC") {
-		t.Fatalf("codex must not emit ANTHROPIC_* vars:\n%s", joined)
 	}
 }
 

@@ -48,7 +48,7 @@ type botRuntime struct {
 func (b *botRuntime) info() control.BotInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return control.BotInfo{ID: b.cfg.BotID, Driver: b.cfg.SDK.Driver, Connected: b.connected, LastError: b.lastErr}
+	return control.BotInfo{ID: b.cfg.BotID, Driver: "claude", Connected: b.connected, LastError: b.lastErr}
 }
 
 func (b *botRuntime) setStatus(connected bool, lastErr string) {
@@ -159,10 +159,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
 	}
 
-	drv, err := makeDriver(cfg.SDK.Driver, "", cfg.DriverEnv())
-	if err != nil {
-		return fmt.Errorf("bot %s: %w", cfg.BotID, err)
-	}
+	drv := newClaudeDriverWithEnv(cfg.DriverEnv())
 
 	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
 

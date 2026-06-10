@@ -23,7 +23,7 @@ func supervisorSpawnsRealCoreAndBusDelivers() async throws {
     }
 
     let sup = CoreSupervisor(config: .init(
-        binaryPath: bin, socketPath: sock, dbPath: db, driver: "codex"))
+        binaryPath: bin, socketPath: sock, dbPath: db))
     sup.start()
     defer { sup.stop() }
 

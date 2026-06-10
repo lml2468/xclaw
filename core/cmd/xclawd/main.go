@@ -4,7 +4,6 @@
 // drives it from an inbound source. Two front ends:
 //
 //	xclawd                              # REPL on stdin (claude driver)
-//	xclawd -driver codex               # codex app-server driver
 //	xclawd -control /tmp/xclaw.sock    # serve the control bus (for the GUI app)
 //
 // With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
@@ -39,8 +38,7 @@ import (
 
 func main() {
 	var (
-		driverName  = flag.String("driver", "claude", "agent driver: claude | codex")
-		bin         = flag.String("bin", "", "agent executable (default: driver name)")
+		claudeBin   = flag.String("claude-bin", "", "claude executable (default: 'claude' on PATH)")
 		fromUID     = flag.String("uid", "repl-user", "synthetic from_uid for REPL inbound (DM session key)")
 		dbPath      = flag.String("db", filepath.Join(os.TempDir(), "xclawd.db"), "sqlite path")
 		maxPerMin   = flag.Int("rate", 30, "max messages per minute per session")
@@ -70,10 +68,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "swept %d expired session(s)\n", n)
 	}
 
-	drv, err := makeDriver(*driverName, *bin, nil)
-	if err != nil {
-		fatal("%v", err)
-	}
+	drv := agent.NewClaudeDriver(*claudeBin)
 
 	started := time.Now()
 
@@ -144,19 +139,13 @@ func main() {
 	runREPL(context.Background(), gw, st, *fromUID)
 }
 
-func makeDriver(name, bin string, env []string) (agent.Driver, error) {
-	switch name {
-	case "claude":
-		d := agent.NewClaudeDriver(bin)
-		d.Env = env
-		return d, nil
-	case "codex":
-		d := agent.NewCodexDriver(bin)
-		d.Env = env
-		return d, nil
-	default:
-		return nil, fmt.Errorf("unknown driver %q (claude|codex)", name)
-	}
+// newClaudeDriverWithEnv builds the claude driver with extra env layered on. The
+// agent.Driver abstraction is retained so a second driver can be re-added later
+// without touching the gateway, but phase 1 ships claude only.
+func newClaudeDriverWithEnv(env []string) agent.Driver {
+	d := agent.NewClaudeDriver("")
+	d.Env = env
+	return d
 }
 
 // runREPL reads stdin lines and feeds each as an inbound DM through the gateway.

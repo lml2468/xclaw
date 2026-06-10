@@ -2,31 +2,29 @@ import Foundation
 
 /// Read/write the daemon's two-layer bot-first config (~/.xclaw) from the GUI,
 /// producing JSON the Go `config.Load` parses. Layout:
-///   ~/.xclaw/config.json        global: apiUrl + bots:[{id}] (+ shared sdk)
-///   ~/.xclaw/<id>/config.json   per-bot: octoToken + overrides (sdk.driver…)
+///   ~/.xclaw/config.json        global: apiUrl + bots:[{id}]
+///   ~/.xclaw/<id>/config.json   per-bot: octoToken + overrides
 ///
 /// This is the writable subset of the Go config — enough to add/remove bots and
-/// edit id / apiUrl / driver / token from the UI. Token is stored in the per-bot
-/// file (plaintext, as today; Keychain is a later step).
+/// edit id / apiUrl / token from the UI. Token is stored in the per-bot file
+/// (plaintext, as today; Keychain is a later step).
 public struct BotConfig: Sendable, Equatable, Identifiable {
     public var id: String
     public var apiURL: String
-    public var driver: String     // "claude" | "codex"
     public var octoToken: String
-    /// Model-gateway routing (driver-neutral; the Go core maps these to the
-    /// driver's env var names: claude→ANTHROPIC_*, codex→OPENAI_*).
+    /// Model-gateway routing. The Go core maps these to the claude env var
+    /// names (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN).
     public var gatewayBaseURL: String
     public var gatewayToken: String
     /// Arbitrary extra environment variables injected into the agent CLI
     /// (e.g. OCTO_BOT_ID, GH_TOKEN, GLAB_TOKEN).
     public var env: [String: String]
 
-    public init(id: String, apiURL: String = "", driver: String = "claude",
+    public init(id: String, apiURL: String = "",
                 octoToken: String = "", gatewayBaseURL: String = "",
                 gatewayToken: String = "", env: [String: String] = [:]) {
         self.id = id
         self.apiURL = apiURL
-        self.driver = driver
         self.octoToken = octoToken
         self.gatewayBaseURL = gatewayBaseURL
         self.gatewayToken = gatewayToken
@@ -69,9 +67,7 @@ public enum ConfigStore {
 
     private struct GlobalFile: Codable {
         var apiUrl: String?
-        var sdk: SDK?
         var bots: [BotEntry]?
-        struct SDK: Codable { var driver: String? }
         struct BotEntry: Codable { var id: String }
     }
     private struct BotFile: Codable {
@@ -79,7 +75,6 @@ public enum ConfigStore {
         var apiUrl: String?
         var sdk: SDK?
         struct SDK: Codable {
-            var driver: String?
             var gatewayBaseUrl: String?
             var gatewayToken: String?
             var env: [String: String]?
@@ -89,8 +84,8 @@ public enum ConfigStore {
     // MARK: - load
 
     /// Loads the configured bots from `base` (default ~/.xclaw), merging the
-    /// global apiUrl/driver defaults with each per-bot file. Returns [] if no
-    /// global config exists.
+    /// global apiUrl default with each per-bot file. Returns [] if no global
+    /// config exists.
     public static func load(base: URL? = nil) throws -> [BotConfig] {
         let base = base ?? baseDir
         guard let gdata = try? Data(contentsOf: globalConfigURL(base)) else { return [] }
@@ -98,14 +93,11 @@ public enum ConfigStore {
         let entries = global.bots ?? []
         var out: [BotConfig] = []
         for e in entries {
-            var bc = BotConfig(id: e.id,
-                               apiURL: global.apiUrl ?? "",
-                               driver: global.sdk?.driver ?? "claude")
+            var bc = BotConfig(id: e.id, apiURL: global.apiUrl ?? "")
             if let bdata = try? Data(contentsOf: botConfigURL(base, e.id)),
                let bf = try? JSONDecoder().decode(BotFile.self, from: bdata) {
                 bc.octoToken = bf.octoToken ?? ""
                 if let u = bf.apiUrl, !u.isEmpty { bc.apiURL = u }
-                if let d = bf.sdk?.driver, !d.isEmpty { bc.driver = d }
                 bc.gatewayBaseURL = bf.sdk?.gatewayBaseUrl ?? ""
                 bc.gatewayToken = bf.sdk?.gatewayToken ?? ""
                 bc.env = bf.sdk?.env ?? [:]
@@ -132,12 +124,11 @@ public enum ConfigStore {
         let fm = FileManager.default
         try mkdir(base)
 
-        // Global config: shared apiUrl/driver taken from the first bot (the
-        // per-bot files carry the authoritative per-bot values too).
+        // Global config: shared apiUrl taken from the first bot (the per-bot
+        // files carry the authoritative per-bot values too).
         let shared = bots.first
         let global = GlobalFile(
             apiUrl: shared?.apiURL,
-            sdk: shared.map { GlobalFile.SDK(driver: $0.driver) },
             bots: bots.map { GlobalFile.BotEntry(id: $0.id) }
         )
         try writeJSON(global, to: globalConfigURL(base))
@@ -150,7 +141,6 @@ public enum ConfigStore {
             let bf = BotFile(octoToken: b.octoToken,
                              apiUrl: b.apiURL,
                              sdk: BotFile.SDK(
-                                driver: b.driver,
                                 gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
                                 gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
                                 env: b.env.isEmpty ? nil : b.env))

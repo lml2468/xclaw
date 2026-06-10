@@ -2,7 +2,7 @@ import SwiftUI
 import XClawCore
 
 /// Bot configuration editor (opened via Settings / Cmd-,). Lists configured
-/// bots, lets you add/remove and edit id / apiUrl / driver / token, and saves to
+/// bots, lets you add/remove and edit id / apiUrl / token, and saves to
 /// ~/.xclaw. Token is written to the per-bot config (plaintext for now).
 struct ConfigEditorView: View {
     @Bindable var model: AppModel
@@ -84,13 +84,6 @@ private struct BotForm: View {
                 SecureField("Bot Token (bf_…)", text: $bot.octoToken)
                     .help("Stored in ~/.xclaw/\(bot.id)/config.json (plaintext for now).")
             }
-            Section("Agent") {
-                Picker("Driver", selection: $bot.driver) {
-                    Text("Claude").tag("claude")
-                    Text("Codex").tag("codex")
-                }
-                .pickerStyle(.segmented)
-            }
             Section {
                 TextField("Gateway Base URL", text: $bot.gatewayBaseURL)
                     .textContentType(.URL)
@@ -98,9 +91,7 @@ private struct BotForm: View {
             } header: {
                 Text("Model Gateway")
             } footer: {
-                Text(bot.driver == "codex"
-                     ? "Injected as OPENAI_BASE_URL / OPENAI_API_KEY."
-                     : "Injected as ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN.")
+                Text("Injected as ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN.")
                     .font(.caption)
             }
             Section {

@@ -13,17 +13,15 @@ private func withTempBase(_ body: (URL) throws -> Void) rethrows {
 func configSaveLoadRoundTrip() throws {
     try withTempBase { base in
         let bots = [
-            BotConfig(id: "alpha", apiURL: "https://octo.example", driver: "claude", octoToken: "bf_a"),
-            BotConfig(id: "beta", apiURL: "https://octo.example", driver: "codex", octoToken: "bf_b"),
+            BotConfig(id: "alpha", apiURL: "https://octo.example", octoToken: "bf_a"),
+            BotConfig(id: "beta", apiURL: "https://octo.example", octoToken: "bf_b"),
         ]
         try ConfigStore.save(bots, base: base)
         let loaded = try ConfigStore.load(base: base)
         #expect(loaded.count == 2)
         let a = loaded.first { $0.id == "alpha" }
         #expect(a?.octoToken == "bf_a")
-        #expect(a?.driver == "claude")
         let b = loaded.first { $0.id == "beta" }
-        #expect(b?.driver == "codex")
         #expect(b?.octoToken == "bf_b")
         #expect(b?.apiURL == "https://octo.example")
     }
@@ -33,7 +31,7 @@ func configSaveLoadRoundTrip() throws {
 func configGatewayAndEnvRoundTrip() throws {
     try withTempBase { base in
         let bot = BotConfig(
-            id: "alpha", apiURL: "https://octo.example", driver: "claude", octoToken: "bf_a",
+            id: "alpha", apiURL: "https://octo.example", octoToken: "bf_a",
             gatewayBaseURL: "https://gw.example/v1", gatewayToken: "sk-tok",
             env: ["OCTO_BOT_ID": "alpha", "GH_TOKEN": "ghp_x"])
         try ConfigStore.save([bot], base: base)
@@ -106,8 +104,8 @@ func swiftWrittenConfigParsesInGo() async throws {
     defer { try? FileManager.default.removeItem(at: dir) }
 
     try ConfigStore.save([
-        BotConfig(id: "alpha", apiURL: "http://127.0.0.1:9", driver: "claude", octoToken: "bf_a"),
-        BotConfig(id: "beta", apiURL: "http://127.0.0.1:9", driver: "claude", octoToken: "bf_b"),
+        BotConfig(id: "alpha", apiURL: "http://127.0.0.1:9", octoToken: "bf_a"),
+        BotConfig(id: "beta", apiURL: "http://127.0.0.1:9", octoToken: "bf_b"),
     ], base: dir)
 
     let sock = dir.appendingPathComponent("ctl.sock").path

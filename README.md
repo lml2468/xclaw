@@ -2,11 +2,14 @@
 
 A cross-platform agent gateway, structured as a monorepo.
 
-XClaw **drives coding agents (Claude, Codex, …) by spawning their CLI /
-app-server and normalizing their output into one unified event stream** —
-replacing the Node-only `claude-agent-sdk`. The Go core compiles to a single
-static binary on every platform; native shells (starting with a macOS app) sit
-on top via a control bus.
+XClaw **drives coding agents by spawning their CLI and normalizing their output
+into one unified event stream** — replacing the Node-only `claude-agent-sdk`. The
+Go core compiles to a single static binary on every platform; native shells
+(starting with a macOS app) sit on top via a control bus.
+
+Phase 1 ships one driver (**Claude**) behind the `agent.Driver` abstraction;
+more agents (Codex, Gemini, …) re-enter as additional `Driver` implementations
+without touching the gateway.
 
 ## Repository layout
 
@@ -15,7 +18,7 @@ core/     Go core — the agent gateway daemon (`xclawd`).
           driver abstraction, SQLite store, router, gateway. Single static
           binary, zero cgo, cross-compiles to mac/linux/windows.
             core/cmd/xclawd   daemon entry point
-            core/agent        Driver abstraction + Claude/Codex drivers
+            core/agent        Driver abstraction + Claude driver
             core/store        SQLite persistence (sessions, messages, resume map)
             core/router       per-session locking + sessionKey + rate limiting   (WIP)
             core/gateway      handleMessage orchestration pipeline               (WIP)
@@ -39,8 +42,8 @@ lockstep — a control-bus change touches all three in a single commit.
 
 ## Status
 
-- ✅ `core/agent` driver abstraction proven across two very different agent
-  protocols (Claude one-shot stream-json; Codex long-lived JSON-RPC).
+- ✅ `core/agent` driver abstraction: Claude driver (one-shot stream-json)
+  spawns the CLI and normalizes its output to a unified `AgentEvent` stream.
 - ✅ `core/store` SQLite persistence (sessions / messages / resume map, 7-day TTL).
 - ✅ `core/router` + `core/gateway` — cc-channel's gateway pipeline ported
   (per-session lock, rate limiting, mention gate, resume continuity).

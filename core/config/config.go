@@ -23,13 +23,11 @@ type SDKConfig struct {
 	SystemPrompt    string            `json:"systemPrompt,omitempty"`
 	SettingSources  []string          `json:"settingSources,omitempty"`
 	ToolProgress    *bool             `json:"toolProgress,omitempty"`
-	// Model-gateway routing, driver-neutral. DriverEnv maps these to the right
-	// env var names per driver (claude: ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN;
-	// codex: OPENAI_BASE_URL/OPENAI_API_KEY).
+	// Model-gateway routing. DriverEnv maps these to the claude env var names
+	// (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN) for the spawned CLI.
 	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
 	GatewayToken   string            `json:"gatewayToken,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
-	Driver         string            `json:"driver,omitempty"` // xclaw: which AgentDriver (claude|codex)
 }
 
 // RateLimitConfig mirrors rateLimit.*.
@@ -90,7 +88,6 @@ func defaults() Resolved {
 	return Resolved{
 		SDK: SDKConfig{
 			SettingSources: []string{"project"},
-			Driver:         "claude",
 		},
 		RateLimit:        RateLimitConfig{MaxPerMinute: 5},
 		Context:          ContextConfig{MaxContextChars: 6000, HistoryLimit: 40},
@@ -293,9 +290,6 @@ func mergeSDK(dst *SDKConfig, src *SDKConfig) {
 			dst.Env[k] = v
 		}
 	}
-	if src.Driver != "" {
-		dst.Driver = src.Driver
-	}
 }
 
 func mergeRate(dst *RateLimitConfig, src *RateLimitConfig) {
@@ -326,34 +320,22 @@ func soul(botRoot string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// DriverEnv builds the KEY=VALUE environment to layer onto the agent CLI's
+// DriverEnv builds the KEY=VALUE environment to layer onto the claude CLI's
 // process env: the user-declared sdk.env plus the model-gateway routing vars
-// mapped to the names the selected driver understands, appended last so they win
-// over any same-named sdk.env entry.
+// (mapped to the names claude understands), appended last so they win over any
+// same-named sdk.env entry.
 //
-//	claude → ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
-//	codex  → OPENAI_BASE_URL    / OPENAI_API_KEY
+//	ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
 func (r Resolved) DriverEnv() []string {
 	var out []string
 	for k, v := range r.SDK.Env {
 		out = append(out, k+"="+v)
 	}
-	baseVar, tokenVar := gatewayEnvNames(r.SDK.Driver)
 	if r.SDK.GatewayBaseURL != "" {
-		out = append(out, baseVar+"="+r.SDK.GatewayBaseURL)
+		out = append(out, "ANTHROPIC_BASE_URL="+r.SDK.GatewayBaseURL)
 	}
 	if r.SDK.GatewayToken != "" {
-		out = append(out, tokenVar+"="+r.SDK.GatewayToken)
+		out = append(out, "ANTHROPIC_AUTH_TOKEN="+r.SDK.GatewayToken)
 	}
 	return out
-}
-
-// gatewayEnvNames returns the (baseURL, token) env var names for a driver.
-func gatewayEnvNames(driver string) (baseVar, tokenVar string) {
-	switch driver {
-	case "codex":
-		return "OPENAI_BASE_URL", "OPENAI_API_KEY"
-	default: // claude
-		return "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"
-	}
 }

@@ -53,7 +53,7 @@ Derived from the unified `agent.AgentEvent` plus gateway lifecycle:
 ## Notes
 
 - The `session.*` event vocabulary is a 1:1 projection of `core/agent`'s
-  `AgentEvent`, so the same normalization that unifies Claude and Codex also
-  unifies what every shell renders.
+  `AgentEvent`, so the same normalization that turns a driver's native output
+  into a unified stream also unifies what every shell renders.
 - Secrets travel **into** the core (`secret.inject`) but never appear in any
   event or response; the core holds them in memory only.

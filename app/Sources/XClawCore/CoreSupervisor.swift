@@ -23,8 +23,6 @@ public final class CoreSupervisor: @unchecked Sendable {
         public var socketPath: String
         /// SQLite path (-db). Single-bot mode only; defaults to a temp file.
         public var dbPath: String
-        /// Agent driver (-driver). Single-bot mode only.
-        public var driver: String
         /// When non-empty, run in multi-bot config mode: `-config <configPath>
         /// -control <socketPath>`. Empty path with configMode=true uses the
         /// daemon's default ~/.xclaw/config.json. Takes precedence over the
@@ -35,12 +33,11 @@ public final class CoreSupervisor: @unchecked Sendable {
         public var extraArgs: [String]
 
         public init(binaryPath: String, socketPath: String, dbPath: String = "",
-                    driver: String = "claude", configMode: Bool = false,
+                    configMode: Bool = false,
                     configPath: String = "", extraArgs: [String] = []) {
             self.binaryPath = binaryPath
             self.socketPath = socketPath
             self.dbPath = dbPath
-            self.driver = driver
             self.configMode = configMode
             self.configPath = configPath
             self.extraArgs = extraArgs
@@ -102,7 +99,7 @@ public final class CoreSupervisor: @unchecked Sendable {
             // lets the daemon use its default ~/.xclaw/config.json.
             args = ["-config", config.configPath, "-control", config.socketPath]
         } else {
-            args = ["-control", config.socketPath, "-no-repl", "-driver", config.driver]
+            args = ["-control", config.socketPath, "-no-repl"]
             if !config.dbPath.isEmpty {
                 args += ["-db", config.dbPath]
             }

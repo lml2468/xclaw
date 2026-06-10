@@ -1,39 +1,42 @@
 # XClaw core (`xclawd`)
 
-The XClaw gateway daemon, written in Go. It **drives coding agents (Claude,
-Codex, …) by spawning their CLI / app-server and normalizing their output into
-one unified event stream** — replacing the Node-only `claude-agent-sdk`. Single
-static binary, zero cgo, cross-compiles everywhere. Native shells (the Swift
-macOS app in `../app`) sit on top via the control bus (`../proto`).
+The XClaw gateway daemon, written in Go. It **drives coding agents by spawning
+their CLI and normalizing their output into one unified event stream** —
+replacing the Node-only `claude-agent-sdk`. Single static binary, zero cgo,
+cross-compiles everywhere. Native shells (the Swift macOS app in `../app`) sit on
+top via the control bus (`../proto`).
+
+Phase 1 ships a single driver — **Claude** — behind the `agent.Driver`
+abstraction. The abstraction is the point: a second agent (Codex, Gemini, …)
+re-enters as another `Driver` implementation without touching the gateway,
+router, store, or control bus.
 
 > Status: headless MVP runs end-to-end — `inbound → router (lock + gate +
 > rate limit) → gateway → agent driver → outbound sink`, with SQLite-backed
-> sessions/messages and per-session resume continuity. Driver abstraction
-> proven across two very different agent protocols.
+> sessions/messages and per-session resume continuity.
 
 ## What this proves
 
 | Claim | How it's proven | Result |
 |---|---|---|
 | The `claude` CLI can replace `claude-agent-sdk` | `agent.ClaudeDriver` spawns `claude -p --output-format stream-json --verbose [--resume …]` and normalizes its line-delimited JSON | ✅ live spawn + parse verified against real CLI output (`system`/`init`/`api_retry` lines + extracted session id) |
-| **The same `Driver` interface holds across a totally different protocol** | `agent.CodexDriver` spawns `codex app-server` (long-lived JSON-RPC over stdio, duplex) and normalizes its notifications into the same `AgentEvent` vocabulary | ✅ live handshake verified against real `codex app-server` (`initialize` → `thread/start` returned real thread id → server notifications normalized); `TestCrossDriverVocabularyParity` proves both protocols reduce to the same ordered event sequence |
-| Agent output normalizes to one unified stream | `agent.AgentEvent` + per-driver translators | ✅ unit tests on recorded fixtures (no API key needed) for both drivers |
-| Resume/session continuity works without the SDK | `store.Store` (pure-Go SQLite) maps `sessionKey → resume_id`; gateway persists then resumes | ✅ verified by `gateway` tests (second turn carries the first turn's resume id) and live codex thread ids |
+| Agent output normalizes to one unified stream | `agent.AgentEvent` + the driver translator | ✅ unit tests on recorded fixtures (no API key needed) |
+| Resume/session continuity works without the SDK | `store.Store` (pure-Go SQLite) maps `sessionKey → resume_id`; gateway persists then resumes | ✅ verified by `gateway` tests (second turn carries the first turn's resume id) |
 | Go core = single static binary, trivial cross-compile | `CGO_ENABLED=0 go build` to 5 platforms | ✅ darwin/{arm64,amd64}, linux/{amd64,arm64}, windows/amd64 — all ~10MB, zero cgo |
 
-The Codex row is the abstraction's real stress test: Claude is a **one-shot CLI
-streaming stdout**; Codex is a **persistent JSON-RPC duplex process**. Two
-completely different protocol shapes, one `Driver` interface, one downstream
-`consume()` that does not change a line. That is the multi-agent foundation.
+Everything downstream of `agent.Driver` — router, store, gateway `consume()`,
+control bus — depends only on the `AgentEvent` vocabulary, never on Claude
+specifics. That is the multi-agent foundation: adding a driver is additive.
 
-## Drivers
+## Driver
 
 | Driver | Mechanism | Native protocol |
 |---|---|---|
 | `ClaudeDriver` | `claude -p --output-format stream-json` | line-delimited JSON over stdout (one-shot) |
-| `CodexDriver`  | `codex app-server` | JSON-RPC 2.0 over stdio (long-lived, duplex): `initialize` → `thread/start`/`thread/resume` → `turn/start` → consume `item/*` + `turn/completed` notifications |
 
-Both satisfy `agent.Driver` (compile-time asserted in `codex_test.go`).
+`ClaudeDriver` satisfies `agent.Driver`. Headless invariants are baked in
+(`--allowedTools * --permission-mode bypassPermissions`): there is no terminal
+to answer approval prompts, so any other mode would hang the turn.
 
 ## Layout
 
@@ -43,7 +46,6 @@ cmd/xclawd/   daemon entry point — wires store+router+gateway+driver; ships a
 agent/        Driver abstraction (the heart). Everything above depends only on this.
   agent.go    AgentEvent, Request, Capabilities, Driver interface
   claude.go   ClaudeDriver: spawn claude CLI, parse stream-json → AgentEvent
-  codex.go    CodexDriver: spawn codex app-server, JSON-RPC → AgentEvent
   replay.go   expose parser for offline replay
 store/        SQLite persistence: sessions + messages + resume map, 7-day TTL
 router/       sessionKey derivation + per-session serial lock + 3-bucket rate limit
@@ -64,9 +66,8 @@ fixtures/     recorded stream-json turn (text + tool_use + result)
 ## Run
 
 ```bash
-go test ./...                            # drivers, store, router, gateway, control, im/octo
+go test ./...                            # driver, store, router, gateway, control, im/octo
 go run ./cmd/xclawd                      # REPL on stdin, claude driver
-go run ./cmd/xclawd -driver codex        # codex app-server driver
 go run ./cmd/xclawd -control /tmp/xclaw.sock           # serve control bus (GUI)
 go run ./cmd/xclawd -octo-api https://octo.example -octo-token bf_xxx   # single Octo IM bot
 go run ./cmd/xclawd -config                # multi-bot from ~/.xclaw/config.json
@@ -94,16 +95,14 @@ connector, each under `~/.xclaw/<id>/`. Layout:
 ## Notes / next
 
 - **Auth:** this machine's `claude` returns 401 on direct Anthropic calls (its
-  key is Claude-Code-internal, not for standalone CLI) and `codex` is not logged
-  in, so live turns produce no assistant text here. The full pipeline — spawn,
-  protocol handshake, event normalization, routing, locking, persistence,
-  multi-turn resume — is verified regardless (unit tests + live handshakes). A
-  real key / login lights up the assistant-text path end-to-end.
+  key is Claude-Code-internal, not for standalone CLI), so live turns produce no
+  assistant text here. The full pipeline — spawn, event normalization, routing,
+  locking, persistence, multi-turn resume — is verified regardless (unit tests +
+  live spawn). A real key / model gateway lights up the assistant-text path
+  end-to-end.
 - **Next:**
-  - Control bus (`../proto`): expose the gateway over NDJSON-over-UDS so the
-    Swift app (`../app`) can drive bots and render the event stream.
-  - IM layer: a `Gateway`-fronting connector (e.g. Octo/WuKongIM) that produces
-    `router.InboundMessage` and consumes the `Sink`.
-  - Port remaining cc-channel logic: group context, cron, prompt-safety,
-    skills, config (bot-first layout).
-  - More drivers (e.g. Gemini) — each just implements `agent.Driver`.
+  - More drivers (e.g. Codex, Gemini) — each just implements `agent.Driver`,
+    additive to the gateway. Codex's `app-server` is a long-lived JSON-RPC duplex
+    process — a different protocol shape that still reduces to the same
+    `AgentEvent` stream, which is the abstraction's real stress test.
+

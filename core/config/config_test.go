@@ -34,7 +34,7 @@ func TestSingleBotDefaults(t *testing.T) {
 	}
 	// defaults applied
 	if b.RateLimit.MaxPerMinute != 5 || b.Context.MaxContextChars != 6000 ||
-		b.SDK.Driver != "claude" || b.MaxResponseChars != 512*1024 {
+		b.MaxResponseChars != 512*1024 {
 		t.Fatalf("defaults wrong: %+v", b)
 	}
 	// derived paths

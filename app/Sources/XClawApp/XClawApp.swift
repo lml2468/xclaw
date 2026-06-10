@@ -140,7 +140,7 @@ struct ConsoleView: View {
             Spacer()
             Button("Reset") { model.reset() }
             Button(model.connected ? "Restart" : "Start") {
-                model.stop(); model.start(driver: model.driver)
+                model.stop(); model.start()
             }
         }
         .padding(12)

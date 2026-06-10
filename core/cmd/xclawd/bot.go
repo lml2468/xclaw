@@ -51,6 +51,7 @@ type botRuntime struct {
 	cfg     config.Resolved
 	gateway *gateway.Gateway
 	store   *store.Store
+	secrets *secretStore // in-memory tokens (seeded from cfg, updated by secret.inject)
 
 	mu        sync.Mutex
 	connected bool
@@ -195,15 +196,24 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		}
 	}()
 
+	// Per-bot secret store: seed from the config file (the headless fallback),
+	// then let secret.inject (from the GUI's Keychain) override at runtime.
+	sec := &secretStore{}
+	_ = sec.Set(secretKindOcto, cfg.OctoToken)
+	_ = sec.Set(secretKindGateway, cfg.Agent.GatewayToken)
+
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
 	drv := agent.NewClaudeDriver("")
-	drv.Env = cfg.DriverEnv()
+	// Resolve the gateway token lazily per turn so an injected token takes effect.
+	drv.EnvFn = func() []string { return cfg.DriverEnvWith(sec.GatewayToken()) }
 
-	if cfg.APIURL == "" || cfg.OctoToken == "" {
-		return fmt.Errorf("bot %s: config mode requires apiUrl + octoToken", cfg.BotID)
+	if cfg.APIURL == "" {
+		return fmt.Errorf("bot %s: config mode requires apiUrl", cfg.BotID)
 	}
-	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, cfg.OctoToken))
+	// The Octo token is read lazily; it may arrive via secret.inject after start,
+	// so an empty token here is allowed (the connector waits for it).
+	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
 
 	// Sinks: the Octo connector (delivers replies to IM) + control bus (tagged
 	// with this bot's id) when a GUI is attached.
@@ -219,7 +229,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase, cfg.SkillsDir, cfg.GlobalSkillsDir)
 	connector.SetGateway(gw)
 
-	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st}
+	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st, secrets: sec}
 	if reg != nil {
 		reg.add(rtBot)
 	}
@@ -248,6 +258,21 @@ func makeMultiBotHandler(reg *botRegistry, started time.Time) control.CommandHan
 
 		case "bots.list":
 			return reg.list(), nil
+
+		case "secret.inject":
+			var b control.SecretInjectBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			bot := reg.get(b.BotID)
+			if bot == nil {
+				return nil, fmt.Errorf("unknown bot %q", b.BotID)
+			}
+			// Never log b.Value.
+			if err := bot.secrets.Set(b.Kind, b.Value); err != nil {
+				return nil, err
+			}
+			return control.OKBody{OK: true}, nil
 
 		case "session.send":
 			var b control.SessionSendBody

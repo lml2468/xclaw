@@ -9,6 +9,9 @@ import (
 	"testing"
 )
 
+// tok returns a constant token getter for tests.
+func tok(s string) func() string { return func() string { return s } }
+
 func TestRegisterRequestAndResponse(t *testing.T) {
 	var gotAuth, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +25,7 @@ func TestRegisterRequestAndResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewRESTClient(srv.URL+"/", "bf_secret")
+	c := NewRESTClient(srv.URL+"/", tok("bf_secret"))
 	reg, err := c.Register(context.Background(), true)
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -47,7 +50,7 @@ func TestSendTextRequestShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewRESTClient(srv.URL, "bf_secret")
+	c := NewRESTClient(srv.URL, tok("bf_secret"))
 	res, err := c.SendText(context.Background(), "chan1", ChannelGroup, "hi there", []string{"u2"}, false)
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -81,9 +84,46 @@ func TestRESTErrorStatus(t *testing.T) {
 		_, _ = w.Write([]byte("forbidden"))
 	}))
 	defer srv.Close()
-	c := NewRESTClient(srv.URL, "bf")
+	c := NewRESTClient(srv.URL, tok("bf"))
 	_, err := c.Register(context.Background(), false)
 	if err == nil {
 		t.Fatal("expected error on 403")
+	}
+}
+
+// TestRESTClientTokenRotation proves the token is resolved per request: mutating
+// the source between calls changes the Authorization header (this is what lets
+// secret.inject rotate a token without rebuilding the client).
+func TestRESTClientTokenRotation(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(RegisterResponse{
+			RobotID: "r", IMToken: "imtok", WSURL: "wss://x/ws",
+			APIURL: "https://x", OwnerUID: "owner", OwnerChannelID: "oc",
+		})
+	}))
+	defer srv.Close()
+
+	current := ""
+	c := NewRESTClient(srv.URL, func() string { return current })
+	if c.Token() != "" {
+		t.Fatalf("expected empty token initially, got %q", c.Token())
+	}
+
+	current = "bf_first"
+	if _, err := c.Register(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer bf_first" {
+		t.Fatalf("first auth = %q", gotAuth)
+	}
+
+	current = "bf_rotated"
+	if _, err := c.Register(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer bf_rotated" {
+		t.Fatalf("rotated auth = %q", gotAuth)
 	}
 }

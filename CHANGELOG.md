@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: Go build/vet/`gofmt`-gate/`test -race`, zero-cgo
   cross-compile matrix (darwin/linux/windows), and Swift build/test. Plus PR and
   issue templates.
+- Runtime secret injection (`secret.inject` control command, previously specced
+  but unimplemented): the core now holds bot tokens in an in-memory store and
+  resolves them lazily (per REST request / per turn), so tokens can be injected
+  at runtime instead of read from `config.json`. Tokens in the config file are
+  now **optional** — a bot without one waits ("awaiting secret") until injected,
+  then connects. This is the core-side half of moving secrets to the macOS
+  Keychain.
 
 ### Changed
 - Formatted the entire `core/` tree with `gofmt`.

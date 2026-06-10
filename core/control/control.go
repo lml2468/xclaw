@@ -95,6 +95,14 @@ type SessionHistoryBody struct {
 	Limit      int    `json:"limit"`
 }
 
+// SecretInjectBody carries a single secret into the core (proto: secret.inject).
+// The value is held in memory only — never persisted, never logged.
+type SecretInjectBody struct {
+	BotID string `json:"botId,omitempty"`
+	Kind  string `json:"kind"` // e.g. "octoToken" | "gatewayToken"
+	Value string `json:"value"`
+}
+
 // Responses / event bodies (server → client)
 
 type OKBody struct {

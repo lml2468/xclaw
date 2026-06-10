@@ -100,6 +100,12 @@ not a config field: SOUL.md (who the bot is) followed by AGENTS.md (how it shoul
 behave) are concatenated and passed to the agent as the operator-trusted prompt.
 Either file may be omitted.
 
+Secrets (`octoToken`, `agent.gatewayToken`) are **optional** in the file: they
+can be injected at runtime over the control bus (`secret.inject`) — the macOS app
+keeps them in the Keychain. A bot started without a token waits ("awaiting
+secret") until one is injected, then connects. Put tokens in the file only for
+headless/no-GUI deployments.
+
 ## Notes / next
 
 - **Auth:** this machine's `claude` returns 401 on direct Anthropic calls (its

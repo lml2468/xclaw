@@ -13,21 +13,32 @@ import (
 	"github.com/google/uuid"
 )
 
-// RESTClient talks to the Octo bot REST API (api.ts). Auth is Bearer botToken.
+// RESTClient talks to the Octo bot REST API (api.ts). Auth is Bearer token,
+// resolved lazily per request via the token func so it can be injected/rotated
+// at runtime (see secret.inject) without rebuilding the client.
 type RESTClient struct {
-	apiURL   string
-	botToken string
-	http     *http.Client
+	apiURL string
+	token  func() string
+	http   *http.Client
 }
 
-// NewRESTClient constructs a client. apiURL trailing slashes are stripped.
-func NewRESTClient(apiURL, botToken string) *RESTClient {
+// NewRESTClient constructs a client. apiURL trailing slashes are stripped. token
+// is read on every request; pass a getter backed by the in-memory secret store
+// (or a constant func for a fixed token).
+func NewRESTClient(apiURL string, token func() string) *RESTClient {
+	if token == nil {
+		token = func() string { return "" }
+	}
 	return &RESTClient{
-		apiURL:   strings.TrimRight(apiURL, "/"),
-		botToken: botToken,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		apiURL: strings.TrimRight(apiURL, "/"),
+		token:  token,
+		http:   &http.Client{Timeout: 30 * time.Second},
 	}
 }
+
+// Token returns the currently-resolved bearer token (used by the connector to
+// decide whether a token has been injected yet).
+func (c *RESTClient) Token() string { return c.token() }
 
 // RegisterResponse mirrors BotRegisterResp (types.ts) — all six fields.
 type RegisterResponse struct {
@@ -121,7 +132,7 @@ func (c *RESTClient) postJSON(ctx context.Context, path string, body any, out an
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	req.Header.Set("Authorization", "Bearer "+c.token())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

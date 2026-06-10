@@ -1,5 +1,5 @@
 {
-  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry overrides them. Per-bot persona/behavior lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.",
+  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry overrides them. Per-bot persona/behavior lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/. Secrets (octoToken, agent.gatewayToken) are OPTIONAL here: the macOS app stores them in the Keychain and injects them at runtime (secret.inject). Set them inline only for headless/no-GUI deployments.",
   "apiUrl": "https://your-octo-server.example",
   "agent": {
     "_comment": "Shared defaults for every bot; override per bot in bots[].",

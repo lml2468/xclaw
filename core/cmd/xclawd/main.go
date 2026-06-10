@@ -72,6 +72,17 @@ func main() {
 
 	started := time.Now()
 
+	// Lone secret store for the single-bot flag path: seeded from the flag/env
+	// token, updatable via secret.inject over the control bus. The driver reads
+	// any injected gateway token lazily per turn.
+	sec := &secretStore{}
+	drv.EnvFn = func() []string {
+		if t := sec.GatewayToken(); t != "" {
+			return []string{"ANTHROPIC_AUTH_TOKEN=" + t}
+		}
+		return nil
+	}
+
 	// Sinks fan out: stdout always, control bus + Octo connector when enabled.
 	sinks := multiSink{&stdoutSink{}}
 	rt := router.New(router.Config{MaxPerMinute: *maxPerMin})
@@ -93,7 +104,8 @@ func main() {
 		if token == "" {
 			fatal("-octo-api set but no token (use -octo-token or XCLAW_OCTO_TOKEN)")
 		}
-		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, token))
+		_ = sec.Set(secretKindOcto, token)
+		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, sec.OctoToken))
 		sinks = append(sinks, connector)
 	}
 
@@ -104,7 +116,7 @@ func main() {
 	}
 
 	if srv != nil {
-		srv.SetHandler(makeCommandHandler(gw, st, drv, started))
+		srv.SetHandler(makeCommandHandler(gw, st, drv, sec, started))
 		ln := mustListenUnix(*controlSock)
 		defer ln.Close()
 		defer os.Remove(*controlSock)
@@ -251,7 +263,7 @@ func mustListenUnix(path string) net.Listener {
 // makeCommandHandler builds the control-bus command dispatcher. session.send is
 // fired in a goroutine so the command returns immediately and the turn streams
 // back as events.
-func makeCommandHandler(gw *gateway.Gateway, st *store.Store, drv agent.Driver, started time.Time) control.CommandHandler {
+func makeCommandHandler(gw *gateway.Gateway, st *store.Store, drv agent.Driver, sec *secretStore, started time.Time) control.CommandHandler {
 	return func(cmdType string, body json.RawMessage) (any, error) {
 		switch cmdType {
 		case "health":
@@ -259,6 +271,17 @@ func makeCommandHandler(gw *gateway.Gateway, st *store.Store, drv agent.Driver, 
 				Uptime: int64(time.Since(started).Seconds()),
 				Driver: drv.Name(),
 			}, nil
+
+		case "secret.inject":
+			var b control.SecretInjectBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			// Never log b.Value.
+			if err := sec.Set(b.Kind, b.Value); err != nil {
+				return nil, err
+			}
+			return control.OKBody{OK: true}, nil
 
 		case "session.send":
 			var b control.SessionSendBody

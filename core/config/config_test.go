@@ -160,12 +160,42 @@ func TestSSRFRejection(t *testing.T) {
 	}
 }
 
-func TestMissingTokenRejected(t *testing.T) {
+// A bot with no octoToken now loads fine — the token is injected at runtime
+// (secret.inject) from the GUI's Keychain. apiUrl stays in the file.
+func TestMissingTokenAllowed(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"bots":[{"id":"alpha"}]}`) // bot has no octoToken
-	if _, err := Load(cfg); err == nil {
-		t.Fatal("missing token must be rejected")
+	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"alpha"}]}`)
+	bots, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("tokenless bot should load (runtime injection): %v", err)
+	}
+	if len(bots) != 1 || bots[0].OctoToken != "" {
+		t.Fatalf("unexpected: %+v", bots)
+	}
+}
+
+func TestDriverEnvWith(t *testing.T) {
+	r := Resolved{Agent: AgentConfig{GatewayBaseURL: "https://gw.example/v1"}}
+	// Injected token is used, regardless of the (empty) config value.
+	env := r.DriverEnvWith("sk_injected")
+	var sawToken, sawBase bool
+	for _, e := range env {
+		if e == "ANTHROPIC_AUTH_TOKEN=sk_injected" {
+			sawToken = true
+		}
+		if e == "ANTHROPIC_BASE_URL=https://gw.example/v1" {
+			sawBase = true
+		}
+	}
+	if !sawToken || !sawBase {
+		t.Fatalf("env missing entries: token=%v base=%v (%v)", sawToken, sawBase, env)
+	}
+	// Empty token omits the auth var.
+	for _, e := range r.DriverEnvWith("") {
+		if e == "ANTHROPIC_AUTH_TOKEN=" {
+			t.Fatal("empty token must not emit ANTHROPIC_AUTH_TOKEN")
+		}
 	}
 }
 

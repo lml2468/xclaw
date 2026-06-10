@@ -37,9 +37,10 @@ type ContextConfig struct {
 }
 
 // BotEntry is one bot's full inline configuration in the global config's bots[]
-// list. octoToken is required; apiUrl/agent/rateLimit/context override the
-// global top-level defaults of the same name. The bot's persona/behavior prompt
-// is NOT here — it lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.
+// list. octoToken is OPTIONAL — it may be injected at runtime (secret.inject)
+// instead of stored here; apiUrl/agent/rateLimit/context override the global
+// top-level defaults of the same name. The bot's persona/behavior prompt is NOT
+// here — it lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.
 type BotEntry struct {
 	ID        string           `json:"id,omitempty"`
 	OctoToken string           `json:"octoToken,omitempty"`
@@ -188,10 +189,9 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		// System prompt: SOUL.md (identity) + AGENTS.md (behavior), file-based.
 		r.SystemPrompt = soul(botRoot)
 
-		// validation
-		if r.OctoToken == "" {
-			return nil, fmt.Errorf("bot %q: missing octoToken", id)
-		}
+		// validation. octoToken is intentionally NOT required: it may be omitted
+		// from the file and injected at runtime via the control bus (secret.inject)
+		// from the GUI's Keychain. The connector waits for a token before connecting.
 		if r.APIURL != "" && !isAllowedURL(r.APIURL) {
 			return nil, fmt.Errorf("bot %q: unsafe apiUrl %q (must be https:// or http://localhost; SSRF protection)", id, r.APIURL)
 		}
@@ -275,6 +275,13 @@ func soul(botRoot string) string {
 //
 //	ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
 func (r Resolved) DriverEnv() []string {
+	return r.DriverEnvWith(r.Agent.GatewayToken)
+}
+
+// DriverEnvWith is DriverEnv with the gateway token supplied explicitly, so the
+// caller can pass a runtime-injected token (from the in-memory secret store)
+// instead of the config-file value. An empty gatewayToken omits the auth var.
+func (r Resolved) DriverEnvWith(gatewayToken string) []string {
 	var out []string
 	for k, v := range r.Agent.Env {
 		out = append(out, k+"="+v)
@@ -282,8 +289,8 @@ func (r Resolved) DriverEnv() []string {
 	if r.Agent.GatewayBaseURL != "" {
 		out = append(out, "ANTHROPIC_BASE_URL="+r.Agent.GatewayBaseURL)
 	}
-	if r.Agent.GatewayToken != "" {
-		out = append(out, "ANTHROPIC_AUTH_TOKEN="+r.Agent.GatewayToken)
+	if gatewayToken != "" {
+		out = append(out, "ANTHROPIC_AUTH_TOKEN="+gatewayToken)
 	}
 	return out
 }

@@ -1,9 +1,43 @@
 package octo
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// TestConnectorAwaitsTokenBeforeRegister proves the await-token guard: with no
+// token available, Run reports "awaiting secret" and never calls Register.
+func TestConnectorAwaitsTokenBeforeRegister(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer srv.Close()
+
+	c := NewConnector(NewRESTClient(srv.URL, func() string { return "" })) // token never arrives
+	var awaiting int32
+	c.OnStatus(func(connected bool, lastErr string) {
+		if !connected && lastErr == "awaiting secret" {
+			atomic.StoreInt32(&awaiting, 1)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_ = c.Run(ctx) // returns once ctx expires
+
+	if atomic.LoadInt32(&awaiting) == 0 {
+		t.Fatal("connector should report 'awaiting secret' when no token is set")
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("connector must not hit the API without a token, got %d requests", n)
+	}
+}
 
 func TestMentionsBot(t *testing.T) {
 	// explicit uid mention

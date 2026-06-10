@@ -26,6 +26,10 @@ type ClaudeDriver struct {
 	// Env are extra KEY=VALUE entries layered onto os.Environ() for the spawned
 	// CLI (e.g. ANTHROPIC_BASE_URL, OCTO_BOT_ID, GH_TOKEN).
 	Env []string
+	// EnvFn, when set, is evaluated on every Query to build the extra env,
+	// overriding the static Env. Lets a caller inject a runtime-resolved value
+	// (e.g. a gateway token from the in-memory secret store) per turn.
+	EnvFn func() []string
 }
 
 func NewClaudeDriver(bin string) *ClaudeDriver {
@@ -73,7 +77,11 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
-	cmd.Env = mergedEnv(d.Env)
+	extraEnv := d.Env
+	if d.EnvFn != nil {
+		extraEnv = d.EnvFn()
+	}
+	cmd.Env = mergedEnv(extraEnv)
 	// On ctx cancellation, CommandContext kills the process; WaitDelay bounds how
 	// long Wait then blocks if a grandchild keeps the output pipe open, so the
 	// reader goroutines can't hang the turn indefinitely.

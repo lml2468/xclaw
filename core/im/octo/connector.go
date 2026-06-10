@@ -42,6 +42,11 @@ type Connector struct {
 	reconnectMax  time.Duration
 }
 
+// awaitTokenPoll is how often Run rechecks for an injected token before it has
+// one (see secret.inject). Short enough that the bot connects promptly once the
+// GUI injects, without busy-spinning.
+const awaitTokenPoll = 2 * time.Second
+
 // OnStatus registers a connection-state callback (used by the daemon's bot
 // registry to surface per-bot status over the control bus).
 func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) { c.onStatus = fn }
@@ -87,6 +92,15 @@ func (c *Connector) Run(ctx context.Context) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+
+		// No token yet (config has none and secret.inject hasn't arrived): wait
+		// for one rather than hammering Register with an empty bearer. The GUI
+		// injects tokens shortly after the control bus connects.
+		if c.rest.Token() == "" {
+			c.setStatus(false, "awaiting secret")
+			sleep(ctx, awaitTokenPoll)
+			continue
 		}
 
 		if !registered {

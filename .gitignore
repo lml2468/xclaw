@@ -4,6 +4,7 @@
 *.exe
 /dist/
 core/xclawd
+core/.xclawd-dev
 
 # Swift
 app/.build/

@@ -13,15 +13,29 @@ multi-target layout.
 
 ## Status
 
-Scaffold. The control-bus client and AppModel wire up once the core MVP and the
-`proto/` contract are finalized.
+The app now boots the core and renders the live event stream:
 
-## Build
+- **CoreSupervisor** (`XClawCore`) spawns `xclawd` with a control socket,
+  watches it, and restarts with exponential backoff.
+- **AppModel** (`XClawApp`) owns the supervisor + `ControlClient`, folds the
+  inbound event stream into `AppState` on the main actor, and exposes
+  `sessions` / `send` / `reset` to the UI.
+- **Console window + MenuBarExtra** show core/bus status, per-session streaming
+  text + tool activity + token usage, and a message composer.
+
+Verified headlessly by an integration test that uses CoreSupervisor to spawn
+the real `xclawd`, connects over the bus, and asserts responses + events flow.
+
+## Run (dev)
 
 ```bash
-swift build
-swift test
-swift run XClawApp
+# from the repo root — builds the Go core, then launches the app which spawns it
+zsh scripts/run-dev.sh            # claude driver
+zsh scripts/run-dev.sh codex      # codex driver
+
+# or directly (point the app at a prebuilt daemon)
+cd core && go build -o .xclawd-dev ./cmd/xclawd
+XCLAWD_BIN=$PWD/.xclawd-dev swift run --package-path ../app XClawApp
 ```
 
 ## Relationship to the core

@@ -47,8 +47,10 @@ lockstep — a control-bus change touches all three in a single commit.
 - ✅ `core/control` + `app/XClawCore` — control bus live end-to-end: the Swift
   client connects over the Unix socket, sends commands, and renders the agent
   event stream broadcast by the Go core.
-- 🚧 `app/XClawApp` — wire AppModel + GUI onto the control client.
+- ✅ `app/XClawApp` — AppModel + CoreSupervisor + MenuBar/console GUI: the app
+  spawns & supervises `xclawd`, connects the bus, and streams sessions live.
 - 🚧 IM connector, cron, group-context, prompt-safety, config (next ports).
+- 🚧 packaging: bundle the signed `xclawd` into the `.app` (Helpers/), Sparkle.
 
 ## Build
 

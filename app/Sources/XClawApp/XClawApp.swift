@@ -1,16 +1,144 @@
 import SwiftUI
+import XClawCore
 
-// Scaffold entry point for the XClaw macOS app. The real shell will own an
-// AppModel that supervises the xclawd process and renders bot/session state
-// from the control bus. For now this is a minimal placeholder so `swift build`
-// succeeds and the target structure is in place.
 @main
 struct XClawApp: App {
+    @State private var model = AppModel()
+
     var body: some Scene {
-        MenuBarExtra("XClaw", systemImage: "bolt.horizontal.circle") {
-            Text("XClaw — control plane scaffold")
+        // Menu bar presence: status + quick actions.
+        MenuBarExtra("XClaw", systemImage: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle") {
+            Text("Core: \(model.coreState)")
+            Text(model.connected ? "Bus: connected" : "Bus: disconnected")
             Divider()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Button("Open Console") {
+                NSApp.activate(ignoringOtherApps: true)
+                openConsoleWindow()
+            }
+            Button("Restart Core") { model.stop(); model.start(driver: model.driver) }
+            Divider()
+            Button("Quit") { model.stop(); NSApplication.shared.terminate(nil) }
         }
+
+        Window("XClaw Console", id: "console") {
+            ConsoleView(model: model)
+                .onAppear { if model.coreState == "stopped" { model.start() } }
+        }
+        .defaultSize(width: 640, height: 520)
+    }
+
+    private func openConsoleWindow() {
+        // Bring the console window forward (SwiftUI opens it on launch).
+        if let w = NSApp.windows.first(where: { $0.title == "XClaw Console" }) {
+            w.makeKeyAndOrderFront(nil)
+        }
+    }
+}
+
+struct ConsoleView: View {
+    @Bindable var model: AppModel
+    @State private var draft: String = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            sessionList
+            Divider()
+            composer
+        }
+        .frame(minWidth: 480, minHeight: 360)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(model.connected ? Color.green : Color.orange)
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("xclaw core — \(model.driver)").font(.headline)
+                Text(model.coreState).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Reset") { model.reset() }
+            Button(model.connected ? "Restart" : "Start") {
+                model.stop(); model.start(driver: model.driver)
+            }
+        }
+        .padding(12)
+    }
+
+    private var sessionList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let err = model.lastError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                if model.sessions.isEmpty {
+                    Text("No sessions yet — send a message below.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 40)
+                }
+                ForEach(model.sessions, id: \.sessionKey) { s in
+                    SessionRow(session: s)
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private var composer: some View {
+        HStack(spacing: 8) {
+            TextField("Message the agent…", text: $draft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+                .onSubmit(sendDraft)
+            Button("Send", action: sendDraft)
+                .keyboardShortcut(.return, modifiers: [])
+                .disabled(!model.connected || draft.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(12)
+    }
+
+    private func sendDraft() {
+        let text = draft
+        draft = ""
+        model.send(text)
+    }
+}
+
+struct SessionRow: View {
+    let session: AppState.SessionView
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(session.sessionKey).font(.subheadline.bold())
+                Spacer()
+                Text(session.lastActivity).font(.caption).foregroundStyle(.secondary)
+                if session.outputTokens > 0 {
+                    Text("· \(session.inputTokens)→\(session.outputTokens) tok")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            if !session.lastTool.isEmpty {
+                Label(session.lastTool, systemImage: "wrench.and.screwdriver")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            // Live streaming text takes precedence; fall back to last reply.
+            let body = session.streamingText.isEmpty ? session.lastReply : session.streamingText
+            if !body.isEmpty {
+                Text(body)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 }

@@ -2,8 +2,9 @@
 import PackageDescription
 
 // XClaw macOS app — native control plane / GUI for the xclawd Go core.
-// Mirrors Open Island's multi-target SwiftPM layout. This is a scaffold: the
-// control-bus client (proto/) and AppModel wire up once the core MVP lands.
+// Three targets: XClawCore (control-bus client + AppState reducer + config/
+// Keychain, agent/IM-agnostic), XClawApp (SwiftUI + AppKit shell), and
+// XClawProbe (a CLI harness that drives a running control socket end-to-end).
 let package = Package(
     name: "XClaw",
     defaultLocalization: "en",

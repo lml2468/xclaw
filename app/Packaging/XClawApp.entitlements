@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- XClaw spawns the xclawd daemon, which spawns agent CLIs (claude/codex)
+         and opens local Unix sockets. Under hardened runtime, fork/exec of
+         signed helpers is allowed without extra entitlements. We disable the
+         library validation only if a future need arises; by default we keep the
+         hardened defaults. Network client access is needed for the control bus
+         (local UDS) and any agent that reaches the network. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Allow executing the bundled xclawd + the agent CLIs it spawns even if
+         they are signed by a different identity (e.g. Homebrew's codex). -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

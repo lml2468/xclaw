@@ -48,16 +48,21 @@ agent/        Driver abstraction (the heart). Everything above depends only on t
 store/        SQLite persistence: sessions + messages + resume map, 7-day TTL
 router/       sessionKey derivation + per-session serial lock + 3-bucket rate limit
 gateway/      handleMessage orchestration: route → store → driver → sink → persist
+control/      control bus: NDJSON-over-UDS server + gateway EventSink (GUI clients)
+im/octo/      Octo IM connector: WuKongIM binary protocol (curve25519 DH + MD5→
+              AES-128-CBC) + REST; inbound → router, replies via REST. Ported
+              wire-compatibly from cc-channel-octo.
 fixtures/     recorded stream-json turn (text + tool_use + result)
 ```
 
 ## Run
 
 ```bash
-go test ./...                            # deterministic: drivers, store, router, gateway
+go test ./...                            # drivers, store, router, gateway, control, im/octo
 go run ./cmd/xclawd                      # REPL on stdin, claude driver
 go run ./cmd/xclawd -driver codex        # codex app-server driver
-echo "hello" | go run ./cmd/xclawd       # one-shot piped input
+go run ./cmd/xclawd -control /tmp/xclaw.sock           # serve control bus (GUI)
+go run ./cmd/xclawd -octo-api https://octo.example -octo-token bf_xxx   # Octo IM bot
 # in the REPL: type a message; /reset clears the session; Ctrl-D exits
 
 # cross-compile the daemon (zero cgo)

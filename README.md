@@ -49,7 +49,10 @@ lockstep — a control-bus change touches all three in a single commit.
   event stream broadcast by the Go core.
 - ✅ `app/XClawApp` — AppModel + CoreSupervisor + MenuBar/console GUI: the app
   spawns & supervises `xclawd`, connects the bus, and streams sessions live.
-- 🚧 IM connector, cron, group-context, prompt-safety, config (next ports).
+- ✅ `core/im/octo` — Octo IM connector: WuKongIM binary protocol (curve25519 DH
+  + MD5→AES-128-CBC, key derivation verified byte-identical to cc-channel) + REST;
+  wired into `xclawd` via `-octo-api`/`-octo-token`.
+- 🚧 cron, group-context, prompt-safety, config (next ports).
 - 🚧 packaging: bundle the signed `xclawd` into the `.app` (Helpers/), Sparkle.
 
 ## Build

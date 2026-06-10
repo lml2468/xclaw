@@ -31,6 +31,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/gateway"
+	"github.com/lml2468/xclaw/core/im/octo"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/store"
 )
@@ -44,6 +45,8 @@ func main() {
 		maxPerMin   = flag.Int("rate", 30, "max messages per minute per session")
 		controlSock = flag.String("control", "", "serve the control bus on this Unix socket path (enables GUI clients)")
 		noREPL      = flag.Bool("no-repl", false, "disable the stdin REPL (control-bus only)")
+		octoAPI     = flag.String("octo-api", "", "Octo API base URL (enables the Octo IM connector)")
+		octoToken   = flag.String("octo-token", "", "Octo bot token (bf_*); or set XCLAW_OCTO_TOKEN")
 	)
 	flag.Parse()
 
@@ -63,7 +66,7 @@ func main() {
 
 	started := time.Now()
 
-	// Sinks fan out: stdout always, control bus when enabled.
+	// Sinks fan out: stdout always, control bus + Octo connector when enabled.
 	sinks := multiSink{&stdoutSink{}}
 	rt := router.New(router.Config{MaxPerMinute: *maxPerMin})
 
@@ -71,6 +74,21 @@ func main() {
 	if *controlSock != "" {
 		srv = control.NewServer(nil) // handler installed after gw exists
 		sinks = append(sinks, control.NewEventSink(srv))
+	}
+
+	// Octo IM connector: it is both an inbound source (feeds the gateway) and a
+	// gateway.Sink (delivers replies via REST), so build it before the gateway.
+	token := *octoToken
+	if token == "" {
+		token = os.Getenv("XCLAW_OCTO_TOKEN")
+	}
+	var connector *octo.Connector
+	if *octoAPI != "" {
+		if token == "" {
+			fatal("-octo-api set but no token (use -octo-token or XCLAW_OCTO_TOKEN)")
+		}
+		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, token))
+		sinks = append(sinks, connector)
 	}
 
 	gw := gateway.New(drv, st, rt, sinks)
@@ -88,11 +106,21 @@ func main() {
 		fmt.Printf("control bus listening on %s\n", *controlSock)
 	}
 
+	if connector != nil {
+		connector.SetGateway(gw)
+		go func() {
+			if err := connector.Run(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "octo connector: %v\n", err)
+			}
+		}()
+		fmt.Printf("octo connector started (api=%s)\n", *octoAPI)
+	}
+
 	fmt.Printf("xclawd — driver=%s caps=%+v\n", drv.Name(), drv.Capabilities())
 	fmt.Printf("db=%s  session=dm:%s\n", *dbPath, *fromUID)
 
-	if *noREPL {
-		fmt.Println("control-bus only; press Ctrl-C to exit")
+	if *noREPL || connector != nil {
+		fmt.Println("running (control bus / IM connector); press Ctrl-C to exit")
 		select {} // block forever
 	}
 

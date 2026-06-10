@@ -70,7 +70,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "swept %d expired session(s)\n", n)
 	}
 
-	drv, err := makeDriver(*driverName, *bin)
+	drv, err := makeDriver(*driverName, *bin, nil)
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -144,12 +144,16 @@ func main() {
 	runREPL(context.Background(), gw, st, *fromUID)
 }
 
-func makeDriver(name, bin string) (agent.Driver, error) {
+func makeDriver(name, bin string, env []string) (agent.Driver, error) {
 	switch name {
 	case "claude":
-		return agent.NewClaudeDriver(bin), nil
+		d := agent.NewClaudeDriver(bin)
+		d.Env = env
+		return d, nil
 	case "codex":
-		return agent.NewCodexDriver(bin), nil
+		d := agent.NewCodexDriver(bin)
+		d.Env = env
+		return d, nil
 	default:
 		return nil, fmt.Errorf("unknown driver %q (claude|codex)", name)
 	}

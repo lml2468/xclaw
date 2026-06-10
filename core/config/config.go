@@ -25,9 +25,13 @@ type SDKConfig struct {
 	SystemPrompt    string            `json:"systemPrompt,omitempty"`
 	SettingSources  []string          `json:"settingSources,omitempty"`
 	ToolProgress    *bool             `json:"toolProgress,omitempty"`
-	AnthropicBaseURL string           `json:"anthropicBaseUrl,omitempty"`
-	Env             map[string]string `json:"env,omitempty"`
-	Driver          string            `json:"driver,omitempty"` // xclaw: which AgentDriver (claude|codex)
+	// Model-gateway routing, driver-neutral. DriverEnv maps these to the right
+	// env var names per driver (claude: ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN;
+	// codex: OPENAI_BASE_URL/OPENAI_API_KEY).
+	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
+	GatewayToken   string            `json:"gatewayToken,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Driver         string            `json:"driver,omitempty"` // xclaw: which AgentDriver (claude|codex)
 }
 
 // RateLimitConfig mirrors rateLimit.*.
@@ -234,8 +238,8 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		if r.APIURL != "" && !isAllowedURL(r.APIURL) {
 			return nil, fmt.Errorf("bot %q: unsafe apiUrl %q (must be https:// or http://localhost; SSRF protection)", id, r.APIURL)
 		}
-		if r.SDK.AnthropicBaseURL != "" && !isAllowedURL(r.SDK.AnthropicBaseURL) {
-			return nil, fmt.Errorf("bot %q: unsafe anthropicBaseUrl %q (SSRF protection)", id, r.SDK.AnthropicBaseURL)
+		if r.SDK.GatewayBaseURL != "" && !isAllowedURL(r.SDK.GatewayBaseURL) {
+			return nil, fmt.Errorf("bot %q: unsafe gatewayBaseUrl %q (SSRF protection)", id, r.SDK.GatewayBaseURL)
 		}
 
 		out = append(out, r)
@@ -281,11 +285,21 @@ func mergeSDK(dst *SDKConfig, src *SDKConfig) {
 	if src.ToolProgress != nil {
 		dst.ToolProgress = src.ToolProgress
 	}
-	if src.AnthropicBaseURL != "" {
-		dst.AnthropicBaseURL = src.AnthropicBaseURL
+	if src.GatewayBaseURL != "" {
+		dst.GatewayBaseURL = src.GatewayBaseURL
 	}
+	if src.GatewayToken != "" {
+		dst.GatewayToken = src.GatewayToken
+	}
+	// env merges per-key (global base + per-bot overrides/additions), not whole
+	// replacement — so a bot can add GH_TOKEN without dropping a global OCTO_BOT_ID.
 	if len(src.Env) > 0 {
-		dst.Env = src.Env
+		if dst.Env == nil {
+			dst.Env = map[string]string{}
+		}
+		for k, v := range src.Env {
+			dst.Env[k] = v
+		}
 	}
 	if src.Driver != "" {
 		dst.Driver = src.Driver
@@ -318,4 +332,36 @@ func soul(botRoot string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// DriverEnv builds the KEY=VALUE environment to layer onto the agent CLI's
+// process env: the user-declared sdk.env plus the model-gateway routing vars
+// mapped to the names the selected driver understands, appended last so they win
+// over any same-named sdk.env entry.
+//
+//	claude → ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
+//	codex  → OPENAI_BASE_URL    / OPENAI_API_KEY
+func (r Resolved) DriverEnv() []string {
+	var out []string
+	for k, v := range r.SDK.Env {
+		out = append(out, k+"="+v)
+	}
+	baseVar, tokenVar := gatewayEnvNames(r.SDK.Driver)
+	if r.SDK.GatewayBaseURL != "" {
+		out = append(out, baseVar+"="+r.SDK.GatewayBaseURL)
+	}
+	if r.SDK.GatewayToken != "" {
+		out = append(out, tokenVar+"="+r.SDK.GatewayToken)
+	}
+	return out
+}
+
+// gatewayEnvNames returns the (baseURL, token) env var names for a driver.
+func gatewayEnvNames(driver string) (baseVar, tokenVar string) {
+	switch driver {
+	case "codex":
+		return "OPENAI_BASE_URL", "OPENAI_API_KEY"
+	default: // claude
+		return "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"
+	}
 }

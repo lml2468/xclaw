@@ -22,6 +22,9 @@ type ClaudeDriver struct {
 	// ExtraArgs are appended verbatim (e.g. --permission-mode) — left to the
 	// caller's policy so the driver never hard-codes bypassPermissions.
 	ExtraArgs []string
+	// Env are extra KEY=VALUE entries layered onto os.Environ() for the spawned
+	// CLI (e.g. ANTHROPIC_BASE_URL, OCTO_BOT_ID, GH_TOKEN).
+	Env []string
 }
 
 func NewClaudeDriver(bin string) *ClaudeDriver {
@@ -63,6 +66,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
+	cmd.Env = mergedEnv(d.Env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

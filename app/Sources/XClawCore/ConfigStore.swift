@@ -13,12 +13,24 @@ public struct BotConfig: Sendable, Equatable, Identifiable {
     public var apiURL: String
     public var driver: String     // "claude" | "codex"
     public var octoToken: String
+    /// Model-gateway routing (driver-neutral; the Go core maps these to the
+    /// driver's env var names: claude→ANTHROPIC_*, codex→OPENAI_*).
+    public var gatewayBaseURL: String
+    public var gatewayToken: String
+    /// Arbitrary extra environment variables injected into the agent CLI
+    /// (e.g. OCTO_BOT_ID, GH_TOKEN, GLAB_TOKEN).
+    public var env: [String: String]
 
-    public init(id: String, apiURL: String = "", driver: String = "claude", octoToken: String = "") {
+    public init(id: String, apiURL: String = "", driver: String = "claude",
+                octoToken: String = "", gatewayBaseURL: String = "",
+                gatewayToken: String = "", env: [String: String] = [:]) {
         self.id = id
         self.apiURL = apiURL
         self.driver = driver
         self.octoToken = octoToken
+        self.gatewayBaseURL = gatewayBaseURL
+        self.gatewayToken = gatewayToken
+        self.env = env
     }
 }
 
@@ -66,7 +78,12 @@ public enum ConfigStore {
         var octoToken: String?
         var apiUrl: String?
         var sdk: SDK?
-        struct SDK: Codable { var driver: String? }
+        struct SDK: Codable {
+            var driver: String?
+            var gatewayBaseUrl: String?
+            var gatewayToken: String?
+            var env: [String: String]?
+        }
     }
 
     // MARK: - load
@@ -89,6 +106,9 @@ public enum ConfigStore {
                 bc.octoToken = bf.octoToken ?? ""
                 if let u = bf.apiUrl, !u.isEmpty { bc.apiURL = u }
                 if let d = bf.sdk?.driver, !d.isEmpty { bc.driver = d }
+                bc.gatewayBaseURL = bf.sdk?.gatewayBaseUrl ?? ""
+                bc.gatewayToken = bf.sdk?.gatewayToken ?? ""
+                bc.env = bf.sdk?.env ?? [:]
             }
             out.append(bc)
         }
@@ -129,7 +149,11 @@ public enum ConfigStore {
             try mkdir(base.appendingPathComponent(b.id, isDirectory: true))
             let bf = BotFile(octoToken: b.octoToken,
                              apiUrl: b.apiURL,
-                             sdk: BotFile.SDK(driver: b.driver))
+                             sdk: BotFile.SDK(
+                                driver: b.driver,
+                                gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
+                                gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
+                                env: b.env.isEmpty ? nil : b.env))
             try writeJSON(bf, to: botConfigURL(base, b.id))
         }
 

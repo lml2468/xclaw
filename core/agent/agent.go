@@ -5,7 +5,20 @@
 // stream-relay) depends only on this package — never on a specific agent.
 package agent
 
-import "context"
+import (
+	"context"
+	"os"
+)
+
+// mergedEnv returns the process environment with `extra` (KEY=VALUE entries)
+// layered on top — later entries win, so callers put overrides (e.g.
+// ANTHROPIC_BASE_URL) last. A nil/empty extra returns os.Environ() unchanged.
+func mergedEnv(extra []string) []string {
+	if len(extra) == 0 {
+		return os.Environ()
+	}
+	return append(os.Environ(), extra...)
+}
 
 // EventKind classifies a normalized agent event.
 type EventKind string

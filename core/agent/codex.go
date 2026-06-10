@@ -26,6 +26,9 @@ import (
 type CodexDriver struct {
 	Bin       string
 	ExtraArgs []string
+	// Env are extra KEY=VALUE entries layered onto os.Environ() for the spawned
+	// app-server (e.g. OCTO_BOT_ID, GH_TOKEN).
+	Env []string
 }
 
 func NewCodexDriver(bin string) *CodexDriver {
@@ -77,6 +80,7 @@ func (d *CodexDriver) Query(ctx context.Context, req Request) (<-chan AgentEvent
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
+	cmd.Env = mergedEnv(d.Env)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)

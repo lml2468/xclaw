@@ -143,8 +143,7 @@ func configModeExposesBotsOverBus() async throws {
     }
     defer { consumer.cancel() }
 
-    _ = try client.send(type: "bots.list", body: [String: String]())
-    try await Task.sleep(for: .seconds(2))
+    await pollBots(client, got: gotBots)
 
     #expect(gotBots.get() == ["alpha", "beta"], "bots.list should expose both bots; got \(gotBots.get())")
 }
@@ -198,8 +197,7 @@ func supervisorConfigModeRunsBots() async throws {
     }
     defer { consumer.cancel() }
 
-    _ = try client.send(type: "bots.list", body: [String: String]())
-    try await Task.sleep(for: .seconds(2))
+    await pollBots(client, got: gotBots)
     #expect(gotBots.get() == ["alpha"], "supervisor config mode should expose the configured bot; got \(gotBots.get())")
 }
 
@@ -210,3 +208,15 @@ final class Box<T>: @unchecked Sendable {
     func set(_ nv: T) { lock.lock(); v = nv; lock.unlock() }
     func get() -> T { lock.lock(); defer { lock.unlock() }; return v }
 }
+
+/// Polls bots.list over the client until the collected ids are non-empty or the
+/// deadline passes. Robust against scheduling jitter when several live tests
+/// spawn daemons in parallel (a single send + fixed sleep was flaky).
+func pollBots(_ client: ControlClient, got: Box<[String]>, attempts: Int = 20) async {
+    for _ in 0..<attempts {
+        _ = try? client.send(type: "bots.list", body: [String: String]())
+        try? await Task.sleep(for: .milliseconds(250))
+        if !got.get().isEmpty { return }
+    }
+}
+

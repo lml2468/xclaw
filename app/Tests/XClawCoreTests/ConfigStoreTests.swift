@@ -30,6 +30,23 @@ func configSaveLoadRoundTrip() throws {
 }
 
 @Test
+func configGatewayAndEnvRoundTrip() throws {
+    try withTempBase { base in
+        let bot = BotConfig(
+            id: "alpha", apiURL: "https://octo.example", driver: "claude", octoToken: "bf_a",
+            gatewayBaseURL: "https://gw.example/v1", gatewayToken: "sk-tok",
+            env: ["OCTO_BOT_ID": "alpha", "GH_TOKEN": "ghp_x"])
+        try ConfigStore.save([bot], base: base)
+        let loaded = try ConfigStore.load(base: base)
+        let a = loaded.first { $0.id == "alpha" }
+        #expect(a?.gatewayBaseURL == "https://gw.example/v1")
+        #expect(a?.gatewayToken == "sk-tok")
+        #expect(a?.env["OCTO_BOT_ID"] == "alpha")
+        #expect(a?.env["GH_TOKEN"] == "ghp_x")
+    }
+}
+
+@Test
 func configRemoveBotPrunesSubtree() throws {
     try withTempBase { base in
         try ConfigStore.save([
@@ -126,7 +143,6 @@ func swiftWrittenConfigParsesInGo() async throws {
     }
     defer { consumer.cancel() }
 
-    _ = try client.send(type: "bots.list", body: [String: String]())
-    try await Task.sleep(for: .seconds(2))
+    await pollBots(client, got: got)
     #expect(got.get() == ["alpha", "beta"], "Go didn't parse the Swift config; got \(got.get())")
 }

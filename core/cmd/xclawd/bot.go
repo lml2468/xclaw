@@ -159,7 +159,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
 	}
 
-	drv, err := makeDriver(cfg.SDK.Driver, "")
+	drv, err := makeDriver(cfg.SDK.Driver, "", cfg.DriverEnv())
 	if err != nil {
 		return fmt.Errorf("bot %s: %w", cfg.BotID, err)
 	}

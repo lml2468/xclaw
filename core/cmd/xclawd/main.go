@@ -139,14 +139,6 @@ func main() {
 	runREPL(context.Background(), gw, st, *fromUID)
 }
 
-// newClaudeDriverWithEnv builds the claude driver with extra env layered on. The
-// agent.Driver abstraction is retained so a second driver can be re-added later
-// without touching the gateway, but phase 1 ships claude only.
-func newClaudeDriverWithEnv(env []string) agent.Driver {
-	d := agent.NewClaudeDriver("")
-	d.Env = env
-	return d
-}
 
 // runREPL reads stdin lines and feeds each as an inbound DM through the gateway.
 func runREPL(ctx context.Context, gw *gateway.Gateway, st *store.Store, fromUID string) {

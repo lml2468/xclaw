@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/gateway"
@@ -48,7 +49,7 @@ type botRuntime struct {
 func (b *botRuntime) info() control.BotInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return control.BotInfo{ID: b.cfg.BotID, Driver: "claude", Connected: b.connected, LastError: b.lastErr}
+	return control.BotInfo{ID: b.cfg.BotID, Connected: b.connected, LastError: b.lastErr}
 }
 
 func (b *botRuntime) setStatus(connected bool, lastErr string) {
@@ -159,7 +160,10 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
 	}
 
-	drv := newClaudeDriverWithEnv(cfg.DriverEnv())
+	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
+	// another (Codex, …) additive to the gateway.
+	drv := agent.NewClaudeDriver("")
+	drv.Env = cfg.DriverEnv()
 
 	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
 

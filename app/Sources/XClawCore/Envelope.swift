@@ -103,7 +103,6 @@ public struct HealthBody: Codable, Sendable {
 
 public struct BotInfo: Codable, Sendable, Identifiable {
     public var id: String
-    public var driver: String?
     public var connected: Bool
     public var lastError: String?
 }

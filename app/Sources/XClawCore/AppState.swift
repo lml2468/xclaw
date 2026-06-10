@@ -17,7 +17,6 @@ public struct AppState: Sendable, Equatable {
 
     public struct BotView: Sendable, Equatable, Identifiable {
         public var id: String
-        public var driver: String = ""
         public var connected: Bool = false
         public var lastError: String?
         public var sessions: [String: SessionView] = [:]
@@ -41,7 +40,6 @@ public struct AppState: Sendable, Equatable {
     public mutating func setBots(_ infos: [BotInfo]) {
         for info in infos {
             var b = bots[info.id] ?? BotView(id: info.id)
-            b.driver = info.driver ?? b.driver
             b.connected = info.connected
             b.lastError = info.lastError
             bots[info.id] = b
@@ -55,7 +53,6 @@ public struct AppState: Sendable, Equatable {
         case "bot.status":
             if let info = env.decodeBody(BotInfo.self) {
                 var b = bots[info.id] ?? BotView(id: info.id)
-                b.driver = info.driver ?? b.driver
                 b.connected = info.connected
                 b.lastError = info.lastError
                 bots[info.id] = b

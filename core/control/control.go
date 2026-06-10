@@ -111,7 +111,6 @@ type HealthBody struct {
 // BotInfo describes one bot for the bots.list response and bot.status events.
 type BotInfo struct {
 	ID        string `json:"id"`
-	Driver    string `json:"driver"`
 	Connected bool   `json:"connected"`
 	LastError string `json:"lastError,omitempty"`
 }

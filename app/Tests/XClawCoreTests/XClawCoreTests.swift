@@ -98,9 +98,8 @@ func appStateSetBotsPreservesSessions() throws {
             + Data(#"","body":"#.utf8) + Data(json.utf8) + Data("}".utf8))
     }
     state.apply(event("session.text", #"{"botId":"alpha","sessionKey":"u1","delta":"hi"}"#))
-    state.setBots([BotInfo(id: "alpha", driver: "claude", connected: true, lastError: nil)])
+    state.setBots([BotInfo(id: "alpha", connected: true, lastError: nil)])
     let a = state.bots["alpha"]
     #expect(a?.connected == true)
-    #expect(a?.driver == "claude")
     #expect(a?.sessions["u1"]?.streamingText == "hi") // session not clobbered
 }

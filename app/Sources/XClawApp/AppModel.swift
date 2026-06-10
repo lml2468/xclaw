@@ -12,13 +12,23 @@ final class AppModel {
     // Surfaced to the UI.
     var coreState: String = "stopped"
     var connected: Bool = false
-    var sessions: [AppState.SessionView] = []
+    var bots: [AppState.BotView] = []
+    var selectedBotID: String?
     var lastError: String?
     var driver: String = "claude"
+
+    /// Sessions of the currently-selected bot (convenience for the UI).
+    var sessions: [AppState.SessionView] {
+        guard let id = selectedBotID, let b = bots.first(where: { $0.id == id }) else {
+            return bots.first?.sortedSessions ?? []
+        }
+        return b.sortedSessions
+    }
 
     @ObservationIgnored private var supervisor: CoreSupervisor?
     @ObservationIgnored private var client: ControlClient?
     @ObservationIgnored private var consumeTask: Task<Void, Never>?
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var state = AppState()
     @ObservationIgnored private let socketPath = CorePaths.socketPath
     /// The DM uid used for messages sent from this GUI.
@@ -53,6 +63,8 @@ final class AppModel {
     func stop() {
         consumeTask?.cancel()
         consumeTask = nil
+        pollTask?.cancel()
+        pollTask = nil
         client?.disconnect()
         client = nil
         connected = false
@@ -61,23 +73,23 @@ final class AppModel {
         coreState = "stopped"
     }
 
-    /// Sends a user message to the agent over the bus.
+    /// Sends a user message to the selected bot over the bus.
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let client else { return }
         do {
-            try client.send(type: "session.send", body: SessionSendBody(uid: localUID, text: trimmed))
+            try client.send(type: "session.send",
+                            body: SessionSendBody(uid: localUID, text: trimmed, botId: selectedBotID))
         } catch {
             lastError = "send failed: \(error)"
         }
     }
 
-    /// Clears the current GUI session's resume mapping.
+    /// Clears the selected bot's GUI session resume mapping.
     func reset() {
         guard let client else { return }
-        _ = try? client.send(type: "session.reset", body: SessionSendBody(uid: localUID, text: ""))
-        state = AppState()
-        sessions = []
+        _ = try? client.send(type: "session.reset",
+                             body: SessionSendBody(uid: localUID, text: "", botId: selectedBotID))
     }
 
     // MARK: - private
@@ -99,6 +111,7 @@ final class AppModel {
             connected = false
             // Drop the stale connection; reconnect after the new daemon is up.
             consumeTask?.cancel()
+            pollTask?.cancel()
             client?.disconnect()
             client = nil
         }
@@ -125,8 +138,21 @@ final class AppModel {
         client = c
         connected = true
         consumeEvents(from: c)
-        // Probe health so the connection is exercised immediately.
+        // Probe health and fetch the bot roster immediately, then poll it.
         _ = try? c.send(type: "health", body: [String: String]())
+        _ = try? c.send(type: "bots.list", body: [String: String]())
+        startBotPolling(on: c)
+    }
+
+    private func startBotPolling(on c: ControlClient) {
+        pollTask?.cancel()
+        pollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.client === c else { return }
+                _ = try? c.send(type: "bots.list", body: [String: String]())
+            }
+        }
     }
 
     private func consumeEvents(from c: ControlClient) {
@@ -134,14 +160,28 @@ final class AppModel {
         consumeTask = Task { @MainActor [weak self] in
             for await env in c.events {
                 guard let self else { return }
-                if env.kind == .event {
+                switch env.kind {
+                case .event:
                     self.state.apply(env)
-                    self.sessions = self.state.sessions.values.sorted { $0.sessionKey < $1.sessionKey }
-                    if let e = self.state.lastError { self.lastError = e }
+                    self.publishBots()
+                case .response where env.type == "bots.list":
+                    if let infos = env.decodeBody([BotInfo].self) {
+                        self.state.setBots(infos)
+                        self.publishBots()
+                    }
+                default:
+                    break
                 }
             }
             // Stream ended (disconnect); reflect it.
             self?.connected = false
+        }
+    }
+
+    private func publishBots() {
+        bots = state.sortedBots
+        if selectedBotID == nil {
+            selectedBotID = bots.first?.id
         }
     }
 }

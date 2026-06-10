@@ -13,18 +13,21 @@ multi-target layout.
 
 ## Status
 
-The app now boots the core and renders the live event stream:
+The app boots the core and renders the live event stream, with multi-bot
+management:
 
 - **CoreSupervisor** (`XClawCore`) spawns `xclawd` with a control socket,
   watches it, and restarts with exponential backoff.
 - **AppModel** (`XClawApp`) owns the supervisor + `ControlClient`, folds the
-  inbound event stream into `AppState` on the main actor, and exposes
-  `sessions` / `send` / `reset` to the UI.
-- **Console window + MenuBarExtra** show core/bus status, per-session streaming
-  text + tool activity + token usage, and a message composer.
+  per-bot event stream into `AppState` (bucketed by botId), polls `bots.list`,
+  and exposes bots / sessions / `send(botId)` / `reset` to the UI.
+- **Console window** — a bot sidebar (per-bot connection status + session count)
+  + the selected bot's session view + composer; **MenuBarExtra** shows the bot
+  count and bus status.
 
-Verified headlessly by an integration test that uses CoreSupervisor to spawn
-the real `xclawd`, connects over the bus, and asserts responses + events flow.
+Verified headlessly: an integration test spawns the REAL `xclawd -config` with a
+control socket and a 2-bot config, connects over the bus, and asserts
+`bots.list` returns both bots.
 
 ## Run (dev)
 

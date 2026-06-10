@@ -81,12 +81,16 @@ func Decode(line []byte) (Envelope, error) {
 // Commands (client → server)
 
 type SessionSendBody struct {
-	// SessionKey or a DM uid; the server routes it as a DM inbound for the MVP.
+	// BotID selects which bot to route to (multi-bot config mode). Empty = the
+	// single/default bot.
+	BotID string `json:"botId,omitempty"`
+	// UID is the DM uid; the server routes it as a DM inbound for the MVP.
 	UID  string `json:"uid"`
 	Text string `json:"text"`
 }
 
 type SessionHistoryBody struct {
+	BotID      string `json:"botId,omitempty"`
 	SessionKey string `json:"sessionKey"`
 	Limit      int    `json:"limit"`
 }
@@ -98,34 +102,54 @@ type OKBody struct {
 }
 
 type HealthBody struct {
-	Uptime      int64 `json:"uptime"`
-	Connections int   `json:"connections"`
+	Uptime      int64  `json:"uptime"`
+	Connections int    `json:"connections"`
 	Driver      string `json:"driver"`
+	Bots        int    `json:"bots"`
+}
+
+// BotInfo describes one bot for the bots.list response and bot.status events.
+type BotInfo struct {
+	ID        string `json:"id"`
+	Driver    string `json:"driver"`
+	Connected bool   `json:"connected"`
+	LastError string `json:"lastError,omitempty"`
 }
 
 type SessionTextBody struct {
+	BotID      string `json:"botId,omitempty"`
 	SessionKey string `json:"sessionKey"`
 	Delta      string `json:"delta"`
 }
 
 type SessionToolBody struct {
+	BotID      string `json:"botId,omitempty"`
 	SessionKey string `json:"sessionKey"`
 	Name       string `json:"name"`
 	Params     string `json:"params"`
 }
 
 type SessionUsageBody struct {
+	BotID        string `json:"botId,omitempty"`
 	SessionKey   string `json:"sessionKey"`
 	InputTokens  int    `json:"inputTokens"`
 	OutputTokens int    `json:"outputTokens"`
 }
 
 type SessionReplyBody struct {
+	BotID      string `json:"botId,omitempty"`
 	SessionKey string `json:"sessionKey"`
 	Text       string `json:"text"`
 }
 
+type SessionActivityBody struct {
+	BotID      string `json:"botId,omitempty"`
+	SessionKey string `json:"sessionKey"`
+	Kind       string `json:"kind"`
+}
+
 type ErrorBody struct {
+	BotID       string `json:"botId,omitempty"`
 	Scope       string `json:"scope"`
 	Message     string `json:"message"`
 	Recoverable bool   `json:"recoverable"`

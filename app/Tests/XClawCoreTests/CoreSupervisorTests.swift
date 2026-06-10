@@ -52,11 +52,18 @@ func supervisorRestartsOnExit() async throws {
         onState: { states.append($0) }
     )
     sup.start()
-    try await Task.sleep(for: .milliseconds(1200))
+    // Poll for the restarting state (the fake daemon exits immediately → the
+    // terminationHandler schedules a restart). Polling avoids flakiness under
+    // parallel test load vs a fixed sleep.
+    var restarts = 0
+    for _ in 0..<40 { // up to ~4s
+        try await Task.sleep(for: .milliseconds(100))
+        restarts = states.snapshot.filter { if case .restarting = $0 { return true }; return false }.count
+        if restarts >= 1 { break }
+    }
     sup.stop()
 
     let snap = states.snapshot
-    let restarts = snap.filter { if case .restarting = $0 { return true }; return false }.count
     #expect(restarts >= 1, "states observed: \(snap)")
 }
 

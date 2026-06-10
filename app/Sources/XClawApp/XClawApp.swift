@@ -9,7 +9,7 @@ struct XClawApp: App {
         // Menu bar presence: status + quick actions.
         MenuBarExtra("XClaw", systemImage: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle") {
             Text("Core: \(model.coreState)")
-            Text(model.connected ? "Bus: connected" : "Bus: disconnected")
+            Text(model.connected ? "Bus: connected · \(model.bots.count) bot(s)" : "Bus: disconnected")
             Divider()
             Button("Open Console") {
                 NSApp.activate(ignoringOtherApps: true)
@@ -24,7 +24,7 @@ struct XClawApp: App {
             ConsoleView(model: model)
                 .onAppear { if model.coreState == "stopped" { model.start() } }
         }
-        .defaultSize(width: 640, height: 520)
+        .defaultSize(width: 820, height: 560)
     }
 
     private func openConsoleWindow() {
@@ -40,14 +40,50 @@ struct ConsoleView: View {
     @State private var draft: String = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            sessionList
-            Divider()
-            composer
+        NavigationSplitView {
+            botSidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
+        } detail: {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                sessionList
+                Divider()
+                composer
+            }
         }
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 680, minHeight: 420)
+    }
+
+    private var botSidebar: some View {
+        List(selection: Binding(
+            get: { model.selectedBotID },
+            set: { model.selectedBotID = $0 }
+        )) {
+            Section("Bots") {
+                if model.bots.isEmpty {
+                    Text("No bots").foregroundStyle(.secondary)
+                }
+                ForEach(model.bots) { bot in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(bot.connected ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(bot.id).font(.body)
+                            Text(bot.connected ? "connected" : "offline")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if !bot.sessions.isEmpty {
+                            Text("\(bot.sessions.count)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(bot.id)
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -56,7 +92,7 @@ struct ConsoleView: View {
                 .fill(model.connected ? Color.green : Color.orange)
                 .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
-                Text("xclaw core — \(model.driver)").font(.headline)
+                Text(model.selectedBotID ?? "xclaw core").font(.headline)
                 Text(model.coreState).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()

@@ -73,15 +73,21 @@ public enum ControlProtocol {
 // MARK: - Command bodies (client → server)
 
 public struct SessionSendBody: Codable, Sendable {
+    public var botId: String?
     public var uid: String
     public var text: String
-    public init(uid: String, text: String) { self.uid = uid; self.text = text }
+    public init(uid: String, text: String, botId: String? = nil) {
+        self.uid = uid; self.text = text; self.botId = botId
+    }
 }
 
 public struct SessionHistoryBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var limit: Int
-    public init(sessionKey: String, limit: Int = 40) { self.sessionKey = sessionKey; self.limit = limit }
+    public init(sessionKey: String, limit: Int = 40, botId: String? = nil) {
+        self.sessionKey = sessionKey; self.limit = limit; self.botId = botId
+    }
 }
 
 // MARK: - Event / response bodies (server → client)
@@ -91,37 +97,51 @@ public struct OKBody: Codable, Sendable { public var ok: Bool }
 public struct HealthBody: Codable, Sendable {
     public var uptime: Int64
     public var connections: Int?
-    public var driver: String
+    public var driver: String?
+    public var bots: Int?
+}
+
+public struct BotInfo: Codable, Sendable, Identifiable {
+    public var id: String
+    public var driver: String?
+    public var connected: Bool
+    public var lastError: String?
 }
 
 public struct SessionTextBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var delta: String
 }
 
 public struct SessionToolBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var name: String
     public var params: String
 }
 
 public struct SessionUsageBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var inputTokens: Int
     public var outputTokens: Int
 }
 
 public struct SessionReplyBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var text: String
 }
 
 public struct SessionActivityBody: Codable, Sendable {
+    public var botId: String?
     public var sessionKey: String
     public var kind: String
 }
 
 public struct ErrorBody: Codable, Sendable {
+    public var botId: String?
     public var scope: String
     public var message: String
     public var recoverable: Bool?

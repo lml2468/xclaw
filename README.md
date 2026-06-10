@@ -48,7 +48,8 @@ lockstep — a control-bus change touches all three in a single commit.
   client connects over the Unix socket, sends commands, and renders the agent
   event stream broadcast by the Go core.
 - ✅ `app/XClawApp` — AppModel + CoreSupervisor + MenuBar/console GUI: the app
-  spawns & supervises `xclawd`, connects the bus, and streams sessions live.
+  spawns & supervises `xclawd`, connects the bus, and manages multiple bots
+  (bot sidebar + per-bot sessions; `bots.list` + botId-tagged events).
 - ✅ `core/im/octo` — Octo IM connector: WuKongIM binary protocol (curve25519 DH
   + MD5→AES-128-CBC, key derivation verified byte-identical to cc-channel) + REST;
   wired into `xclawd` via `-octo-api`/`-octo-token`.

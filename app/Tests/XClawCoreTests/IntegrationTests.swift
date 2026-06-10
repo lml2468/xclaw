@@ -85,3 +85,74 @@ final class SeenEvents: @unchecked Sendable {
     var events: [String] { lock.lock(); defer { lock.unlock() }; return ev }
     var responses: [String] { lock.lock(); defer { lock.unlock() }; return resp }
 }
+
+/// End-to-end multi-bot: run xclawd in -config mode with a control socket and a
+/// 2-bot config, connect the Swift ControlClient, and assert bots.list returns
+/// both bots. Skips if the dev binary isn't built.
+@Test
+func configModeExposesBotsOverBus() async throws {
+    guard let bin = devXclawdPath() else { return }
+
+    let tmp = (NSTemporaryDirectory() as NSString)
+        .appendingPathComponent("xclaw-mb-\(getpid())")
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: (tmp as NSString).appendingPathComponent("alpha"), withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: (tmp as NSString).appendingPathComponent("beta"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: tmp) }
+
+    let cfgPath = (tmp as NSString).appendingPathComponent("config.json")
+    try #"{"apiUrl":"http://127.0.0.1:9","bots":[{"id":"alpha"},{"id":"beta"}]}"#
+        .write(toFile: cfgPath, atomically: true, encoding: .utf8)
+    try #"{"octoToken":"bf_a"}"#.write(toFile: (tmp as NSString).appendingPathComponent("alpha/config.json"), atomically: true, encoding: .utf8)
+    try #"{"octoToken":"bf_b"}"#.write(toFile: (tmp as NSString).appendingPathComponent("beta/config.json"), atomically: true, encoding: .utf8)
+
+    let sock = (tmp as NSString).appendingPathComponent("ctl.sock")
+
+    // Spawn xclawd -config <cfg> -control <sock> directly (config mode isn't a
+    // CoreSupervisor scenario; it's the multi-bot daemon entry).
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: bin)
+    proc.arguments = ["-config", cfgPath, "-control", sock]
+    proc.standardOutput = FileHandle.nullDevice
+    proc.standardError = FileHandle.nullDevice
+    try proc.run()
+    defer { proc.terminate() }
+
+    // Wait for the socket.
+    var ready = false
+    for _ in 0..<50 {
+        if fm.fileExists(atPath: sock) { ready = true; break }
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    #expect(ready, "control socket not bound")
+    guard ready else { return }
+
+    let client = ControlClient(path: sock)
+    try client.connect()
+    defer { client.disconnect() }
+
+    let gotBots = Box<[String]>([])
+    let consumer = Task.detached {
+        var state = AppState()
+        for await env in client.events where env.kind == .response && env.type == "bots.list" {
+            if let infos = env.decodeBody([BotInfo].self) {
+                state.setBots(infos)
+                gotBots.set(state.sortedBots.map { $0.id })
+            }
+        }
+    }
+    defer { consumer.cancel() }
+
+    _ = try client.send(type: "bots.list", body: [String: String]())
+    try await Task.sleep(for: .seconds(2))
+
+    #expect(gotBots.get() == ["alpha", "beta"], "bots.list should expose both bots; got \(gotBots.get())")
+}
+
+final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: T
+    init(_ v: T) { self.v = v }
+    func set(_ nv: T) { lock.lock(); v = nv; lock.unlock() }
+    func get() -> T { lock.lock(); defer { lock.unlock() }; return v }
+}

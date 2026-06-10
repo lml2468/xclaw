@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,8 +10,10 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/im/octo"
@@ -30,9 +33,71 @@ func configFlagSet() bool {
 	return set
 }
 
-// runConfigMode loads the bot-first config and runs every configured bot in its
-// own isolated goroutine until SIGINT/SIGTERM.
-func runConfigMode(path string) {
+// botRuntime is one running bot's externally-reachable handles: its gateway (for
+// routing control-bus commands) and live status.
+type botRuntime struct {
+	cfg     config.Resolved
+	gateway *gateway.Gateway
+	store   *store.Store
+
+	mu        sync.Mutex
+	connected bool
+	lastErr   string
+}
+
+func (b *botRuntime) info() control.BotInfo {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return control.BotInfo{ID: b.cfg.BotID, Driver: b.cfg.SDK.Driver, Connected: b.connected, LastError: b.lastErr}
+}
+
+func (b *botRuntime) setStatus(connected bool, lastErr string) {
+	b.mu.Lock()
+	b.connected, b.lastErr = connected, lastErr
+	b.mu.Unlock()
+}
+
+// botRegistry tracks all running bots for control-bus routing and bots.list.
+type botRegistry struct {
+	mu   sync.RWMutex
+	bots map[string]*botRuntime
+	srv  *control.Server // for broadcasting bot.status changes
+}
+
+func newBotRegistry(srv *control.Server) *botRegistry {
+	return &botRegistry{bots: map[string]*botRuntime{}, srv: srv}
+}
+
+func (r *botRegistry) add(b *botRuntime) {
+	r.mu.Lock()
+	r.bots[b.cfg.BotID] = b
+	r.mu.Unlock()
+}
+
+func (r *botRegistry) get(id string) *botRuntime {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if id == "" && len(r.bots) == 1 {
+		for _, b := range r.bots { // single-bot convenience
+			return b
+		}
+	}
+	return r.bots[id]
+}
+
+func (r *botRegistry) list() []control.BotInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]control.BotInfo, 0, len(r.bots))
+	for _, b := range r.bots {
+		out = append(out, b.info())
+	}
+	return out
+}
+
+// runConfigMode loads the bot-first config, serves the control bus, and runs
+// every configured bot in its own isolated goroutine until SIGINT/SIGTERM.
+func runConfigMode(path, controlSock string) {
 	bots, err := config.Load(path)
 	if err != nil {
 		fatal("config: %v", err)
@@ -44,6 +109,25 @@ func runConfigMode(path string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	started := time.Now()
+
+	var srv *control.Server
+	reg := newBotRegistry(nil)
+	if controlSock != "" {
+		srv = control.NewServer(nil)
+		reg.srv = srv
+		srv.SetHandler(makeMultiBotHandler(reg, started))
+		ln := mustListenUnix(controlSock)
+		defer ln.Close()
+		defer os.Remove(controlSock)
+		go func() {
+			if err := srv.Serve(ln); err != nil {
+				fmt.Fprintf(os.Stderr, "control serve: %v\n", err)
+			}
+		}()
+		fmt.Printf("control bus listening on %s\n", controlSock)
+	}
+
 	fmt.Printf("xclawd — config mode: %d bot(s)\n", len(bots))
 
 	var wg sync.WaitGroup
@@ -51,7 +135,7 @@ func runConfigMode(path string) {
 		wg.Add(1)
 		go func(cfg config.Resolved) {
 			defer wg.Done()
-			if err := runBot(ctx, cfg); err != nil && ctx.Err() == nil {
+			if err := runBot(ctx, cfg, reg, srv); err != nil && ctx.Err() == nil {
 				fmt.Fprintf(os.Stderr, "[%s] exited: %v\n", cfg.BotID, err)
 			}
 		}(cfg)
@@ -59,13 +143,10 @@ func runConfigMode(path string) {
 	wg.Wait()
 }
 
-// runBot assembles and runs one bot's complete, isolated stack from a resolved
-// config: its own SQLite store (under the bot's derived dataDir), router,
-// gateway (with group-context + SOUL system prompt), agent driver, and Octo
-// connector. Blocks until ctx is cancelled. Each bot is fully isolated — no
-// shared store, gateway, or connector — mirroring cc-channel's per-bot subtree.
-func runBot(ctx context.Context, cfg config.Resolved) error {
-	// Per-bot SQLite under the derived data dir.
+// runBot assembles and runs one bot's complete, isolated stack. When srv is set,
+// agent events are also broadcast to the control bus tagged with the bot id, and
+// the bot is registered for command routing + bots.list. Blocks until ctx done.
+func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *control.Server) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("bot %s: mkdir data: %w", cfg.BotID, err)
 	}
@@ -85,19 +166,109 @@ func runBot(ctx context.Context, cfg config.Resolved) error {
 
 	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
 
-	// Octo connector requires an apiUrl + octo token.
 	if cfg.APIURL == "" || cfg.OctoToken == "" {
 		return fmt.Errorf("bot %s: config mode requires apiUrl + octoToken", cfg.BotID)
 	}
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, cfg.OctoToken))
 
-	gw := gateway.New(drv, st, rt, connector).
+	// Sinks: the Octo connector (delivers replies to IM) + control bus (tagged
+	// with this bot's id) when a GUI is attached.
+	sinks := multiSink{connector}
+	if srv != nil {
+		sinks = append(sinks, control.NewBotEventSink(srv, cfg.BotID))
+	}
+
+	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
 		WithSystemPrompt(cfg.SDK.SystemPrompt)
 	connector.SetGateway(gw)
+
+	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st}
+	if reg != nil {
+		reg.add(rtBot)
+	}
+	connector.OnStatus(func(connected bool, lastErr string) {
+		rtBot.setStatus(connected, lastErr)
+		if srv != nil {
+			srv.Broadcast("bot.status", rtBot.info())
+		}
+	})
 
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
 	return connector.Run(ctx)
+}
+
+// makeMultiBotHandler routes control-bus commands by botId across the registry.
+func makeMultiBotHandler(reg *botRegistry, started time.Time) control.CommandHandler {
+	return func(cmdType string, body json.RawMessage) (any, error) {
+		switch cmdType {
+		case "health":
+			return control.HealthBody{
+				Uptime: int64(time.Since(started).Seconds()),
+				Bots:   len(reg.list()),
+			}, nil
+
+		case "bots.list":
+			return reg.list(), nil
+
+		case "session.send":
+			var b control.SessionSendBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			bot := reg.get(b.BotID)
+			if bot == nil {
+				return nil, fmt.Errorf("unknown bot %q", b.BotID)
+			}
+			if b.UID == "" {
+				return nil, fmt.Errorf("uid required")
+			}
+			go func() {
+				_, _ = bot.gateway.Handle(context.Background(), router.InboundMessage{
+					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: b.Text,
+				})
+			}()
+			return control.OKBody{OK: true}, nil
+
+		case "session.history":
+			var b control.SessionHistoryBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			bot := reg.get(b.BotID)
+			if bot == nil {
+				return nil, fmt.Errorf("unknown bot %q", b.BotID)
+			}
+			limit := b.Limit
+			if limit <= 0 {
+				limit = 40
+			}
+			msgs, err := bot.store.RecentMessages(b.SessionKey, limit)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]control.HistoryMessage, 0, len(msgs))
+			for _, m := range msgs {
+				out = append(out, control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp})
+			}
+			return out, nil
+
+		case "session.reset":
+			var b control.SessionSendBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			bot := reg.get(b.BotID)
+			if bot == nil {
+				return nil, fmt.Errorf("unknown bot %q", b.BotID)
+			}
+			_ = bot.store.ClearResume(b.UID)
+			return control.OKBody{OK: true}, nil
+
+		default:
+			return nil, fmt.Errorf("unknown command %q", cmdType)
+		}
+	}
 }

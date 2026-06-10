@@ -5,54 +5,48 @@ import "github.com/lml2468/xclaw/core/agent"
 // EventSink adapts the control Server to gateway.Sink: it projects normalized
 // AgentEvents onto the control-bus event vocabulary (proto/README.md) and
 // broadcasts them to all connected clients. This is the join point between the
-// agent-driving core and the GUI control plane.
+// agent-driving core and the GUI control plane. botID tags every event so a
+// multi-bot GUI can attribute it to the right bot ("" in single-bot mode).
 type EventSink struct {
-	srv *Server
+	srv   *Server
+	botID string
 }
 
-// NewEventSink wraps a Server as a gateway.Sink.
+// NewEventSink wraps a Server as a gateway.Sink for the single/default bot.
 func NewEventSink(srv *Server) *EventSink { return &EventSink{srv: srv} }
+
+// NewBotEventSink wraps a Server as a gateway.Sink tagging events with botID.
+func NewBotEventSink(srv *Server, botID string) *EventSink {
+	return &EventSink{srv: srv, botID: botID}
+}
 
 // OnEvent projects one AgentEvent to its control-bus event.
 func (s *EventSink) OnEvent(sessionKey string, ev agent.AgentEvent) {
 	switch ev.Kind {
 	case agent.KindSessionStarted:
-		s.srv.Broadcast("session.activity", map[string]string{
-			"sessionKey": sessionKey, "kind": "turnStart",
-		})
+		s.srv.Broadcast("session.activity", SessionActivityBody{BotID: s.botID, SessionKey: sessionKey, Kind: "turnStart"})
 	case agent.KindTextDelta:
-		s.srv.Broadcast("session.text", SessionTextBody{SessionKey: sessionKey, Delta: ev.Text})
+		s.srv.Broadcast("session.text", SessionTextBody{BotID: s.botID, SessionKey: sessionKey, Delta: ev.Text})
 	case agent.KindThinking:
-		s.srv.Broadcast("session.activity", map[string]string{
-			"sessionKey": sessionKey, "kind": "thinking",
-		})
+		s.srv.Broadcast("session.activity", SessionActivityBody{BotID: s.botID, SessionKey: sessionKey, Kind: "thinking"})
 	case agent.KindToolUse:
-		s.srv.Broadcast("session.tool", SessionToolBody{
-			SessionKey: sessionKey, Name: ev.ToolName, Params: ev.ToolParams,
-		})
+		s.srv.Broadcast("session.tool", SessionToolBody{BotID: s.botID, SessionKey: sessionKey, Name: ev.ToolName, Params: ev.ToolParams})
 	case agent.KindToolResult:
-		s.srv.Broadcast("session.activity", map[string]string{
-			"sessionKey": sessionKey, "kind": "toolResult",
-		})
+		s.srv.Broadcast("session.activity", SessionActivityBody{BotID: s.botID, SessionKey: sessionKey, Kind: "toolResult"})
 	case agent.KindTurnDone:
 		if ev.Usage != nil {
 			s.srv.Broadcast("session.usage", SessionUsageBody{
-				SessionKey:   sessionKey,
-				InputTokens:  ev.Usage.InputTokens,
-				OutputTokens: ev.Usage.OutputTokens,
+				BotID: s.botID, SessionKey: sessionKey,
+				InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens,
 			})
 		}
-		s.srv.Broadcast("session.activity", map[string]string{
-			"sessionKey": sessionKey, "kind": "turnDone",
-		})
+		s.srv.Broadcast("session.activity", SessionActivityBody{BotID: s.botID, SessionKey: sessionKey, Kind: "turnDone"})
 	case agent.KindError:
-		s.srv.Broadcast("error", ErrorBody{
-			Scope: "agent", Message: ev.Err, Recoverable: ev.Recoverable,
-		})
+		s.srv.Broadcast("error", ErrorBody{BotID: s.botID, Scope: "agent", Message: ev.Err, Recoverable: ev.Recoverable})
 	}
 }
 
 // OnReply broadcasts the assembled assistant reply for a completed turn.
 func (s *EventSink) OnReply(sessionKey string, text string) {
-	s.srv.Broadcast("session.reply", SessionReplyBody{SessionKey: sessionKey, Text: text})
+	s.srv.Broadcast("session.reply", SessionReplyBody{BotID: s.botID, SessionKey: sessionKey, Text: text})
 }

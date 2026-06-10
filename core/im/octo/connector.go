@@ -26,9 +26,23 @@ type Connector struct {
 	sock    *socketConn
 	closed  bool
 
+	// onStatus, if set, is called when the connection state changes
+	// (connected=true after a successful register+handshake; false on drop).
+	onStatus func(connected bool, lastErr string)
+
 	// reconnect/backoff
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
+}
+
+// OnStatus registers a connection-state callback (used by the daemon's bot
+// registry to surface per-bot status over the control bus).
+func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) { c.onStatus = fn }
+
+func (c *Connector) setStatus(connected bool, lastErr string) {
+	if c.onStatus != nil {
+		c.onStatus(connected, lastErr)
+	}
 }
 
 type replyTarget struct {
@@ -73,6 +87,7 @@ func (c *Connector) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				c.setStatus(false, err.Error())
 				sleep(ctx, backoff)
 				backoff = minDur(backoff*2, c.reconnectMax)
 				continue
@@ -83,11 +98,16 @@ func (c *Connector) Run(ctx context.Context) error {
 			backoff = c.reconnectBase
 		}
 
+		c.setStatus(true, "")
 		err := c.connectOnce(ctx, reg)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		_ = err
+		errStr := ""
+		if err != nil {
+			errStr = err.Error()
+		}
+		c.setStatus(false, errStr)
 
 		// Connection dropped: back off, then force a fresh registration (token
 		// may have expired) before reconnecting.

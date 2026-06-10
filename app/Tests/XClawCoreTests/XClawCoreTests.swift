@@ -57,7 +57,7 @@ func appStateAccumulatesTextAndReply() throws {
     state.apply(event("session.usage", #"{"sessionKey":"u1","inputTokens":10,"outputTokens":3}"#))
     state.apply(event("session.reply", #"{"sessionKey":"u1","text":"hello"}"#))
 
-    let s = state.sessions["u1"]
+    let s = state.bots["default"]?.sessions["u1"]
     #expect(s?.streamingText == "hello")
     #expect(s?.lastReply == "hello")
     #expect(s?.lastTool == "Bash")
@@ -73,5 +73,34 @@ func appStateTurnStartResetsStreamingBuffer() throws {
     }
     state.apply(event("session.text", #"{"sessionKey":"u1","delta":"old turn"}"#))
     state.apply(event("session.activity", #"{"sessionKey":"u1","kind":"turnStart"}"#))
-    #expect(state.sessions["u1"]?.streamingText == "")
+    #expect(state.bots["default"]?.sessions["u1"]?.streamingText == "")
+}
+
+@Test
+func appStateBucketsByBotID() throws {
+    var state = AppState()
+    func event(_ type: String, _ json: String) -> Envelope {
+        try! ControlCodec.decode(Data(#"{"kind":"event","type":""#.utf8) + Data(type.utf8)
+            + Data(#"","body":"#.utf8) + Data(json.utf8) + Data("}".utf8))
+    }
+    state.apply(event("session.text", #"{"botId":"alpha","sessionKey":"u1","delta":"A"}"#))
+    state.apply(event("session.text", #"{"botId":"beta","sessionKey":"u1","delta":"B"}"#))
+    #expect(state.bots["alpha"]?.sessions["u1"]?.streamingText == "A")
+    #expect(state.bots["beta"]?.sessions["u1"]?.streamingText == "B")
+    #expect(state.sortedBots.map { $0.id } == ["alpha", "beta"])
+}
+
+@Test
+func appStateSetBotsPreservesSessions() throws {
+    var state = AppState()
+    func event(_ type: String, _ json: String) -> Envelope {
+        try! ControlCodec.decode(Data(#"{"kind":"event","type":""#.utf8) + Data(type.utf8)
+            + Data(#"","body":"#.utf8) + Data(json.utf8) + Data("}".utf8))
+    }
+    state.apply(event("session.text", #"{"botId":"alpha","sessionKey":"u1","delta":"hi"}"#))
+    state.setBots([BotInfo(id: "alpha", driver: "claude", connected: true, lastError: nil)])
+    let a = state.bots["alpha"]
+    #expect(a?.connected == true)
+    #expect(a?.driver == "claude")
+    #expect(a?.sessions["u1"]?.streamingText == "hi") // session not clobbered
 }

@@ -54,9 +54,10 @@ func main() {
 
 	// Config mode: load the two-layer bot-first config and run every bot in its
 	// own isolated stack. Mutually exclusive with the single-bot flag front ends.
-	// `-config` with no value uses the default ~/.xclaw/config.json.
+	// `-config` with no value uses the default ~/.xclaw/config.json. `-control`
+	// additionally serves the bus so a GUI can manage all bots.
 	if configFlagSet() {
-		runConfigMode(*configPath)
+		runConfigMode(*configPath, *controlSock)
 		return
 	}
 

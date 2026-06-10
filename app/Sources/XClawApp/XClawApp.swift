@@ -15,7 +15,8 @@ struct XClawApp: App {
                 NSApp.activate(ignoringOtherApps: true)
                 openConsoleWindow()
             }
-            Button("Restart Core") { model.stop(); model.start(driver: model.driver) }
+            SettingsLink { Text("Edit Bots…") }
+            Button("Restart Core") { model.stop(); model.start() }
             Divider()
             Button("Quit") { model.stop(); NSApplication.shared.terminate(nil) }
         }
@@ -25,6 +26,12 @@ struct XClawApp: App {
                 .onAppear { if model.coreState == "stopped" { model.start() } }
         }
         .defaultSize(width: 820, height: 560)
+
+        // Config editor (Cmd-,). Loads the on-disk config when opened.
+        Settings {
+            ConfigEditorView(model: model)
+                .onAppear { model.loadConfig() }
+        }
     }
 
     private func openConsoleWindow() {
@@ -45,6 +52,12 @@ struct ConsoleView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
         } detail: {
             VStack(spacing: 0) {
+                if model.coreState == "needs-config" {
+                    needsConfigBanner
+                }
+                if model.needsRestart {
+                    restartBanner
+                }
                 header
                 Divider()
                 sessionList
@@ -53,6 +66,28 @@ struct ConsoleView: View {
             }
         }
         .frame(minWidth: 680, minHeight: 420)
+    }
+
+    private var needsConfigBanner: some View {
+        HStack {
+            Image(systemName: "gearshape.badge.exclamationmark")
+            Text("No bots configured. Add one to get started.")
+            Spacer()
+            SettingsLink { Text("Edit Bots…") }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.15))
+    }
+
+    private var restartBanner: some View {
+        HStack {
+            Image(systemName: "arrow.clockwise.circle")
+            Text("Config changed — restart the core to apply.")
+            Spacer()
+            Button("Restart now") { model.applyConfigAndRestart() }
+        }
+        .padding(10)
+        .background(Color.blue.opacity(0.12))
     }
 
     private var botSidebar: some View {

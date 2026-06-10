@@ -62,7 +62,7 @@ func supervisorSpawnsRealCoreAndBusDelivers() async throws {
 }
 
 /// Finds the dev-built xclawd (scripts/run-dev.sh writes core/.xclawd-dev).
-private func devXclawdPath() -> String? {
+func devXclawdPath() -> String? {
     let fm = FileManager.default
     if let env = ProcessInfo.processInfo.environment["XCLAWD_BIN"], fm.isExecutableFile(atPath: env) {
         return env

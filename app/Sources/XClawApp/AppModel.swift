@@ -17,6 +17,11 @@ final class AppModel {
     var lastError: String?
     var driver: String = "claude"
 
+    // Config editing.
+    var configBots: [BotConfig] = []
+    var needsRestart: Bool = false
+    var configError: String?
+
     /// Sessions of the currently-selected bot (convenience for the UI).
     var sessions: [AppState.SessionView] {
         guard let id = selectedBotID, let b = bots.first(where: { $0.id == id }) else {
@@ -192,5 +197,56 @@ final class AppModel {
         if selectedBotID == nil {
             selectedBotID = bots.first?.id
         }
+    }
+
+    // MARK: - Config editing
+
+    /// Loads the on-disk bot configs into `configBots` for the editor.
+    func loadConfig() {
+        configError = nil
+        do {
+            configBots = try ConfigStore.load()
+        } catch {
+            configError = "\(error)"
+        }
+    }
+
+    /// Adds a new bot to the editable list (not yet saved).
+    func addConfigBot() {
+        let base = "bot"
+        var n = configBots.count + 1
+        var id = "\(base)\(n)"
+        let existing = Set(configBots.map { $0.id })
+        while existing.contains(id) { n += 1; id = "\(base)\(n)" }
+        // Inherit apiUrl from an existing bot for convenience.
+        let apiURL = configBots.first?.apiURL ?? ""
+        configBots.append(BotConfig(id: id, apiURL: apiURL))
+    }
+
+    /// Removes a bot from the editable list (not yet saved).
+    func removeConfigBot(_ id: String) {
+        configBots.removeAll { $0.id == id }
+    }
+
+    /// Validates and writes the editable config to disk. Sets needsRestart so the
+    /// UI can prompt; returns true on success.
+    @discardableResult
+    func saveConfig() -> Bool {
+        configError = nil
+        do {
+            try ConfigStore.save(configBots)
+            needsRestart = true
+            return true
+        } catch {
+            configError = "\(error)"
+            return false
+        }
+    }
+
+    /// Restarts the core to pick up a saved config.
+    func applyConfigAndRestart() {
+        needsRestart = false
+        stop()
+        start()
     }
 }

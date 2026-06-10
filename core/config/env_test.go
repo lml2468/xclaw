@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// global agent.env is the base; per-bot env adds/overrides per key (not whole
-// replacement), and the gateway vars are mapped to the claude env names by
+// global agent.env is the base; the inline bot's env adds/overrides per key (not
+// whole replacement), and the gateway vars are mapped to the claude env names by
 // DriverEnv.
 func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	dir := t.TempDir()
@@ -16,14 +16,12 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	  "apiUrl":"https://octo.example",
 	  "agent":{"env":{"SHARED_DEFAULT":"global","SHARED":"global"},
 	         "gatewayBaseUrl":"https://gw.example/v1"},
-	  "bots":[{"id":"alpha"}]
-	}`)
-	// per-bot adds its own OCTO_BOT_ID (a per-bot identity, never global) + a
-	// GH_TOKEN, overrides SHARED, and sets its own gateway token.
-	writeFile(t, filepath.Join(dir, "alpha", "config.json"), `{
-	  "octoToken":"bf_a",
-	  "agent":{"env":{"OCTO_BOT_ID":"alpha-bot","GH_TOKEN":"ghp_x","SHARED":"perbot"},
-	         "gatewayToken":"sk-ant-xyz"}
+	  "bots":[{
+	    "id":"alpha",
+	    "octoToken":"bf_a",
+	    "agent":{"env":{"OCTO_BOT_ID":"alpha-bot","GH_TOKEN":"ghp_x","SHARED":"perbot"},
+	           "gatewayToken":"sk-ant-xyz"}
+	  }]
 	}`)
 
 	bots, err := Load(cfg)
@@ -60,7 +58,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 func TestDriverEnvEmptyWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"t"}`)
+	writeFile(t, cfg, `{"bots":[{"id":"alpha","octoToken":"t"}]}`)
 	bots, _ := Load(cfg)
 	if len(bots[0].DriverEnv()) != 0 {
 		t.Fatalf("expected empty DriverEnv, got %v", bots[0].DriverEnv())

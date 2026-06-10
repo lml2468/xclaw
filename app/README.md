@@ -27,11 +27,11 @@ management:
   + the selected bot's session view + composer; **MenuBarExtra** shows the bot
   count and bus status.
 - **Config editor** (Settings / Cmd-,) — add/remove bots and edit
-  id / apiUrl / driver / token; writes `~/.xclaw/config.json` + per-bot
-  `config.json` (the same format the Go core reads). A "needs-config" banner
-  guides first-run setup; a "restart to apply" banner appears after saving.
-  (Token is stored plaintext in the per-bot config for now — Keychain is a later
-  step.)
+  id / apiUrl / token / gateway / env; writes the single `~/.xclaw/config.json`
+  (the same format the Go core reads), each bot inlined in bots[]. A
+  "needs-config" banner guides first-run setup; a "restart to apply" banner
+  appears after saving. (Token is stored plaintext inline for now — Keychain is a
+  later step.)
 
 Verified headlessly: integration tests spawn the REAL `xclawd -config` (both
 directly and via CoreSupervisor in config mode), connect over the bus, and

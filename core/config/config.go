@@ -1,10 +1,11 @@
-// Package config implements XClaw's two-layer, bot-first configuration.
+// Package config implements XClaw's single-file configuration.
 //
-// Global ~/.xclaw/config.json holds shared defaults + a bots[] list. Per-bot
-// ~/.xclaw/<id>/config.json holds that bot's token + overrides. The per-bot data
-// directory (~/.xclaw/<id>/data) is DERIVED from baseDir + id, never configurable
-// — so a bot can't escape its own subtree. The bot's persona/behavior prompt
-// lives in SOUL.md + AGENTS.md in the same dir, not in config.
+// One ~/.xclaw/config.json holds shared top-level defaults
+// (apiUrl/agent/rateLimit/context) plus a bots[] list where each entry inlines a
+// bot's id + octoToken + per-bot overrides. The per-bot data directory
+// (~/.xclaw/<id>/data) is DERIVED from baseDir + id, never configurable — so a
+// bot can't escape its own subtree. The bot's persona/behavior prompt lives in
+// SOUL.md + AGENTS.md in ~/.xclaw/<id>/, not in config.
 package config
 
 import (
@@ -35,17 +36,24 @@ type ContextConfig struct {
 	MaxContextChars int `json:"maxContextChars,omitempty"`
 }
 
-// BotEntry is one entry in the global config's bots[] list — just the id; the
-// bot's own settings live in ~/.xclaw/<id>/config.json.
+// BotEntry is one bot's full inline configuration in the global config's bots[]
+// list. octoToken is required; apiUrl/agent/rateLimit/context override the
+// global top-level defaults of the same name. The bot's persona/behavior prompt
+// is NOT here — it lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.
 type BotEntry struct {
-	ID string `json:"id,omitempty"`
+	ID        string           `json:"id,omitempty"`
+	OctoToken string           `json:"octoToken,omitempty"`
+	APIURL    string           `json:"apiUrl,omitempty"`
+	Agent     *AgentConfig     `json:"agent,omitempty"`
+	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
+	Context   *ContextConfig   `json:"context,omitempty"`
 }
 
-// File is the on-disk shape of a config.json (global or per-bot). Bots[] is only
-// meaningful in the global file.
+// File is the on-disk shape of the single ~/.xclaw/config.json. The top-level
+// apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry may
+// override them.
 type File struct {
 	APIURL    string           `json:"apiUrl,omitempty"`
-	OctoToken string           `json:"octoToken,omitempty"`
 	Agent     *AgentConfig     `json:"agent,omitempty"`
 	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
 	Context   *ContextConfig   `json:"context,omitempty"`
@@ -126,12 +134,13 @@ func readFile(path string) (File, error) {
 	return f, nil
 }
 
-// resolveBots expands the global config into one Resolved per bot, applying
-// perBotFile-over-global precedence.
+// resolveBots expands the single global config into one Resolved per bot,
+// applying inlineBot-over-global-default precedence. SOUL.md + AGENTS.md are
+// still read from each bot's ~/.xclaw/<id>/ directory.
 func resolveBots(global File, baseDir string) ([]Resolved, error) {
 	entries := global.Bots
 	if len(entries) == 0 {
-		entries = []BotEntry{{ID: "default"}}
+		return nil, fmt.Errorf("no bots configured (add at least one entry to bots[])")
 	}
 
 	var out []Resolved
@@ -151,26 +160,22 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		seenID[id] = true
 
 		botRoot := filepath.Join(baseDir, id)
-		perBot, err := readFile(filepath.Join(botRoot, "config.json"))
-		if err != nil {
-			return nil, err
-		}
 
 		r := defaults()
 		r.BotID = id
 		r.DataDir = filepath.Join(botRoot, "data")
 
-		// precedence: perBotFile ?? global
-		r.APIURL = firstNonEmpty(perBot.APIURL, global.APIURL)
-		r.OctoToken = firstNonEmpty(perBot.OctoToken, global.OctoToken)
+		// precedence: inlineBot ?? global default
+		r.APIURL = firstNonEmpty(bot.APIURL, global.APIURL)
+		r.OctoToken = bot.OctoToken
 
-		// shallow-merge agent/rateLimit/context: global → perBotFile keys
+		// shallow-merge agent/rateLimit/context: global default → inline bot keys
 		mergeAgent(&r.Agent, global.Agent)
-		mergeAgent(&r.Agent, perBot.Agent)
+		mergeAgent(&r.Agent, bot.Agent)
 		mergeRate(&r.RateLimit, global.RateLimit)
-		mergeRate(&r.RateLimit, perBot.RateLimit)
+		mergeRate(&r.RateLimit, bot.RateLimit)
 		mergeCtx(&r.Context, global.Context)
-		mergeCtx(&r.Context, perBot.Context)
+		mergeCtx(&r.Context, bot.Context)
 
 		// System prompt: SOUL.md (identity) + AGENTS.md (behavior), file-based.
 		r.SystemPrompt = soul(botRoot)

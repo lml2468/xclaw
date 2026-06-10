@@ -19,7 +19,7 @@ func writeFile(t *testing.T, path, content string) {
 func TestSingleBotDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://octo.example","octoToken":"bf_x"}`)
+	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"default","octoToken":"bf_x"}]}`)
 
 	bots, err := Load(cfg)
 	if err != nil {
@@ -32,6 +32,9 @@ func TestSingleBotDefaults(t *testing.T) {
 	if b.BotID != "default" {
 		t.Fatalf("botID = %q", b.BotID)
 	}
+	if b.APIURL != "https://octo.example" || b.OctoToken != "bf_x" {
+		t.Fatalf("apiUrl/token wrong: %+v", b)
+	}
 	// defaults applied
 	if b.RateLimit.MaxPerMinute != 5 || b.Context.MaxContextChars != 6000 {
 		t.Fatalf("defaults wrong: %+v", b)
@@ -42,18 +45,21 @@ func TestSingleBotDefaults(t *testing.T) {
 	}
 }
 
-func TestPerBotFilePrecedence(t *testing.T) {
+func TestInlineBotOverridesGlobalDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
-	  "apiUrl":"https://octo.example",
+	  "apiUrl":"https://global.example",
 	  "context":{"maxContextChars":1000},
-	  "agent":{"model":"global-model"},
-	  "bots":[{"id":"alpha"}]
+	  "agent":{"model":"global-model","gatewayBaseUrl":"https://gw.example/v1"},
+	  "bots":[{
+	    "id":"alpha",
+	    "octoToken":"bf_alpha",
+	    "apiUrl":"https://bot.example",
+	    "agent":{"model":"bot-model"},
+	    "context":{"maxContextChars":2000}
+	  }]
 	}`)
-	// per-bot file overrides global
-	writeFile(t, filepath.Join(dir, "alpha", "config.json"),
-		`{"octoToken":"bf_alpha","agent":{"model":"perbot-model"},"context":{"maxContextChars":2000}}`)
 
 	bots, err := Load(cfg)
 	if err != nil {
@@ -63,11 +69,18 @@ func TestPerBotFilePrecedence(t *testing.T) {
 	if b.BotID != "alpha" {
 		t.Fatalf("id = %q", b.BotID)
 	}
-	if b.Agent.Model != "perbot-model" {
-		t.Fatalf("per-bot file model should win: %q", b.Agent.Model)
+	if b.APIURL != "https://bot.example" {
+		t.Fatalf("bot apiUrl should win: %q", b.APIURL)
+	}
+	if b.Agent.Model != "bot-model" {
+		t.Fatalf("bot model should win: %q", b.Agent.Model)
+	}
+	// gateway not set on the bot → inherits the global default
+	if b.Agent.GatewayBaseURL != "https://gw.example/v1" {
+		t.Fatalf("global gateway default should carry through: %q", b.Agent.GatewayBaseURL)
 	}
 	if b.Context.MaxContextChars != 2000 {
-		t.Fatalf("per-bot context should win: %d", b.Context.MaxContextChars)
+		t.Fatalf("bot context should win: %d", b.Context.MaxContextChars)
 	}
 	if b.OctoToken != "bf_alpha" {
 		t.Fatalf("token = %q", b.OctoToken)
@@ -77,7 +90,7 @@ func TestPerBotFilePrecedence(t *testing.T) {
 func TestSystemPromptFromSoulOnly(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
+	writeFile(t, cfg, `{"bots":[{"id":"default","octoToken":"bf_x"}]}`)
 	writeFile(t, filepath.Join(dir, "default", "SOUL.md"), "  you are a helpful bot  ")
 
 	bots, _ := Load(cfg)
@@ -89,7 +102,7 @@ func TestSystemPromptFromSoulOnly(t *testing.T) {
 func TestSystemPromptCombinesSoulAndAgents(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
+	writeFile(t, cfg, `{"bots":[{"id":"default","octoToken":"bf_x"}]}`)
 	writeFile(t, filepath.Join(dir, "default", "SOUL.md"), "I am Nova.")
 	writeFile(t, filepath.Join(dir, "default", "AGENTS.md"), "Always reply in Chinese.")
 
@@ -103,7 +116,7 @@ func TestSystemPromptCombinesSoulAndAgents(t *testing.T) {
 func TestSystemPromptAgentsOnly(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x"}`)
+	writeFile(t, cfg, `{"bots":[{"id":"default","octoToken":"bf_x"}]}`)
 	writeFile(t, filepath.Join(dir, "default", "AGENTS.md"), "Be concise.")
 
 	bots, _ := Load(cfg)
@@ -115,7 +128,7 @@ func TestSystemPromptAgentsOnly(t *testing.T) {
 func TestSlugRejection(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[{"id":"../escape"}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"../escape","octoToken":"bf_x"}]}`)
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("path-traversal id must be rejected")
 	}
@@ -143,15 +156,24 @@ func TestSSRFRejection(t *testing.T) {
 func TestMissingTokenRejected(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o"}`) // no token anywhere
+	writeFile(t, cfg, `{"bots":[{"id":"alpha"}]}`) // bot has no octoToken
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("missing token must be rejected")
 	}
 }
 
-func TestMissingConfigYieldsDefaultBotError(t *testing.T) {
-	// no file → empty global → default bot with no token → error (not a crash)
+func TestNoBotsRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"apiUrl":"https://o"}`) // no bots[]
+	if _, err := Load(cfg); err == nil {
+		t.Fatal("config with no bots must be rejected")
+	}
+}
+
+func TestMissingConfigRejected(t *testing.T) {
+	// no file → empty global → no bots → error (not a crash)
 	if _, err := Load(filepath.Join(t.TempDir(), "nope.json")); err == nil {
-		t.Fatal("expected missing-token error for empty config")
+		t.Fatal("expected error for missing/empty config")
 	}
 }

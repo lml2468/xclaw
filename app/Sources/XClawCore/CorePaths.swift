@@ -23,7 +23,7 @@ public enum CorePaths {
         supportDir.appendingPathComponent("xclaw.db").path
     }
 
-    /// The daemon's bot-first config: ~/.xclaw/config.json (matches the Go
+    /// The daemon's single-file config: ~/.xclaw/config.json (matches the Go
     /// core's config.DefaultConfigPath — NOT the app support dir).
     public static var configPath: String {
         URL(fileURLWithPath: NSHomeDirectory())

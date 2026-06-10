@@ -96,15 +96,12 @@ func configModeExposesBotsOverBus() async throws {
     let tmp = (NSTemporaryDirectory() as NSString)
         .appendingPathComponent("xclaw-mb-\(getpid())")
     let fm = FileManager.default
-    try fm.createDirectory(atPath: (tmp as NSString).appendingPathComponent("alpha"), withIntermediateDirectories: true)
-    try fm.createDirectory(atPath: (tmp as NSString).appendingPathComponent("beta"), withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: tmp, withIntermediateDirectories: true)
     defer { try? fm.removeItem(atPath: tmp) }
 
     let cfgPath = (tmp as NSString).appendingPathComponent("config.json")
-    try #"{"apiUrl":"http://127.0.0.1:9","bots":[{"id":"alpha"},{"id":"beta"}]}"#
+    try #"{"apiUrl":"http://127.0.0.1:9","bots":[{"id":"alpha","octoToken":"bf_a"},{"id":"beta","octoToken":"bf_b"}]}"#
         .write(toFile: cfgPath, atomically: true, encoding: .utf8)
-    try #"{"octoToken":"bf_a"}"#.write(toFile: (tmp as NSString).appendingPathComponent("alpha/config.json"), atomically: true, encoding: .utf8)
-    try #"{"octoToken":"bf_b"}"#.write(toFile: (tmp as NSString).appendingPathComponent("beta/config.json"), atomically: true, encoding: .utf8)
 
     let sock = (tmp as NSString).appendingPathComponent("ctl.sock")
 
@@ -158,14 +155,12 @@ func supervisorConfigModeRunsBots() async throws {
 
     let tmp = (NSTemporaryDirectory() as NSString)
         .appendingPathComponent("xclaw-sc-\(getpid())")
-    try fm.createDirectory(atPath: (tmp as NSString).appendingPathComponent("alpha"), withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: tmp, withIntermediateDirectories: true)
     defer { try? fm.removeItem(atPath: tmp) }
 
     let cfgPath = (tmp as NSString).appendingPathComponent("config.json")
-    try #"{"apiUrl":"http://127.0.0.1:9","bots":[{"id":"alpha"}]}"#
+    try #"{"apiUrl":"http://127.0.0.1:9","bots":[{"id":"alpha","octoToken":"bf_a"}]}"#
         .write(toFile: cfgPath, atomically: true, encoding: .utf8)
-    try #"{"octoToken":"bf_a"}"#
-        .write(toFile: (tmp as NSString).appendingPathComponent("alpha/config.json"), atomically: true, encoding: .utf8)
 
     let sock = (tmp as NSString).appendingPathComponent("ctl.sock")
     let sup = CoreSupervisor(config: .init(

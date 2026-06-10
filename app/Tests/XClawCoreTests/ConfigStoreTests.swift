@@ -47,16 +47,21 @@ func configGatewayAndEnvRoundTrip() throws {
 @Test
 func configRemoveBotPrunesSubtree() throws {
     try withTempBase { base in
+        let fm = FileManager.default
         try ConfigStore.save([
             BotConfig(id: "keep", apiURL: "https://o", octoToken: "t1"),
             BotConfig(id: "drop", apiURL: "https://o", octoToken: "t2"),
         ], base: base)
-        #expect(FileManager.default.fileExists(atPath: base.appendingPathComponent("drop/config.json").path))
+        // Simulate each bot having a runtime data dir (what the daemon creates).
+        for id in ["keep", "drop"] {
+            try fm.createDirectory(at: base.appendingPathComponent("\(id)/data"),
+                                   withIntermediateDirectories: true)
+        }
 
-        // Save without "drop" → its subtree is pruned.
+        // Save without "drop" → its subtree (data/ etc.) is pruned.
         try ConfigStore.save([BotConfig(id: "keep", apiURL: "https://o", octoToken: "t1")], base: base)
-        #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("drop").path))
-        #expect(FileManager.default.fileExists(atPath: base.appendingPathComponent("keep/config.json").path))
+        #expect(!fm.fileExists(atPath: base.appendingPathComponent("drop").path))
+        #expect(fm.fileExists(atPath: base.appendingPathComponent("keep/data").path))
         #expect(try ConfigStore.load(base: base).count == 1)
     }
 }

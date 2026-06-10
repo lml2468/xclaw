@@ -60,9 +60,10 @@ lockstep — a control-bus change touches all three in a single commit.
   choke-point, security prefix, current-message anchor) and per-channel group
   context window; wired into the gateway (group turns inject a sanitized
   [Recent group messages] delta + frozen system prompt).
-- ✅ `core/config` — two-layer bot-first config (~/.xclaw): global + per-bot,
-  derived dirs, SOUL.md, slug + SSRF validation. Loaded by `xclawd -config`,
-  which runs every configured bot in its own isolated stack (multi-bot).
+- ✅ `core/config` — single-file config (~/.xclaw/config.json): shared defaults
+  + inline bots[], derived data dir, SOUL.md + AGENTS.md, slug + SSRF validation.
+  Loaded by `xclawd -config`, which runs every configured bot in its own isolated
+  stack (multi-bot).
 - ✅ packaging: `scripts/package-app.sh` builds a distributable `XClaw.app`
   (release `xclawd` embedded in `Contents/Helpers/`) + `.zip` / `.dmg`; ad-hoc
   by default, Developer ID + notarization when `XCLAW_SIGN_IDENTITY` /

@@ -1,13 +1,11 @@
 import Foundation
 
-/// Read/write the daemon's two-layer bot-first config (~/.xclaw) from the GUI,
-/// producing JSON the Go `config.Load` parses. Layout:
-///   ~/.xclaw/config.json        global: apiUrl + bots:[{id}]
-///   ~/.xclaw/<id>/config.json   per-bot: octoToken + overrides
+/// Read/write the daemon's single ~/.xclaw/config.json from the GUI, producing
+/// JSON the Go `config.Load` parses. Every bot is inlined in the global config's
+/// bots[] array (id + octoToken + agent overrides). The bot's persona/behavior
+/// prompt is NOT here — it lives in SOUL.md / AGENTS.md under ~/.xclaw/<id>/.
 ///
-/// This is the writable subset of the Go config — enough to add/remove bots and
-/// edit id / apiUrl / token from the UI. Token is stored in the per-bot file
-/// (plaintext, as today; Keychain is a later step).
+/// Token is stored inline (plaintext, as today; Keychain is a later step).
 public struct BotConfig: Sendable, Equatable, Identifiable {
     public var id: String
     public var apiURL: String
@@ -51,9 +49,6 @@ public enum ConfigStore {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".xclaw", isDirectory: true)
     }
     static func globalConfigURL(_ base: URL) -> URL { base.appendingPathComponent("config.json") }
-    static func botConfigURL(_ base: URL, _ id: String) -> URL {
-        base.appendingPathComponent(id, isDirectory: true).appendingPathComponent("config.json")
-    }
 
     // Matches the Go slug rule: ^[A-Za-z0-9._-]+$, not "." or "..".
     public static func validSlug(_ id: String) -> Bool {
@@ -63,17 +58,17 @@ public enum ConfigStore {
         }
     }
 
-    // MARK: - JSON shapes (minimal, matching Go config tags)
+    // MARK: - JSON shapes (matching the Go config tags)
 
-    private struct GlobalFile: Codable {
+    private struct ConfigFile: Codable {
         var apiUrl: String?
-        var bots: [BotEntry]?
-        struct BotEntry: Codable { var id: String }
-    }
-    private struct BotFile: Codable {
-        var octoToken: String?
-        var apiUrl: String?
-        var agent: Agent?
+        var bots: [Bot]?
+        struct Bot: Codable {
+            var id: String
+            var octoToken: String?
+            var apiUrl: String?
+            var agent: Agent?
+        }
         struct Agent: Codable {
             var gatewayBaseUrl: String?
             var gatewayToken: String?
@@ -83,36 +78,29 @@ public enum ConfigStore {
 
     // MARK: - load
 
-    /// Loads the configured bots from `base` (default ~/.xclaw), merging the
-    /// global apiUrl default with each per-bot file. Returns [] if no global
-    /// config exists.
+    /// Loads the configured bots from `base` (default ~/.xclaw)'s single
+    /// config.json. Returns [] if it doesn't exist.
     public static func load(base: URL? = nil) throws -> [BotConfig] {
         let base = base ?? baseDir
-        guard let gdata = try? Data(contentsOf: globalConfigURL(base)) else { return [] }
-        let global = (try? JSONDecoder().decode(GlobalFile.self, from: gdata)) ?? GlobalFile()
-        let entries = global.bots ?? []
-        var out: [BotConfig] = []
-        for e in entries {
-            var bc = BotConfig(id: e.id, apiURL: global.apiUrl ?? "")
-            if let bdata = try? Data(contentsOf: botConfigURL(base, e.id)),
-               let bf = try? JSONDecoder().decode(BotFile.self, from: bdata) {
-                bc.octoToken = bf.octoToken ?? ""
-                if let u = bf.apiUrl, !u.isEmpty { bc.apiURL = u }
-                bc.gatewayBaseURL = bf.agent?.gatewayBaseUrl ?? ""
-                bc.gatewayToken = bf.agent?.gatewayToken ?? ""
-                bc.env = bf.agent?.env ?? [:]
-            }
-            out.append(bc)
+        guard let data = try? Data(contentsOf: globalConfigURL(base)) else { return [] }
+        let file = (try? JSONDecoder().decode(ConfigFile.self, from: data)) ?? ConfigFile()
+        return (file.bots ?? []).map { b in
+            BotConfig(
+                id: b.id,
+                apiURL: b.apiUrl ?? file.apiUrl ?? "",
+                octoToken: b.octoToken ?? "",
+                gatewayBaseURL: b.agent?.gatewayBaseUrl ?? "",
+                gatewayToken: b.agent?.gatewayToken ?? "",
+                env: b.agent?.env ?? [:])
         }
-        return out
     }
 
     // MARK: - save
 
-    /// Persists the full bot list to `base` (default ~/.xclaw): rewrites the
-    /// global config (apiUrl + bots[]) and each per-bot config (token +
-    /// overrides). Validates slugs + uniqueness. Removes per-bot directories for
-    /// bots no longer present.
+    /// Persists the full bot list to `base` (default ~/.xclaw)'s single
+    /// config.json: every bot inlined in bots[]. Validates slugs + uniqueness.
+    /// Prunes per-bot directories whose bot was removed (keeps SOUL.md/AGENTS.md
+    /// dirs of live bots intact).
     public static func save(_ bots: [BotConfig], base: URL? = nil) throws {
         let base = base ?? baseDir
         var seen = Set<String>()
@@ -121,41 +109,34 @@ public enum ConfigStore {
             guard seen.insert(b.id).inserted else { throw ConfigError.duplicateID(b.id) }
         }
 
-        let fm = FileManager.default
         try mkdir(base)
 
-        // Global config: shared apiUrl taken from the first bot (the per-bot
-        // files carry the authoritative per-bot values too).
-        let shared = bots.first
-        let global = GlobalFile(
-            apiUrl: shared?.apiURL,
-            bots: bots.map { GlobalFile.BotEntry(id: $0.id) }
-        )
-        try writeJSON(global, to: globalConfigURL(base))
-
-        // Per-bot files.
-        var liveIDs = Set<String>()
-        for b in bots {
-            liveIDs.insert(b.id)
-            try mkdir(base.appendingPathComponent(b.id, isDirectory: true))
-            let bf = BotFile(octoToken: b.octoToken,
-                             apiUrl: b.apiURL,
-                             agent: BotFile.Agent(
-                                gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
-                                gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
-                                env: b.env.isEmpty ? nil : b.env))
-            try writeJSON(bf, to: botConfigURL(base, b.id))
-        }
+        let file = ConfigFile(
+            apiUrl: bots.first?.apiURL,
+            bots: bots.map { b in
+                ConfigFile.Bot(
+                    id: b.id,
+                    octoToken: b.octoToken.isEmpty ? nil : b.octoToken,
+                    apiUrl: b.apiURL.isEmpty ? nil : b.apiURL,
+                    agent: ConfigFile.Agent(
+                        gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
+                        gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
+                        env: b.env.isEmpty ? nil : b.env))
+            })
+        try writeJSON(file, to: globalConfigURL(base))
 
         // Prune per-bot dirs for removed bots (only dirs that look like ours: a
-        // child dir of base containing a config.json).
+        // child dir of base containing a data/ subdir or SOUL/AGENTS files).
+        let live = Set(bots.map { $0.id })
+        let fm = FileManager.default
         if let children = try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.isDirectoryKey]) {
             for child in children {
                 let name = child.lastPathComponent
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: child.path, isDirectory: &isDir), isDir.boolValue else { continue }
-                guard validSlug(name), !liveIDs.contains(name) else { continue }
-                if fm.fileExists(atPath: botConfigURL(base, name).path) {
+                guard validSlug(name), !live.contains(name) else { continue }
+                // Only prune dirs that look like a bot subtree (have data/).
+                if fm.fileExists(atPath: child.appendingPathComponent("data").path) {
                     try? fm.removeItem(at: child)
                 }
             }

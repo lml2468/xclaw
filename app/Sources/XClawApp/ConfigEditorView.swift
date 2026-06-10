@@ -3,7 +3,7 @@ import XClawCore
 
 /// Bot configuration editor (opened via Settings / Cmd-,). Lists configured
 /// bots, lets you add/remove and edit id / apiUrl / token, and saves to
-/// ~/.xclaw. Token is written to the per-bot config (plaintext for now).
+/// ~/.xclaw/config.json. Token is written inline in that file (plaintext for now).
 struct ConfigEditorView: View {
     @Bindable var model: AppModel
     @State private var selection: String?
@@ -82,7 +82,7 @@ private struct BotForm: View {
                 TextField("API URL", text: $bot.apiURL)
                     .textContentType(.URL)
                 SecureField("Bot Token (bf_…)", text: $bot.octoToken)
-                    .help("Stored in ~/.xclaw/\(bot.id)/config.json (plaintext for now).")
+                    .help("Stored inline in ~/.xclaw/config.json (plaintext for now).")
             }
             Section {
                 TextField("Gateway Base URL", text: $bot.gatewayBaseURL)

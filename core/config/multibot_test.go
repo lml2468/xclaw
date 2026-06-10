@@ -6,7 +6,7 @@ import (
 )
 
 // TestMultiBotIsolation verifies a 2-bot config resolves to two fully isolated
-// configs: distinct ids, tokens, and derived data/workspace/memory dirs under
+// configs: distinct ids, tokens, per-bot overrides, and derived data dirs under
 // each bot's own subtree.
 func TestMultiBotIsolation(t *testing.T) {
 	dir := t.TempDir()
@@ -15,12 +15,10 @@ func TestMultiBotIsolation(t *testing.T) {
 	  "apiUrl":"https://octo.example",
 	  "context":{"maxContextChars":4000},
 	  "bots":[
-	    {"id":"alpha"},
-	    {"id":"beta"}
+	    {"id":"alpha","octoToken":"bf_alpha"},
+	    {"id":"beta","octoToken":"bf_beta","context":{"maxContextChars":9000}}
 	  ]
 	}`)
-	writeFile(t, filepath.Join(dir, "alpha", "config.json"), `{"octoToken":"bf_alpha"}`)
-	writeFile(t, filepath.Join(dir, "beta", "config.json"), `{"octoToken":"bf_beta","context":{"maxContextChars":9000}}`)
 
 	bots, err := Load(cfg)
 	if err != nil {

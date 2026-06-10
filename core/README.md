@@ -58,8 +58,9 @@ safety/       prompt-injection defense: SanitizeDisplayName / Escape{Role,Sectio
               + SafeText choke-point + SecurityPrefix. Ported from prompt-safety.ts.
 groupctx/     per-channel group context window + cursor + @mention resolution;
               renders the [Recent group messages] delta for injection.
-config/       two-layer bot-first config (~/.xclaw): global + per-bot, derived
-              dirs, SOUL.md + AGENTS.md prompt, slug + SSRF validation.
+config/       single-file config (~/.xclaw/config.json): shared defaults +
+              inline bots[], derived data dir, SOUL.md + AGENTS.md prompt,
+              slug + SSRF validation.
 fixtures/     recorded stream-json turn (text + tool_use + result)
 ```
 
@@ -80,23 +81,24 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/xclawd ./cmd/xclawd
 
 ## Config mode
 
-`-config` loads the two-layer bot-first config (`config.example.json` /
-`config.bot.example.json`) and runs every configured bot in its own isolated
-stack — separate SQLite store, gateway, driver, group-context, and Octo
-connector, each under `~/.xclaw/<id>/`. Layout:
+`-config` loads the single `~/.xclaw/config.json` (see `config.example.json`) and
+runs every bot in its bots[] list in its own isolated stack — separate SQLite
+store, gateway, driver, group-context, and Octo connector, each under
+`~/.xclaw/<id>/`. Layout:
 
 ```
 ~/.xclaw/
-  config.json          # global: apiUrl + shared defaults + bots[] (NO token)
-  <id>/config.json     # per-bot: octoToken + overrides
+  config.json          # apiUrl + shared defaults + bots[] (each bot: id + octoToken + overrides)
   <id>/SOUL.md         # per-bot identity/persona (operator-trusted system prompt)
   <id>/AGENTS.md       # per-bot behavior norms (appended after SOUL.md)
   <id>/data/           # derived, per-bot isolated SQLite + state
 ```
 
-The system prompt is file-based, not a config field: SOUL.md (who the bot is)
-followed by AGENTS.md (how it should behave) are concatenated and passed to the
-agent as the operator-trusted prompt. Either file may be omitted.
+Each `bots[]` entry holds `id` + `octoToken` and may override the top-level
+`apiUrl`/`agent`/`rateLimit`/`context` defaults. The system prompt is file-based,
+not a config field: SOUL.md (who the bot is) followed by AGENTS.md (how it should
+behave) are concatenated and passed to the agent as the operator-trusted prompt.
+Either file may be omitted.
 
 ## Notes / next
 

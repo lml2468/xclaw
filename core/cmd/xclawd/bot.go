@@ -96,7 +96,7 @@ func (r *botRegistry) list() []control.BotInfo {
 	return out
 }
 
-// runConfigMode loads the bot-first config, serves the control bus, and runs
+// runConfigMode loads the single-file config, serves the control bus, and runs
 // every configured bot in its own isolated goroutine until SIGINT/SIGTERM.
 func runConfigMode(path, controlSock string) {
 	bots, err := config.Load(path)

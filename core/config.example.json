@@ -1,9 +1,27 @@
 {
-  "_comment": "XClaw global config. Place at ~/.xclaw/config.json. Shared defaults + the list of bots to run. NEVER put a token here — tokens live in ~/.xclaw/<id>/config.json.",
+  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry overrides them. Per-bot persona/behavior lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.",
   "apiUrl": "https://your-octo-server.example",
-  "context": { "maxContextChars": 6000 },
+  "agent": {
+    "_comment": "Shared defaults for every bot; override per bot in bots[].",
+    "model": "claude-opus-4-8",
+    "gatewayBaseUrl": "https://your-model-gateway.example/v1",
+    "gatewayToken": "sk-your-gateway-token"
+  },
   "rateLimit": { "maxPerMinute": 5 },
+  "context": { "maxContextChars": 6000 },
   "bots": [
-    { "id": "default" }
+    {
+      "id": "my-bot",
+      "octoToken": "bf_your_bot_token_here",
+      "_comment_overrides": "apiUrl/agent/rateLimit/context here override the top-level defaults for this bot only.",
+      "agent": {
+        "_comment_env": "Extra env vars injected into THIS bot's agent CLI. Per-bot identity vars like OCTO_BOT_ID belong here. agent.env merges over the top-level agent.env by key.",
+        "env": {
+          "OCTO_BOT_ID": "this-bot-octo-id",
+          "GH_TOKEN": "ghp_xxx"
+        }
+      },
+      "context": { "maxContextChars": 8000 }
+    }
   ]
 }

@@ -42,8 +42,13 @@ lockstep — a control-bus change touches all three in a single commit.
 - ✅ `core/agent` driver abstraction proven across two very different agent
   protocols (Claude one-shot stream-json; Codex long-lived JSON-RPC).
 - ✅ `core/store` SQLite persistence (sessions / messages / resume map, 7-day TTL).
-- 🚧 `core/router`, `core/gateway` — porting cc-channel's gateway logic.
-- 🚧 `app/` — Swift macOS shell scaffold.
+- ✅ `core/router` + `core/gateway` — cc-channel's gateway pipeline ported
+  (per-session lock, rate limiting, mention gate, resume continuity).
+- ✅ `core/control` + `app/XClawCore` — control bus live end-to-end: the Swift
+  client connects over the Unix socket, sends commands, and renders the agent
+  event stream broadcast by the Go core.
+- 🚧 `app/XClawApp` — wire AppModel + GUI onto the control client.
+- 🚧 IM connector, cron, group-context, prompt-safety, config (next ports).
 
 ## Build
 

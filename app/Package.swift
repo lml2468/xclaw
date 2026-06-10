@@ -12,6 +12,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "XClawApp", targets: ["XClawApp"]),
+        .executable(name: "xclaw-probe", targets: ["XClawProbe"]),
         .library(name: "XClawCore", targets: ["XClawCore"]),
     ],
     targets: [
@@ -24,6 +25,12 @@ let package = Package(
         // Mirrors Open Island's OpenIslandApp.
         .executableTarget(
             name: "XClawApp",
+            dependencies: ["XClawCore"]
+        ),
+        // CLI harness: connect to a running xclawd control socket, send a
+        // command, print the event stream. Used to prove Swift↔Go end-to-end.
+        .executableTarget(
+            name: "XClawProbe",
             dependencies: ["XClawCore"]
         ),
         .testTarget(

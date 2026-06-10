@@ -1,30 +1,35 @@
 // Command xclawd is the XClaw gateway daemon.
 //
 // It wires the full pipeline — store + router + gateway + agent driver — and
-// drives it from an inbound source. This headless MVP ships a REPL inbound
-// source (stdin) so you can talk to an agent end-to-end:
+// drives it from an inbound source. Two front ends:
 //
-//	xclawd                       # claude driver, interactive REPL on stdin
-//	xclawd -driver codex         # codex app-server driver
-//	echo "hello" | xclawd        # one-shot piped input
+//	xclawd                              # REPL on stdin (claude driver)
+//	xclawd -driver codex               # codex app-server driver
+//	xclawd -control /tmp/xclaw.sock    # serve the control bus (for the GUI app)
 //
-// Each line of stdin becomes an inbound DM; the gateway routes it (per-session
-// lock, rate limit), drives the agent, streams events to stdout, and persists
-// the assistant reply + resume id for multi-turn continuity.
+// With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
+// so the Swift macOS app (or any client) can send commands and receive the live
+// event stream. The REPL and the control bus can run together.
 //
-// A `/reset` line clears the current session's resume mapping.
+// Each inbound becomes a DM; the gateway routes it (per-session lock, rate
+// limit), drives the agent, streams events to every sink (stdout + control bus),
+// and persists the assistant reply + resume id for multi-turn continuity.
 package main
 
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lml2468/xclaw/core/agent"
+	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/store"
@@ -32,11 +37,13 @@ import (
 
 func main() {
 	var (
-		driverName = flag.String("driver", "claude", "agent driver: claude | codex")
-		bin        = flag.String("bin", "", "agent executable (default: driver name)")
-		fromUID    = flag.String("uid", "repl-user", "synthetic from_uid for REPL inbound (DM session key)")
-		dbPath     = flag.String("db", filepath.Join(os.TempDir(), "xclawd.db"), "sqlite path")
-		maxPerMin  = flag.Int("rate", 30, "max messages per minute per session")
+		driverName  = flag.String("driver", "claude", "agent driver: claude | codex")
+		bin         = flag.String("bin", "", "agent executable (default: driver name)")
+		fromUID     = flag.String("uid", "repl-user", "synthetic from_uid for REPL inbound (DM session key)")
+		dbPath      = flag.String("db", filepath.Join(os.TempDir(), "xclawd.db"), "sqlite path")
+		maxPerMin   = flag.Int("rate", 30, "max messages per minute per session")
+		controlSock = flag.String("control", "", "serve the control bus on this Unix socket path (enables GUI clients)")
+		noREPL      = flag.Bool("no-repl", false, "disable the stdin REPL (control-bus only)")
 	)
 	flag.Parse()
 
@@ -54,11 +61,41 @@ func main() {
 		fatal("%v", err)
 	}
 
-	sink := &stdoutSink{}
-	gw := gateway.New(drv, st, router.New(router.Config{MaxPerMinute: *maxPerMin}), sink)
+	started := time.Now()
+
+	// Sinks fan out: stdout always, control bus when enabled.
+	sinks := multiSink{&stdoutSink{}}
+	rt := router.New(router.Config{MaxPerMinute: *maxPerMin})
+
+	var srv *control.Server
+	if *controlSock != "" {
+		srv = control.NewServer(nil) // handler installed after gw exists
+		sinks = append(sinks, control.NewEventSink(srv))
+	}
+
+	gw := gateway.New(drv, st, rt, sinks)
+
+	if srv != nil {
+		srv.SetHandler(makeCommandHandler(gw, st, drv, started))
+		ln := mustListenUnix(*controlSock)
+		defer ln.Close()
+		defer os.Remove(*controlSock)
+		go func() {
+			if err := srv.Serve(ln); err != nil {
+				fmt.Fprintf(os.Stderr, "control serve: %v\n", err)
+			}
+		}()
+		fmt.Printf("control bus listening on %s\n", *controlSock)
+	}
 
 	fmt.Printf("xclawd — driver=%s caps=%+v\n", drv.Name(), drv.Capabilities())
 	fmt.Printf("db=%s  session=dm:%s\n", *dbPath, *fromUID)
+
+	if *noREPL {
+		fmt.Println("control-bus only; press Ctrl-C to exit")
+		select {} // block forever
+	}
+
 	fmt.Println("type a message and press enter; /reset clears the session; Ctrl-D to exit")
 
 	runREPL(context.Background(), gw, st, *fromUID)
@@ -159,4 +196,90 @@ func oneLine(s string) string {
 func fatal(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
 	os.Exit(1)
+}
+
+// multiSink fans gateway events out to several sinks (stdout + control bus).
+type multiSink []gateway.Sink
+
+func (m multiSink) OnEvent(key string, ev agent.AgentEvent) {
+	for _, s := range m {
+		s.OnEvent(key, ev)
+	}
+}
+func (m multiSink) OnReply(key, text string) {
+	for _, s := range m {
+		s.OnReply(key, text)
+	}
+}
+
+func mustListenUnix(path string) net.Listener {
+	_ = os.Remove(path) // clear a stale socket
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		fatal("listen %s: %v", path, err)
+	}
+	return ln
+}
+
+// makeCommandHandler builds the control-bus command dispatcher. session.send is
+// fired in a goroutine so the command returns immediately and the turn streams
+// back as events.
+func makeCommandHandler(gw *gateway.Gateway, st *store.Store, drv agent.Driver, started time.Time) control.CommandHandler {
+	return func(cmdType string, body json.RawMessage) (any, error) {
+		switch cmdType {
+		case "health":
+			return control.HealthBody{
+				Uptime: int64(time.Since(started).Seconds()),
+				Driver: drv.Name(),
+			}, nil
+
+		case "session.send":
+			var b control.SessionSendBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			if b.UID == "" {
+				return nil, fmt.Errorf("uid required")
+			}
+			go func() {
+				_, _ = gw.Handle(context.Background(), router.InboundMessage{
+					ChannelType: router.ChannelDM,
+					FromUID:     b.UID,
+					FromName:    b.UID,
+					Text:        b.Text,
+				})
+			}()
+			return control.OKBody{OK: true}, nil
+
+		case "session.history":
+			var b control.SessionHistoryBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			limit := b.Limit
+			if limit <= 0 {
+				limit = 40
+			}
+			msgs, err := st.RecentMessages(b.SessionKey, limit)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]control.HistoryMessage, 0, len(msgs))
+			for _, m := range msgs {
+				out = append(out, control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp})
+			}
+			return out, nil
+
+		case "session.reset":
+			var b control.SessionSendBody // reuse {uid}
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			_ = st.ClearResume(b.UID)
+			return control.OKBody{OK: true}, nil
+
+		default:
+			return nil, fmt.Errorf("unknown command %q", cmdType)
+		}
+	}
 }

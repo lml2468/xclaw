@@ -16,8 +16,9 @@ import (
 	"strings"
 )
 
-// SDKConfig holds agent-driver settings (shared or per-bot).
-type SDKConfig struct {
+// AgentConfig holds the agent's per-bot settings (model, system prompt,
+// model-gateway routing, env). On disk this is the "agent" block.
+type AgentConfig struct {
 	Model           string            `json:"model,omitempty"`
 	MaxTurns        *int              `json:"maxTurns,omitempty"`
 	SystemPrompt    string            `json:"systemPrompt,omitempty"`
@@ -42,7 +43,7 @@ type ContextConfig struct {
 }
 
 // BotOverride is an inline entry in the global bots[] list. Note model /
-// systemPrompt are FLAT here (vs nested sdk.* in a per-bot file).
+// systemPrompt are FLAT here (vs nested agent.* in a per-bot file).
 type BotOverride struct {
 	ID           string `json:"id,omitempty"`
 	BotToken     string `json:"botToken,omitempty"`
@@ -56,7 +57,7 @@ type File struct {
 	BotToken        string           `json:"botToken,omitempty"`
 	APIURL          string           `json:"apiUrl,omitempty"`
 	OctoToken       string           `json:"octoToken,omitempty"` // xclaw: Octo bot token
-	SDK             *SDKConfig       `json:"sdk,omitempty"`
+	Agent           *AgentConfig     `json:"agent,omitempty"`
 	RateLimit       *RateLimitConfig `json:"rateLimit,omitempty"`
 	Context         *ContextConfig   `json:"context,omitempty"`
 	MaxResponseChars *int            `json:"maxResponseChars,omitempty"`
@@ -70,7 +71,7 @@ type Resolved struct {
 	APIURL   string
 	OctoToken string
 
-	SDK       SDKConfig
+	Agent     AgentConfig
 	RateLimit RateLimitConfig
 	Context   ContextConfig
 	MaxResponseChars int
@@ -86,7 +87,7 @@ type Resolved struct {
 
 func defaults() Resolved {
 	return Resolved{
-		SDK: SDKConfig{
+		Agent: AgentConfig{
 			SettingSources: []string{"project"},
 		},
 		RateLimit:        RateLimitConfig{MaxPerMinute: 5},
@@ -189,24 +190,24 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		r.APIURL = firstNonEmpty(perBot.APIURL, bot.APIURL, global.APIURL)
 		r.OctoToken = firstNonEmpty(perBot.OctoToken, global.OctoToken)
 
-		// shallow-merge sdk/rateLimit/context: global → perBotFile keys
-		mergeSDK(&r.SDK, global.SDK)
-		mergeSDK(&r.SDK, perBot.SDK)
-		// model/systemPrompt: SOUL.md > perBotFile.sdk > inlineBot > global
+		// shallow-merge agent/rateLimit/context: global → perBotFile keys
+		mergeAgent(&r.Agent, global.Agent)
+		mergeAgent(&r.Agent, perBot.Agent)
+		// model/systemPrompt: SOUL.md > perBotFile.agent > inlineBot > global
 		if bot.Model != "" {
-			r.SDK.Model = bot.Model
+			r.Agent.Model = bot.Model
 		}
-		if perBot.SDK != nil && perBot.SDK.Model != "" {
-			r.SDK.Model = perBot.SDK.Model
+		if perBot.Agent != nil && perBot.Agent.Model != "" {
+			r.Agent.Model = perBot.Agent.Model
 		}
 		sysPrompt := firstNonEmpty(
 			soul(botRoot),
-			sdkSystemPrompt(perBot.SDK),
+			agentSystemPrompt(perBot.Agent),
 			bot.SystemPrompt,
-			sdkSystemPrompt(global.SDK),
+			agentSystemPrompt(global.Agent),
 		)
 		if sysPrompt != "" {
-			r.SDK.SystemPrompt = sysPrompt
+			r.Agent.SystemPrompt = sysPrompt
 		}
 		mergeRate(&r.RateLimit, global.RateLimit)
 		mergeRate(&r.RateLimit, perBot.RateLimit)
@@ -232,8 +233,8 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		if r.APIURL != "" && !isAllowedURL(r.APIURL) {
 			return nil, fmt.Errorf("bot %q: unsafe apiUrl %q (must be https:// or http://localhost; SSRF protection)", id, r.APIURL)
 		}
-		if r.SDK.GatewayBaseURL != "" && !isAllowedURL(r.SDK.GatewayBaseURL) {
-			return nil, fmt.Errorf("bot %q: unsafe gatewayBaseUrl %q (SSRF protection)", id, r.SDK.GatewayBaseURL)
+		if r.Agent.GatewayBaseURL != "" && !isAllowedURL(r.Agent.GatewayBaseURL) {
+			return nil, fmt.Errorf("bot %q: unsafe gatewayBaseUrl %q (SSRF protection)", id, r.Agent.GatewayBaseURL)
 		}
 
 		out = append(out, r)
@@ -250,14 +251,14 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func sdkSystemPrompt(s *SDKConfig) string {
+func agentSystemPrompt(s *AgentConfig) string {
 	if s == nil {
 		return ""
 	}
 	return s.SystemPrompt
 }
 
-func mergeSDK(dst *SDKConfig, src *SDKConfig) {
+func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src == nil {
 		return
 	}
@@ -321,21 +322,21 @@ func soul(botRoot string) string {
 }
 
 // DriverEnv builds the KEY=VALUE environment to layer onto the claude CLI's
-// process env: the user-declared sdk.env plus the model-gateway routing vars
+// process env: the user-declared agent.env plus the model-gateway routing vars
 // (mapped to the names claude understands), appended last so they win over any
-// same-named sdk.env entry.
+// same-named agent.env entry.
 //
 //	ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
 func (r Resolved) DriverEnv() []string {
 	var out []string
-	for k, v := range r.SDK.Env {
+	for k, v := range r.Agent.Env {
 		out = append(out, k+"="+v)
 	}
-	if r.SDK.GatewayBaseURL != "" {
-		out = append(out, "ANTHROPIC_BASE_URL="+r.SDK.GatewayBaseURL)
+	if r.Agent.GatewayBaseURL != "" {
+		out = append(out, "ANTHROPIC_BASE_URL="+r.Agent.GatewayBaseURL)
 	}
-	if r.SDK.GatewayToken != "" {
-		out = append(out, "ANTHROPIC_AUTH_TOKEN="+r.SDK.GatewayToken)
+	if r.Agent.GatewayToken != "" {
+		out = append(out, "ANTHROPIC_AUTH_TOKEN="+r.Agent.GatewayToken)
 	}
 	return out
 }

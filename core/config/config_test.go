@@ -55,7 +55,7 @@ func TestPerBotFilePrecedence(t *testing.T) {
 	}`)
 	// per-bot file overrides inline + global
 	writeFile(t, filepath.Join(dir, "alpha", "config.json"),
-		`{"octoToken":"bf_alpha","sdk":{"model":"perbot-model"},"context":{"maxContextChars":2000}}`)
+		`{"octoToken":"bf_alpha","agent":{"model":"perbot-model"},"context":{"maxContextChars":2000}}`)
 
 	bots, err := Load(cfg)
 	if err != nil {
@@ -65,8 +65,8 @@ func TestPerBotFilePrecedence(t *testing.T) {
 	if b.BotID != "alpha" {
 		t.Fatalf("id = %q", b.BotID)
 	}
-	if b.SDK.Model != "perbot-model" {
-		t.Fatalf("per-bot file model should win: %q", b.SDK.Model)
+	if b.Agent.Model != "perbot-model" {
+		t.Fatalf("per-bot file model should win: %q", b.Agent.Model)
 	}
 	if b.Context.MaxContextChars != 2000 {
 		t.Fatalf("per-bot context should win: %d", b.Context.MaxContextChars)
@@ -79,12 +79,12 @@ func TestPerBotFilePrecedence(t *testing.T) {
 func TestSoulOverridesSystemPrompt(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x","sdk":{"systemPrompt":"global-prompt"}}`)
+	writeFile(t, cfg, `{"apiUrl":"https://o","octoToken":"bf_x","agent":{"systemPrompt":"global-prompt"}}`)
 	writeFile(t, filepath.Join(dir, "default", "SOUL.md"), "  you are a helpful bot  ")
 
 	bots, _ := Load(cfg)
-	if bots[0].SDK.SystemPrompt != "you are a helpful bot" {
-		t.Fatalf("SOUL.md should win + be trimmed: %q", bots[0].SDK.SystemPrompt)
+	if bots[0].Agent.SystemPrompt != "you are a helpful bot" {
+		t.Fatalf("SOUL.md should win + be trimmed: %q", bots[0].Agent.SystemPrompt)
 	}
 }
 

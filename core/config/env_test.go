@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// global sdk.env is the base; per-bot env adds/overrides per key (not whole
+// global agent.env is the base; per-bot env adds/overrides per key (not whole
 // replacement), and the gateway vars are mapped to the claude env names by
 // DriverEnv.
 func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
@@ -14,7 +14,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
 	  "apiUrl":"https://octo.example",
-	  "sdk":{"env":{"SHARED_DEFAULT":"global","SHARED":"global"},
+	  "agent":{"env":{"SHARED_DEFAULT":"global","SHARED":"global"},
 	         "gatewayBaseUrl":"https://gw.example/v1"},
 	  "bots":[{"id":"alpha"}]
 	}`)
@@ -22,7 +22,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	// GH_TOKEN, overrides SHARED, and sets its own gateway token.
 	writeFile(t, filepath.Join(dir, "alpha", "config.json"), `{
 	  "octoToken":"bf_a",
-	  "sdk":{"env":{"OCTO_BOT_ID":"alpha-bot","GH_TOKEN":"ghp_x","SHARED":"perbot"},
+	  "agent":{"env":{"OCTO_BOT_ID":"alpha-bot","GH_TOKEN":"ghp_x","SHARED":"perbot"},
 	         "gatewayToken":"sk-ant-xyz"}
 	}`)
 
@@ -30,7 +30,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	env := bots[0].SDK.Env
+	env := bots[0].Agent.Env
 	if env["SHARED_DEFAULT"] != "global" {
 		t.Fatalf("global env key lost: %v", env)
 	}

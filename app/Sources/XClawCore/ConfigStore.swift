@@ -73,8 +73,8 @@ public enum ConfigStore {
     private struct BotFile: Codable {
         var octoToken: String?
         var apiUrl: String?
-        var sdk: SDK?
-        struct SDK: Codable {
+        var agent: Agent?
+        struct Agent: Codable {
             var gatewayBaseUrl: String?
             var gatewayToken: String?
             var env: [String: String]?
@@ -98,9 +98,9 @@ public enum ConfigStore {
                let bf = try? JSONDecoder().decode(BotFile.self, from: bdata) {
                 bc.octoToken = bf.octoToken ?? ""
                 if let u = bf.apiUrl, !u.isEmpty { bc.apiURL = u }
-                bc.gatewayBaseURL = bf.sdk?.gatewayBaseUrl ?? ""
-                bc.gatewayToken = bf.sdk?.gatewayToken ?? ""
-                bc.env = bf.sdk?.env ?? [:]
+                bc.gatewayBaseURL = bf.agent?.gatewayBaseUrl ?? ""
+                bc.gatewayToken = bf.agent?.gatewayToken ?? ""
+                bc.env = bf.agent?.env ?? [:]
             }
             out.append(bc)
         }
@@ -140,7 +140,7 @@ public enum ConfigStore {
             try mkdir(base.appendingPathComponent(b.id, isDirectory: true))
             let bf = BotFile(octoToken: b.octoToken,
                              apiUrl: b.apiURL,
-                             sdk: BotFile.SDK(
+                             agent: BotFile.Agent(
                                 gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
                                 gatewayToken: b.gatewayToken.isEmpty ? nil : b.gatewayToken,
                                 env: b.env.isEmpty ? nil : b.env))

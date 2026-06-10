@@ -1,12 +1,12 @@
 {
   "_comment": "Per-bot config. Place at ~/.xclaw/<id>/config.json. Holds this bot's token + overrides. data/, workspace/, memory/, skills/ are derived siblings — do not set them.",
   "octoToken": "bf_your_bot_token_here",
-  "sdk": {
+  "agent": {
     "model": "claude-opus-4-8",
     "_comment_gateway": "Model-gateway routing, mapped to ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN for the claude CLI.",
     "gatewayBaseUrl": "https://your-model-gateway.example/v1",
     "gatewayToken": "sk-your-gateway-token",
-    "_comment_env": "Extra env vars injected into THIS bot's agent CLI. Per-bot identity vars like OCTO_BOT_ID belong here (never in the global config — that would give every bot the same id). Globally-shared vars can go in the global config's sdk.env; per-bot entries merge over them by key.",
+    "_comment_env": "Extra env vars injected into THIS bot's agent CLI. Per-bot identity vars like OCTO_BOT_ID belong here (never in the global config — that would give every bot the same id). Globally-shared vars can go in the global config's agent.env; per-bot entries merge over them by key.",
     "env": {
       "OCTO_BOT_ID": "this-bot-octo-id",
       "GH_TOKEN": "ghp_xxx"

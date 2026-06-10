@@ -3,7 +3,7 @@
   "apiUrl": "https://your-octo-server.example",
   "context": { "maxContextChars": 6000, "historyLimit": 40 },
   "rateLimit": { "maxPerMinute": 5 },
-  "sdk": { "driver": "claude", "permissionMode": "bypassPermissions" },
+  "sdk": { "driver": "claude" },
   "bots": [
     { "id": "default" }
   ]

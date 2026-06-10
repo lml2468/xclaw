@@ -128,3 +128,33 @@ func TestFullTurnSequence(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeArgsBakeHeadlessInvariants asserts the claude-only fixed flags are
+// always emitted: --allowedTools * and --permission-mode bypassPermissions
+// (without them a headless turn would hang waiting for approval).
+func TestClaudeArgsBakeHeadlessInvariants(t *testing.T) {
+	d := NewClaudeDriver("claude")
+	args := d.buildArgs(Request{Prompt: "hi"})
+	joined := ""
+	for i, a := range args {
+		joined += a
+		if i < len(args)-1 {
+			joined += " "
+		}
+	}
+	if !contains(args, "--permission-mode") || !contains(args, "bypassPermissions") {
+		t.Fatalf("missing bypassPermissions: %v", args)
+	}
+	if !contains(args, "--allowedTools") || !contains(args, "*") {
+		t.Fatalf("missing allowedTools *: %v", args)
+	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}

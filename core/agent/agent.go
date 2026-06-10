@@ -67,14 +67,14 @@ type TokenUsage struct {
 }
 
 // Request is the agent-agnostic ask. Drivers map these onto their CLI flags.
+// Tool/permission policy is NOT here: it's a fixed, claude-only headless
+// invariant baked into ClaudeDriver (allowedTools=*, permissionMode=bypass).
 type Request struct {
-	Prompt         string
-	SessionID      string   // "" = new session; non-empty = resume
-	Cwd            string   // sandbox working directory
-	Model          string   // optional model override
-	AllowedTools   []string // optional tool whitelist
-	PermissionMode string   // e.g. "default", "plan"; bypass left to operator policy
-	SystemAppend   string   // SOUL.md / security prefix appended to system prompt
+	Prompt       string
+	SessionID    string // "" = new session; non-empty = resume
+	Cwd          string // sandbox working directory
+	Model        string // optional model override
+	SystemAppend string // SOUL.md / security prefix appended to system prompt
 }
 
 // Capabilities advertises what a driver supports, so the gateway can adapt.

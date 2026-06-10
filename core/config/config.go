@@ -19,8 +19,6 @@ import (
 // SDKConfig holds agent-driver settings (shared or per-bot).
 type SDKConfig struct {
 	Model           string            `json:"model,omitempty"`
-	AllowedTools    json.RawMessage   `json:"allowedTools,omitempty"` // []string or "*"
-	PermissionMode  string            `json:"permissionMode,omitempty"`
 	MaxTurns        *int              `json:"maxTurns,omitempty"`
 	SystemPrompt    string            `json:"systemPrompt,omitempty"`
 	SettingSources  []string          `json:"settingSources,omitempty"`
@@ -91,7 +89,6 @@ type Resolved struct {
 func defaults() Resolved {
 	return Resolved{
 		SDK: SDKConfig{
-			PermissionMode: "bypassPermissions",
 			SettingSources: []string{"project"},
 			Driver:         "claude",
 		},
@@ -269,12 +266,6 @@ func mergeSDK(dst *SDKConfig, src *SDKConfig) {
 	}
 	if src.Model != "" {
 		dst.Model = src.Model
-	}
-	if len(src.AllowedTools) > 0 {
-		dst.AllowedTools = src.AllowedTools
-	}
-	if src.PermissionMode != "" {
-		dst.PermissionMode = src.PermissionMode
 	}
 	if src.MaxTurns != nil {
 		dst.MaxTurns = src.MaxTurns

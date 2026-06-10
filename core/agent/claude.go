@@ -19,8 +19,7 @@ import (
 type ClaudeDriver struct {
 	// Bin is the claude executable (default "claude" on PATH).
 	Bin string
-	// ExtraArgs are appended verbatim (e.g. --permission-mode) — left to the
-	// caller's policy so the driver never hard-codes bypassPermissions.
+	// ExtraArgs are appended verbatim.
 	ExtraArgs []string
 	// Env are extra KEY=VALUE entries layered onto os.Environ() for the spawned
 	// CLI (e.g. ANTHROPIC_BASE_URL, OCTO_BOT_ID, GH_TOKEN).
@@ -42,17 +41,15 @@ func (d *ClaudeDriver) Capabilities() Capabilities {
 
 func (d *ClaudeDriver) buildArgs(req Request) []string {
 	args := []string{"-p", req.Prompt, "--output-format", "stream-json", "--verbose"}
+	// Headless gateway invariants (claude-only, fixed): grant all tools and
+	// bypass interactive approval — there is no terminal to answer prompts, so
+	// any other permission mode would hang the turn forever.
+	args = append(args, "--allowedTools", "*", "--permission-mode", "bypassPermissions")
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
-	}
-	if len(req.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(req.AllowedTools, ","))
-	}
-	if req.PermissionMode != "" {
-		args = append(args, "--permission-mode", req.PermissionMode)
 	}
 	if req.SystemAppend != "" {
 		args = append(args, "--append-system-prompt", req.SystemAppend)

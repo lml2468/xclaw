@@ -10,6 +10,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/gateway"
+	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/router"
 )
 
@@ -76,6 +77,33 @@ func NewConnector(rest *RESTClient) *Connector {
 // SetGateway attaches the gateway (done after construction to resolve the
 // Connector-is-Sink-of-Gateway cycle).
 func (c *Connector) SetGateway(g *gateway.Gateway) { c.gateway = g }
+
+// BotUID returns the bot's registered uid (empty before registration). Passed to
+// gateway.WithGroupBackfill so cold-start backfill can filter the bot's own
+// messages once the uid is known.
+func (c *Connector) BotUID() string { return c.uid() }
+
+// BackfillFetch pulls recent group-channel history for cold-start backfill (cc
+// G4), adapting octo.HistoricalMessage to the IM-agnostic groupctx.BackfillMessage.
+// limit<=0 lets the REST client apply its default. Group channels only — the
+// gateway only calls this for group sessions. Returns nil on any REST failure
+// (the agent runs fine without history).
+func (c *Connector) BackfillFetch(channelID string, limit int) []groupctx.BackfillMessage {
+	hist := c.rest.GetChannelMessages(c.ctx(), channelID, ChannelGroup, limit)
+	if len(hist) == 0 {
+		return nil
+	}
+	out := make([]groupctx.BackfillMessage, 0, len(hist))
+	for _, h := range hist {
+		out = append(out, groupctx.BackfillMessage{
+			FromUID:  h.FromUID,
+			FromName: h.FromName,
+			Content:  h.Content,
+			Seq:      h.MessageSeq,
+		})
+	}
+	return out
+}
 
 // Run registers the bot and maintains the socket connection with reconnect
 // until ctx is cancelled. The initial registration is retried with backoff so a
@@ -232,6 +260,7 @@ func (c *Connector) onInbound(m BotMessage) {
 		ChannelID:   m.ChannelID,
 		ChannelType: chType,
 		Text:        m.Payload.Content,
+		MessageSeq:  int64(m.MessageSeq),
 		Mentioned:   m.MentionsBot(uid),
 	}
 	key, err := inbound.SessionKey()

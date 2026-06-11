@@ -230,6 +230,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
+		WithGroupBackfill(connector.BotUID, connector.BackfillFetch).
 		WithSystemPrompt(cfg.SystemPrompt).
 		WithModel(cfg.Agent.Model).
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase, cfg.SkillsDir, cfg.GlobalSkillsDir)

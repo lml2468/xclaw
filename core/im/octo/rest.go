@@ -3,15 +3,22 @@ package octo
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// maxHistoricalPayloadBase64Len caps a base64 payload before decode (api.ts
+// MAX_HISTORICAL_PAYLOAD_BASE64_LEN). 256 KiB base64 ≈ 192 KiB decoded — well
+// above any legitimate IM payload — guards against a hostile/huge sync row.
+const maxHistoricalPayloadBase64Len = 256 * 1024
 
 // RESTClient talks to the Octo bot REST API (api.ts). Auth is Bearer token,
 // resolved lazily per request via the token func so it can be injected/rotated
@@ -117,6 +124,113 @@ func (c *RESTClient) SendTyping(ctx context.Context, channelID string, channelTy
 // Heartbeat posts the REST heartbeat (api.ts sendHeartbeat).
 func (c *RESTClient) Heartbeat(ctx context.Context) error {
 	return c.postJSON(ctx, "/v1/bot/heartbeat", map[string]any{}, nil)
+}
+
+// HistoricalMessage is one row returned by /v1/bot/messages/sync (api.ts
+// HistoricalMessage). The server ships content/type/url/name inside a
+// base64-encoded JSON payload; GetChannelMessages decodes it and prefers a
+// usable top-level field, falling back to the decoded payload (api.ts C1/P1.5).
+type HistoricalMessage struct {
+	FromUID    string
+	FromName   string
+	Content    string
+	Timestamp  int64
+	MessageID  string
+	MessageSeq int64
+	Type       int
+	URL        string
+	Name       string
+}
+
+// GetChannelMessages pulls recent messages for a channel via the WuKongIM sync
+// endpoint (api.ts getChannelMessages, used by G4 cold-start backfill). limit
+// defaults to 20 and caps the returned slice client-side (the server may return
+// more). Returns nil on any failure — the agent runs fine without history.
+func (c *RESTClient) GetChannelMessages(ctx context.Context, channelID string, channelType ChannelType, limit int) []HistoricalMessage {
+	if limit <= 0 {
+		limit = 20
+	}
+	body := map[string]any{
+		"channel_id":        channelID,
+		"channel_type":      int(channelType),
+		"limit":             limit,
+		"start_message_seq": 0,
+		"end_message_seq":   0,
+		"pull_mode":         1, // 1 = pull newer messages
+	}
+	var raw struct {
+		Messages []struct {
+			FromUID    string          `json:"from_uid"`
+			FromName   string          `json:"from_name"`
+			Content    string          `json:"content"`
+			Timestamp  int64           `json:"timestamp"`
+			MessageID  string          `json:"message_id"`
+			MessageSeq int64           `json:"message_seq"`
+			Type       int             `json:"type"`
+			URL        string          `json:"url"`
+			Name       string          `json:"name"`
+			Payload    json.RawMessage `json:"payload"`
+		} `json:"messages"`
+	}
+	if err := c.postJSON(ctx, "/v1/bot/messages/sync", body, &raw); err != nil {
+		fmt.Fprintf(os.Stderr, "[octo] getChannelMessages error: %v\n", err)
+		return nil
+	}
+	msgs := raw.Messages
+	if len(msgs) > limit {
+		msgs = msgs[:limit] // client-side cap (api.ts D1/S7)
+	}
+	out := make([]HistoricalMessage, 0, len(msgs))
+	for _, m := range msgs {
+		// Decode the base64 JSON payload (string form); object form is passed as-is.
+		var pl struct {
+			Content string `json:"content"`
+			Type    int    `json:"type"`
+			URL     string `json:"url"`
+			Name    string `json:"name"`
+		}
+		if len(m.Payload) > 0 {
+			var s string
+			if json.Unmarshal(m.Payload, &s) == nil {
+				if len(s) <= maxHistoricalPayloadBase64Len {
+					if dec, derr := base64.StdEncoding.DecodeString(s); derr == nil {
+						_ = json.Unmarshal(dec, &pl) // leave pl zero on failure
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages dropping oversized payload (%d base64 chars)\n", len(s))
+				}
+			} else {
+				_ = json.Unmarshal(m.Payload, &pl) // object payload
+			}
+		}
+		hm := HistoricalMessage{
+			FromUID:    m.FromUID,
+			FromName:   m.FromName,
+			Content:    firstNonEmpty(m.Content, pl.Content),
+			Timestamp:  m.Timestamp,
+			MessageID:  m.MessageID,
+			MessageSeq: m.MessageSeq,
+			Type:       firstNonZero(m.Type, pl.Type),
+			URL:        firstNonEmpty(m.URL, pl.URL),
+			Name:       firstNonEmpty(m.Name, pl.Name),
+		}
+		out = append(out, hm)
+	}
+	return out
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func firstNonZero(a, b int) int {
+	if a != 0 {
+		return a
+	}
+	return b
 }
 
 // postJSON performs a POST with Bearer auth and decodes the JSON response into

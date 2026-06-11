@@ -2,9 +2,9 @@ import SwiftUI
 import XClawCore
 
 /// Bot configuration editor (opened via Settings / Cmd-,). Lists configured
-/// bots, lets you add/remove and edit id / apiUrl / tokens, and saves to
-/// ~/.xclaw/config.json. Tokens are stored in the macOS Keychain (not the file);
-/// see ConfigEditorModel / Keychain.swift.
+/// bots, lets you add/remove and edit identity / connection / agent / persona /
+/// environment, and saves to ~/.xclaw/config.json (tokens → Keychain, persona →
+/// SOUL.md / AGENTS.md). See ConfigEditorModel / ConfigStore / Keychain.
 struct ConfigEditorView: View {
     @Bindable var config: ConfigEditorModel
     /// Invoked when the user chooses "Save & Restart" after a successful save.
@@ -16,7 +16,22 @@ struct ConfigEditorView: View {
             List(selection: $selection) {
                 Section("Bots") {
                     ForEach($config.bots) { $bot in
-                        Text(bot.id.isEmpty ? "(unnamed)" : bot.id).tag(bot.id)
+                        Label {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(bot.id.isEmpty ? "(unnamed)" : bot.id)
+                                if !bot.apiURL.isEmpty {
+                                    Text(bot.apiURL)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: "person.crop.square")
+                                .foregroundStyle(.tint)
+                        }
+                        .tag(bot.id)
                     }
                     .onDelete { idx in
                         let ids = idx.map { config.bots[$0].id }
@@ -24,7 +39,7 @@ struct ConfigEditorView: View {
                     }
                 }
             }
-            .frame(minWidth: 180)
+            .frame(minWidth: 200)
             .toolbar {
                 ToolbarItem {
                     Button {
@@ -36,28 +51,31 @@ struct ConfigEditorView: View {
             }
         } detail: {
             if let sel = selection, let i = config.bots.firstIndex(where: { $0.id == sel }) {
-                BotForm(bot: $config.bots[i])
-                    .id(sel) // rebuild cleanly when switching bots
+                BotForm(bot: $config.bots[i], onRemove: {
+                    config.remove(sel)
+                    selection = config.bots.first?.id
+                })
+                .id(sel) // rebuild cleanly when switching bots
             } else {
-                ContentUnavailableView(
-                    "No Bot Selected",
-                    systemImage: "bolt.horizontal.circle",
-                    description: Text("Select a bot, or add one with +.")
-                )
+                ContentUnavailableView {
+                    Label("No Bot Selected", systemImage: "person.crop.square.badge.plus")
+                } description: {
+                    Text("Select a bot on the left, or add one with +.")
+                }
             }
         }
-        .frame(width: 620, height: 420)
+        .frame(width: 760, height: 580)
         .safeAreaInset(edge: .bottom) { footer }
     }
 
     private var footer: some View {
         HStack {
             if let err = config.error {
-                Label(err, systemImage: "exclamationmark.triangle")
+                Label(err, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.red).lineLimit(2)
             } else if config.needsRestart {
-                Label("Saved. Restart the core to apply.", systemImage: "checkmark.circle")
-                    .font(.caption).foregroundStyle(.secondary)
+                Label("Saved. Restart the core to apply.", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
             }
             Spacer()
             Button("Save") { config.save() }
@@ -72,46 +90,144 @@ struct ConfigEditorView: View {
     }
 }
 
+// MARK: - Bot form
+
 private struct BotForm: View {
     @Binding var bot: BotConfig
+    var onRemove: () -> Void
 
     var body: some View {
         Form {
-            Section("Identity") {
+            Section {
                 TextField("Bot ID", text: $bot.id)
                     .help("Letters, digits, dot, underscore, hyphen. Used as the subtree name under ~/.xclaw.")
                 if !ConfigStore.validSlug(bot.id) {
-                    Text("Invalid id — letters/digits/._- only")
-                        .font(.caption).foregroundStyle(.red)
+                    warning("Invalid id — letters, digits, . _ - only")
                 }
-            }
-            Section("Octo") {
-                TextField("API URL", text: $bot.apiURL)
-                    .textContentType(.URL)
-                SecureField("Bot Token (bf_…)", text: $bot.octoToken)
-                    .help("Stored in your macOS Keychain, not in config.json.")
-            }
-            Section {
-                TextField("Gateway Base URL", text: $bot.gatewayBaseURL)
-                    .textContentType(.URL)
-                SecureField("Gateway Token", text: $bot.gatewayToken)
             } header: {
-                Text("Model Gateway")
-            } footer: {
-                Text("Injected as ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN.")
-                    .font(.caption)
+                Label("Identity", systemImage: "person.text.rectangle")
             }
+
+            Section {
+                TextField("https://your-octo-server", text: $bot.apiURL)
+                    .textContentType(.URL)
+                if let w = urlWarning(bot.apiURL) { warning(w) }
+                RevealableSecureField("Bot Token (bf_…)", text: $bot.octoToken)
+                    .help("Stored in your macOS Keychain, not in config.json.")
+            } header: {
+                Label("Connection", systemImage: "antenna.radiowaves.left.and.right")
+            } footer: {
+                Text("The Octo/WuKongIM server and this bot's token.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                TextField("Model (e.g. claude-opus-4-8)", text: $bot.model)
+                TextField("Gateway Base URL (optional)", text: $bot.gatewayBaseURL)
+                    .textContentType(.URL)
+                if let w = urlWarning(bot.gatewayBaseURL) { warning(w) }
+                RevealableSecureField("Gateway Token (optional)", text: $bot.gatewayToken)
+            } header: {
+                Label("Agent", systemImage: "cpu")
+            } footer: {
+                Text("Model + optional model-gateway, injected as ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                promptEditor($bot.soul, placeholder: "Who this bot is — identity, voice, role.")
+            } header: {
+                Label("Persona — SOUL.md", systemImage: "sparkles")
+            }
+
+            Section {
+                promptEditor($bot.agents, placeholder: "How it should behave — norms, do's and don'ts.")
+            } header: {
+                Label("Behavior — AGENTS.md", systemImage: "list.bullet.rectangle")
+            } footer: {
+                Text("Both are operator-trusted and prepended to the agent's system prompt. Leave empty to omit.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section {
                 EnvEditor(env: $bot.env)
             } header: {
-                Text("Environment")
+                Label("Environment", systemImage: "terminal")
             } footer: {
                 Text("Extra variables for the agent CLI (e.g. OCTO_BOT_ID, GH_TOKEN, GLAB_TOKEN).")
-                    .font(.caption)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Button(role: .destructive) { onRemove() } label: {
+                    Label("Remove Bot", systemImage: "trash")
+                }
             }
         }
         .formStyle(.grouped)
-        .padding()
+    }
+
+    private func warning(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption).foregroundStyle(.orange)
+    }
+
+    private func promptEditor(_ text: Binding<String>, placeholder: String) -> some View {
+        ZStack(alignment: .topLeading) {
+            if text.wrappedValue.isEmpty {
+                Text(placeholder)
+                    .font(.callout).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 5).padding(.vertical, 8)
+                    .allowsHitTesting(false)
+            }
+            TextEditor(text: text)
+                .font(.callout)
+                .frame(minHeight: 72)
+                .scrollContentBackground(.hidden)
+        }
+    }
+}
+
+/// Validates a URL against the core's SSRF policy: https anywhere, or
+/// http://localhost. Returns a warning string for non-empty invalid input.
+private func urlWarning(_ s: String) -> String? {
+    guard !s.isEmpty else { return nil }
+    guard let u = URL(string: s), let scheme = u.scheme?.lowercased(),
+          let host = u.host, !host.isEmpty else {
+        return "Not a valid URL"
+    }
+    if scheme == "https" { return nil }
+    if scheme == "http", host == "localhost" || host == "127.0.0.1" || host == "::1" { return nil }
+    return "Use https:// (or http://localhost)"
+}
+
+/// A secure text field with a reveal (eye) toggle.
+private struct RevealableSecureField: View {
+    let title: String
+    @Binding var text: String
+    @State private var revealed = false
+
+    init(_ title: String, text: Binding<String>) {
+        self.title = title
+        self._text = text
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if revealed {
+                    TextField(title, text: $text)
+                } else {
+                    SecureField(title, text: $text)
+                }
+            }
+            Button { revealed.toggle() } label: {
+                Image(systemName: revealed ? "eye.slash" : "eye")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help(revealed ? "Hide" : "Reveal")
+        }
     }
 }
 
@@ -156,8 +272,6 @@ private struct EnvEditor: View {
         }
     }
 
-    // Reload rows only when the underlying dict changed from outside (e.g. bot
-    // switch), not from our own edits.
     private func loadRowsIfExternallyChanged() {
         let fromRows = Dictionary(rows.filter { !$0.key.isEmpty }.map { ($0.key, $0.value) }, uniquingKeysWith: { _, b in b })
         if fromRows != env {

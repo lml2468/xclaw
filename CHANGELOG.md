@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control command (matched back by command id), instead of keeping its own
   store. No duplicate persistence; agent-agnostic (no coupling to a driver's
   on-disk session files).
+- Edit Bots editor overhaul: edit the **model** and a bot's **persona/behavior**
+  (SOUL.md / AGENTS.md) from the GUI; inline URL validation, reveal toggles on
+  token fields, section icons, a larger window, and an apiURL subtitle in the
+  bot list. Saving now **merges** into `config.json` so keys the editor doesn't
+  manage (rateLimit, context, top-level agent defaults) are preserved instead of
+  dropped — and `agent.model` is no longer lost on save.
 
 ### Fixed
 - The router's per-session lock map and per-user/per-session rate-limit buckets

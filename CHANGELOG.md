@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bubbles, not full-width boxes), and an animated "typing…" indicator shows
   between sending a message and the agent's first output. Verified in light and
   dark mode via on-device screenshots.
+- Chat affordances: each bubble reveals a timestamp + copy button on hover; when
+  a bot has more than one session, a segmented session picker switches between
+  them (single session renders directly).
 
 ### Fixed
 - The router's per-session lock map and per-user/per-session rate-limit buckets

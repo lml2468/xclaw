@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import XClawCore
 
 @main
@@ -140,6 +141,7 @@ private struct MenuRow: View {
 struct ConsoleView: View {
     @Bindable var model: AppModel
     @State private var draft: String = ""
+    @State private var selectedSessionKey: String?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -267,26 +269,29 @@ struct ConsoleView: View {
                         )
                         .padding(.top, 60)
                     } else {
-                        ForEach(sessions) { session in
-                            if sessions.count > 1 {
-                                Text(session.sessionKey)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.top, 6)
+                        let current = sessions.first { $0.sessionKey == selectedSessionKey } ?? sessions[0]
+                        if sessions.count > 1 {
+                            Picker("Session", selection: Binding(
+                                get: { current.sessionKey },
+                                set: { selectedSessionKey = $0 }
+                            )) {
+                                ForEach(sessions) { Text($0.sessionKey).tag($0.sessionKey) }
                             }
-                            ForEach(session.messages) { msg in
-                                ChatBubble(message: msg)
-                            }
-                            if session.awaitingReply {
-                                TypingBubble()
-                            }
-                            if session.outputTokens > 0 {
-                                Text("\(session.inputTokens) in · \(session.outputTokens) out")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .padding(.bottom, 6)
+                        }
+                        ForEach(current.messages) { msg in
+                            ChatBubble(message: msg)
+                        }
+                        if current.awaitingReply {
+                            TypingBubble()
+                        }
+                        if current.outputTokens > 0 {
+                            Text("\(current.inputTokens) in · \(current.outputTokens) out")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity, alignment: .center)
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
@@ -366,40 +371,13 @@ private struct InfoBanner<Trailing: View>: View {
     }
 }
 
-/// One message rendered as a chat bubble: user (trailing, accent), assistant
-/// (leading, surface), or a centered tool-call chip.
+/// One message: tool calls render as a centered chip; user/assistant render as
+/// a `BubbleRow` (with a hover timestamp/copy affordance).
 struct ChatBubble: View {
     let message: AppState.ChatMessage
 
     var body: some View {
-        switch message.role {
-        case .user:
-            HStack {
-                Spacer(minLength: 48)
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .foregroundStyle(.white)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color.accentColor,
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-        case .assistant:
-            HStack {
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .foregroundStyle(.primary)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color(nsColor: .controlBackgroundColor),
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(.quaternary, lineWidth: 1)
-                    )
-                Spacer(minLength: 48)
-            }
-        case .tool:
+        if message.role == .tool {
             HStack {
                 Spacer()
                 Label(message.text, systemImage: "wrench.and.screwdriver.fill")
@@ -410,7 +388,72 @@ struct ChatBubble: View {
                     .background(.quaternary, in: Capsule())
                 Spacer()
             }
+        } else {
+            BubbleRow(message: message)
         }
+    }
+}
+
+/// A user/assistant message bubble that reveals a timestamp + copy button on
+/// hover.
+private struct BubbleRow: View {
+    let message: AppState.ChatMessage
+    @State private var hovering = false
+
+    private var isUser: Bool { message.role == .user }
+
+    var body: some View {
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 2) {
+            bubble
+            meta
+                .opacity(hovering ? 1 : 0)
+                .frame(height: 14)
+                .allowsHitTesting(hovering)
+        }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .onHover { hovering = $0 }
+    }
+
+    private var bubble: some View {
+        HStack(spacing: 0) {
+            if isUser { Spacer(minLength: 48) }
+            Text(message.text)
+                .textSelection(.enabled)
+                .foregroundStyle(isUser ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(isUser ? AnyShapeStyle(Color.accentColor)
+                                   : AnyShapeStyle(Color(nsColor: .controlBackgroundColor)),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    if !isUser {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(.quaternary, lineWidth: 1)
+                    }
+                }
+            if !isUser { Spacer(minLength: 48) }
+        }
+    }
+
+    private var meta: some View {
+        HStack(spacing: 6) {
+            if isUser { copyButton }
+            Text(message.timestamp, format: .dateTime.hour().minute())
+            if !isUser { copyButton }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
+    private var copyButton: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message.text, forType: .string)
+        } label: {
+            Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .help("Copy message")
     }
 }
 

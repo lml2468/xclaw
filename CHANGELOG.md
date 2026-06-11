@@ -67,7 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label-on-top with full-width, left-aligned values (`.labelsHidden()` + an
   in-field `prompt:`) so long URLs/tokens read cleanly, instead of the grouped
   `Form` default that pulled each field's title into a leading label and crammed
-  the value against the trailing edge.
+  the value against the trailing edge. The editor now lives in its **own
+  resizable window** (opened via ⌘, or the menu-bar "Edit Bots…") instead of a
+  `Settings` scene: a master/detail `NavigationSplitView` needs a split-view
+  window to render a flush, full-height sidebar — inside a Settings pane it
+  collapsed to a floating inset card with a dead top gap.
 
 ### Fixed
 - The router's per-session lock map and per-user/per-session rate-limit buckets

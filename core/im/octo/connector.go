@@ -23,6 +23,12 @@ type Connector struct {
 
 	botUID string
 
+	// mentionFree lists channel ids that respond without an @mention (G12). For
+	// those channels an unmentioned group message is routed through the gateway
+	// (the router decides) instead of being observed-only as background. Empty by
+	// default — normal groups keep the observe-on-no-mention behavior.
+	mentionFree map[string]bool
+
 	// runCtx is the context passed to Run; the sink/inbound callbacks (which the
 	// gateway.Sink interface does not thread a context through) tie their work to
 	// it, so a cancelled Run aborts in-flight turns and outbound REST calls.
@@ -76,6 +82,24 @@ func NewConnector(rest *RESTClient) *Connector {
 // SetGateway attaches the gateway (done after construction to resolve the
 // Connector-is-Sink-of-Gateway cycle).
 func (c *Connector) SetGateway(g *gateway.Gateway) { c.gateway = g }
+
+// SetMentionFreeGroups records the channel ids that respond without an @mention
+// (G12). In those channels an unmentioned group message is handed to the gateway
+// (the router applies the mention-free + bot-loop policy) rather than being
+// observed-only. Must be called before Run.
+func (c *Connector) SetMentionFreeGroups(channelIDs []string) {
+	if len(channelIDs) == 0 {
+		c.mentionFree = nil
+		return
+	}
+	m := make(map[string]bool, len(channelIDs))
+	for _, id := range channelIDs {
+		if id != "" {
+			m[id] = true
+		}
+	}
+	c.mentionFree = m
+}
 
 // Run registers the bot and maintains the socket connection with reconnect
 // until ctx is cancelled. The initial registration is retried with backoff so a
@@ -249,12 +273,25 @@ func (c *Connector) onInbound(m BotMessage) {
 	// A group message that doesn't mention the bot is background context, not a
 	// turn: observe it so it becomes a later @-mention's delta. (The router
 	// would drop it anyway; observing first preserves group context.)
-	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned {
+	//
+	// Exception (G12): in a mention-free channel an unmentioned message IS a turn
+	// — hand it to the gateway so the router applies the mention-free + bot-loop
+	// policy. runTurn caches it into group context itself, so do NOT also Observe.
+	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned && !c.mentionFree[m.ChannelID] {
 		c.gateway.Observe(inbound)
 		return
 	}
-	if _, err := c.gateway.Handle(c.ctx(), inbound); err != nil {
+	dec, err := c.gateway.Handle(c.ctx(), inbound)
+	if err != nil {
 		c.logf("handle turn for %s: %v", key, err)
+	}
+	// A mention-free unmentioned message the router declined to run (bot-loop
+	// guard, or it turned out not to be mention-free after all) is still group
+	// chatter the agent should see later — observe it as background. runTurn
+	// already cached it on the Accepted path, so only observe on these drops.
+	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned &&
+		(dec == router.DroppedBot || dec == router.DroppedNotMentioned) {
+		c.gateway.Observe(inbound)
 	}
 }
 

@@ -15,6 +15,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,10 +68,35 @@ func (m InboundMessage) SessionKey() (string, error) {
 	}
 }
 
-// Config controls rate limiting.
+// Config controls rate limiting and the bot-loop / mention-free gating ported
+// from cc-channel-octo's session-router.ts (G12 mention-free groups, G14
+// multi-bot loop guard, DM blocklist).
 type Config struct {
 	MaxPerMinute   int // per-session and per-user bucket size; default 5
 	MaxContentByte int // reject longer text; default 32 KiB
+
+	// SelfUID is this bot's own uid. It is treated as a known bot (so a relayed
+	// self-message in a mention-free group can't trigger a self-loop) — mirrors
+	// session-router.ts seeding knownBotUids with robotId. May be "".
+	SelfUID string
+
+	// MentionFreeGroups (G12) lists channel ids where the bot replies WITHOUT an
+	// @mention. In those channels, unmentioned group messages are Accepted (still
+	// size-gated and rate-limited) instead of DroppedNotMentioned.
+	MentionFreeGroups []string
+
+	// KnownBotUids (G14) are uids known to be bots, in addition to the `_bot`
+	// suffix heuristic. Messages from bot-looking uids are silently dropped in DMs
+	// and in mention-free groups to prevent bot↔bot reply loops.
+	KnownBotUids []string
+
+	// AllowedBotUids (G14) whitelists bot-looking uids that should be allowed
+	// through the loop guard anyway (trusted bots).
+	AllowedBotUids []string
+
+	// BotBlocklist lists uids whose DMs are silently dropped (DM only), mirroring
+	// session-router.ts's isBlockedBot DM filter.
+	BotBlocklist []string
 }
 
 func (c Config) withDefaults() Config {
@@ -90,6 +116,12 @@ const globalRateMultiplier = 10
 type Router struct {
 	cfg Config
 	now func() time.Time
+
+	// Precomputed sets from cfg (built once in New) for O(1) gating lookups.
+	mentionFree map[string]bool // channel ids that don't require an @mention (G12)
+	knownBots   map[string]bool // uids known to be bots (incl. SelfUID) (G14)
+	allowedBots map[string]bool // bot-looking uids exempt from the loop guard (G14)
+	blocklisted map[string]bool // uids whose DMs are dropped
 
 	locksMu sync.Mutex
 	locks   map[string]*lockEntry // one lock per session key (refcounted for eviction)
@@ -112,13 +144,45 @@ type lockEntry struct {
 
 // New constructs a Router.
 func New(cfg Config) *Router {
-	return &Router{
-		cfg:     cfg.withDefaults(),
-		now:     time.Now,
-		locks:   make(map[string]*lockEntry),
-		perUser: make(map[string]*bucket),
-		perSess: make(map[string]*bucket),
+	cfg = cfg.withDefaults()
+	knownBots := toSet(cfg.KnownBotUids)
+	// session-router.ts seeds knownBotUids with the bot's own robotId.
+	if cfg.SelfUID != "" {
+		knownBots[cfg.SelfUID] = true
 	}
+	return &Router{
+		cfg:         cfg,
+		now:         time.Now,
+		mentionFree: toSet(cfg.MentionFreeGroups),
+		knownBots:   knownBots,
+		allowedBots: toSet(cfg.AllowedBotUids),
+		blocklisted: toSet(cfg.BotBlocklist),
+		locks:       make(map[string]*lockEntry),
+		perUser:     make(map[string]*bucket),
+		perSess:     make(map[string]*bucket),
+	}
+}
+
+// toSet builds a lookup set from a slice, skipping empty entries. Returns a
+// non-nil map so reads need no nil check.
+func toSet(vals []string) map[string]bool {
+	s := make(map[string]bool, len(vals))
+	for _, v := range vals {
+		if v != "" {
+			s[v] = true
+		}
+	}
+	return s
+}
+
+// looksLikeBot mirrors session-router.ts looksLikeBot: a uid is bot-looking if
+// it's a known bot uid (incl. SelfUID) or ends in the conventional `_bot`
+// suffix. Heuristic, not authoritative — but catches the common bot↔bot loop.
+func (r *Router) looksLikeBot(uid string) bool {
+	if r.knownBots[uid] {
+		return true
+	}
+	return strings.HasSuffix(uid, "_bot")
 }
 
 // SetClock overrides the time source (tests).
@@ -132,6 +196,7 @@ const (
 	DroppedUnroutable            // no session key
 	DroppedNotMentioned          // group message without a mention
 	DroppedTooLong               // exceeds MaxContentByte
+	DroppedBot                   // silent drop: blocklisted DM or bot-loop guard (G14)
 	RateLimited
 )
 
@@ -145,6 +210,8 @@ func (d Decision) String() string {
 		return "not_mentioned"
 	case DroppedTooLong:
 		return "too_long"
+	case DroppedBot:
+		return "bot"
 	case RateLimited:
 		return "rate_limited"
 	default:
@@ -158,15 +225,46 @@ type Handler func(ctx context.Context, sessionKey string, msg InboundMessage) er
 // RouteAndHandle applies all gates, then — if accepted — runs handler while
 // holding the per-session lock (so same-session messages are strictly
 // serialized). Returns the gate decision; handler errors are returned too.
+//
+// Gate ordering mirrors session-router.ts processMessage: bot blocklist /
+// loop-guard drops (silent, DroppedBot) come before the mention gate, which
+// itself honours mention-free groups (G12) and a per-room loop guard (G14).
 func (r *Router) RouteAndHandle(ctx context.Context, msg InboundMessage, handler Handler) (Decision, error) {
-	// Group mention gate (cron fires bypass it).
-	if msg.ChannelType == ChannelGroup && !msg.Mentioned && !msg.CronFire {
-		return DroppedNotMentioned, nil
-	}
-
 	key, err := msg.SessionKey()
 	if err != nil {
 		return DroppedUnroutable, nil
+	}
+
+	// DM blocklist + bot-loop guard (silent). Mirrors session-router.ts:
+	// blocklisted DM senders, and DM senders that look like bots (unless
+	// whitelisted) are dropped to prevent bot↔bot reply loops.
+	if msg.ChannelType == ChannelDM && !msg.CronFire {
+		if r.blocklisted[msg.FromUID] {
+			return DroppedBot, nil
+		}
+		if r.looksLikeBot(msg.FromUID) && !r.allowedBots[msg.FromUID] {
+			return DroppedBot, nil
+		}
+	}
+
+	// Group gating.
+	if msg.ChannelType == ChannelGroup && !msg.CronFire {
+		// Hard-drop blocklisted senders entirely (even if @-mentioned).
+		if r.blocklisted[msg.FromUID] {
+			return DroppedBot, nil
+		}
+		// Mention gate. Skip unless mentioned OR the channel is mention-free (G12).
+		if !msg.Mentioned {
+			if !r.mentionFree[msg.ChannelID] {
+				return DroppedNotMentioned, nil
+			}
+			// In a mention-free group there is no @mention gate to stop one bot
+			// replying to another bot's plain text — drop bot-looking senders
+			// (unless whitelisted) so two bots can't enter an unbounded loop.
+			if r.looksLikeBot(msg.FromUID) && !r.allowedBots[msg.FromUID] {
+				return DroppedBot, nil
+			}
+		}
 	}
 
 	// Content size gate.

@@ -9,6 +9,11 @@
   },
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },
+  "_comment_gating": "Optional group-gating policy (session-router): mentionFreeGroups = channel ids the bot answers WITHOUT an @mention; knownBotUids/allowedBotUids = the bot-loop guard (uids ending in _bot or in knownBotUids are dropped in DMs and mention-free groups unless in allowedBotUids); botBlocklist = uids whose DMs are dropped. All are top-level defaults; a bots[] entry may override each (the per-bot value REPLACES the default).",
+  "mentionFreeGroups": [],
+  "knownBotUids": [],
+  "allowedBotUids": [],
+  "botBlocklist": [],
   "bots": [
     {
       "id": "my-bot",

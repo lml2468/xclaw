@@ -10,8 +10,9 @@ public struct AppState: Sendable, Equatable {
         public let id: UUID
         public var role: Role
         public var text: String
-        public init(id: UUID = UUID(), role: Role, text: String) {
-            self.id = id; self.role = role; self.text = text
+        public var timestamp: Date
+        public init(id: UUID = UUID(), role: Role, text: String, timestamp: Date = Date()) {
+            self.id = id; self.role = role; self.text = text; self.timestamp = timestamp
         }
     }
 
@@ -72,6 +73,13 @@ public struct AppState: Sendable, Equatable {
             v.outputTokens = 92
             v.lastActivity = "sent"
             v.awaitingReply = true
+        }
+        // A second session demonstrates the session picker.
+        s.mutateSession("main", "alice@acme") { v in
+            v.messages = [
+                ChatMessage(role: .user, text: "explain the proto control-bus contract"),
+                ChatMessage(role: .assistant, text: "Sure — the proto contract is an NDJSON envelope over a Unix domain socket: events out, commands in."),
+            ]
         }
         return s
     }

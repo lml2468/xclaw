@@ -2,17 +2,21 @@ import Foundation
 
 /// Read/write the daemon's single ~/.xclaw/config.json from the GUI, producing
 /// JSON the Go `config.Load` parses. Every bot is inlined in the global config's
-/// bots[] array (id + apiUrl + agent overrides). The bot's persona/behavior
-/// prompt is NOT here — it lives in SOUL.md / AGENTS.md under ~/.xclaw/<id>/.
+/// bots[] array (id + apiUrl + agent overrides). Per-bot persona/behavior lives
+/// in SOUL.md / AGENTS.md under ~/.xclaw/<id>/ and is read/written here too.
 ///
 /// Secrets are NOT written by `save` — `octoToken` / `gatewayToken` live in the
 /// Keychain (see Keychain.swift) and are injected at runtime. `load` still reads
 /// any tokens present in the file (legacy / headless), so callers can migrate
-/// them into the Keychain.
+/// them into the Keychain. `save` MERGES into the existing config.json, so keys
+/// the editor doesn't manage (rateLimit, context, top-level agent defaults) are
+/// preserved rather than dropped.
 public struct BotConfig: Sendable, Equatable, Identifiable {
     public var id: String
     public var apiURL: String
     public var octoToken: String
+    /// Model the agent should use (Go: agent.model), e.g. "claude-opus-4-8".
+    public var model: String
     /// Model-gateway routing. The Go core maps these to the claude env var
     /// names (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN).
     public var gatewayBaseURL: String
@@ -20,16 +24,24 @@ public struct BotConfig: Sendable, Equatable, Identifiable {
     /// Arbitrary extra environment variables injected into the agent CLI
     /// (e.g. OCTO_BOT_ID, GH_TOKEN, GLAB_TOKEN).
     public var env: [String: String]
+    /// Persona (SOUL.md) and behavior norms (AGENTS.md) — separate files under
+    /// ~/.xclaw/<id>/, not part of config.json.
+    public var soul: String
+    public var agents: String
 
     public init(id: String, apiURL: String = "",
-                octoToken: String = "", gatewayBaseURL: String = "",
-                gatewayToken: String = "", env: [String: String] = [:]) {
+                octoToken: String = "", model: String = "",
+                gatewayBaseURL: String = "", gatewayToken: String = "",
+                env: [String: String] = [:], soul: String = "", agents: String = "") {
         self.id = id
         self.apiURL = apiURL
         self.octoToken = octoToken
+        self.model = model
         self.gatewayBaseURL = gatewayBaseURL
         self.gatewayToken = gatewayToken
         self.env = env
+        self.soul = soul
+        self.agents = agents
     }
 }
 
@@ -61,53 +73,42 @@ public enum ConfigStore {
         }
     }
 
-    // MARK: - JSON shapes (matching the Go config tags)
-
-    private struct ConfigFile: Codable {
-        var apiUrl: String?
-        var bots: [Bot]?
-        struct Bot: Codable {
-            var id: String
-            var octoToken: String?
-            var apiUrl: String?
-            var agent: Agent?
-        }
-        struct Agent: Codable {
-            var gatewayBaseUrl: String?
-            var gatewayToken: String?
-            var env: [String: String]?
-        }
-    }
-
     // MARK: - load
 
     /// Loads the configured bots from `base` (default ~/.xclaw)'s single
-    /// config.json. Returns [] if it doesn't exist.
+    /// config.json, plus each bot's SOUL.md / AGENTS.md. Returns [] if no config.
     public static func load(base: URL? = nil) throws -> [BotConfig] {
         let base = base ?? baseDir
-        guard let data = try? Data(contentsOf: globalConfigURL(base)) else { return [] }
-        let file = (try? JSONDecoder().decode(ConfigFile.self, from: data)) ?? ConfigFile()
-        return (file.bots ?? []).map { b in
-            BotConfig(
-                id: b.id,
-                apiURL: b.apiUrl ?? file.apiUrl ?? "",
-                octoToken: b.octoToken ?? "",
-                gatewayBaseURL: b.agent?.gatewayBaseUrl ?? "",
-                gatewayToken: b.agent?.gatewayToken ?? "",
-                env: b.agent?.env ?? [:])
+        guard let data = try? Data(contentsOf: globalConfigURL(base)),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return []
+        }
+        let topAPI = root["apiUrl"] as? String
+        let bots = (root["bots"] as? [[String: Any]]) ?? []
+        return bots.compactMap { b in
+            guard let id = b["id"] as? String else { return nil }
+            let agent = b["agent"] as? [String: Any]
+            let (soul, agents) = prompts(base: base, id: id)
+            return BotConfig(
+                id: id,
+                apiURL: (b["apiUrl"] as? String) ?? topAPI ?? "",
+                octoToken: (b["octoToken"] as? String) ?? "",
+                model: (agent?["model"] as? String) ?? "",
+                gatewayBaseURL: (agent?["gatewayBaseUrl"] as? String) ?? "",
+                gatewayToken: (agent?["gatewayToken"] as? String) ?? "",
+                env: (agent?["env"] as? [String: String]) ?? [:],
+                soul: soul,
+                agents: agents)
         }
     }
 
     // MARK: - save
 
-    /// Persists the full bot list to `base` (default ~/.xclaw)'s single
-    /// config.json: every bot inlined in bots[]. Validates slugs + uniqueness.
-    /// Prunes per-bot directories whose bot was removed (keeps SOUL.md/AGENTS.md
-    /// dirs of live bots intact).
-    ///
-    /// Secrets are intentionally NOT written here: `octoToken` and
-    /// `gatewayToken` are always omitted from the file (they belong in the
-    /// Keychain, injected at runtime via secret.inject). `env` stays in the file.
+    /// Persists the bot list. MERGES into the existing config.json so unmanaged
+    /// keys (rateLimit, context, top-level agent defaults, unknown per-bot keys)
+    /// are preserved. Secrets are stripped (octoToken / agent.gatewayToken →
+    /// Keychain). Also writes each bot's SOUL.md / AGENTS.md. Validates slugs +
+    /// uniqueness and prunes per-bot directories whose bot was removed.
     public static func save(_ bots: [BotConfig], base: URL? = nil) throws {
         let base = base ?? baseDir
         var seen = Set<String>()
@@ -117,23 +118,52 @@ public enum ConfigStore {
         }
 
         try mkdir(base)
+        let url = globalConfigURL(base)
 
-        let file = ConfigFile(
-            apiUrl: bots.first?.apiURL,
-            bots: bots.map { b in
-                ConfigFile.Bot(
-                    id: b.id,
-                    octoToken: nil, // secret → Keychain, never the file
-                    apiUrl: b.apiURL.isEmpty ? nil : b.apiURL,
-                    agent: ConfigFile.Agent(
-                        gatewayBaseUrl: b.gatewayBaseURL.isEmpty ? nil : b.gatewayBaseURL,
-                        gatewayToken: nil, // secret → Keychain, never the file
-                        env: b.env.isEmpty ? nil : b.env))
-            })
-        try writeJSON(file, to: globalConfigURL(base))
+        // Start from existing JSON to preserve keys we don't manage.
+        var root: [String: Any] = {
+            if let data = try? Data(contentsOf: url),
+               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                return obj
+            }
+            return [:]
+        }()
+        var existing: [String: [String: Any]] = [:]
+        for b in (root["bots"] as? [[String: Any]]) ?? [] {
+            if let id = b["id"] as? String { existing[id] = b }
+        }
 
-        // Prune per-bot dirs for removed bots (only dirs that look like ours: a
-        // child dir of base containing a data/ subdir or SOUL/AGENTS files).
+        root["bots"] = bots.map { b -> [String: Any] in
+            var dict = existing[b.id] ?? [:]
+            dict["id"] = b.id
+            setOrRemove(&dict, "apiUrl", b.apiURL)
+            dict["octoToken"] = nil // secret → Keychain
+
+            var agent = dict["agent"] as? [String: Any] ?? [:]
+            setOrRemove(&agent, "model", b.model)
+            setOrRemove(&agent, "gatewayBaseUrl", b.gatewayBaseURL)
+            agent["gatewayToken"] = nil // secret → Keychain
+            if b.env.isEmpty { agent["env"] = nil } else { agent["env"] = b.env }
+            dict["agent"] = agent.isEmpty ? nil : agent
+            return dict
+        }
+        // A top-level apiUrl default helps single-bot configs; preserve if set.
+        if root["apiUrl"] == nil, let first = bots.first?.apiURL, !first.isEmpty {
+            root["apiUrl"] = first
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: root,
+                                                  options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try data.write(to: url, options: .atomic)
+        } catch {
+            throw ConfigError.io("write \(url.path): \(error.localizedDescription)")
+        }
+
+        // Persona files per bot.
+        for b in bots { try savePrompts(base: base, id: b.id, soul: b.soul, agents: b.agents) }
+
+        // Prune per-bot dirs for removed bots (only dirs that look like ours).
         let live = Set(bots.map { $0.id })
         let fm = FileManager.default
         if let children = try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.isDirectoryKey]) {
@@ -142,7 +172,6 @@ public enum ConfigStore {
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: child.path, isDirectory: &isDir), isDir.boolValue else { continue }
                 guard validSlug(name), !live.contains(name) else { continue }
-                // Only prune dirs that look like a bot subtree (have data/).
                 if fm.fileExists(atPath: child.appendingPathComponent("data").path) {
                     try? fm.removeItem(at: child)
                 }
@@ -150,21 +179,43 @@ public enum ConfigStore {
         }
     }
 
+    // MARK: - persona files (SOUL.md / AGENTS.md under <base>/<id>/)
+
+    private static func prompts(base: URL, id: String) -> (soul: String, agents: String) {
+        let dir = base.appendingPathComponent(id, isDirectory: true)
+        let soul = (try? String(contentsOf: dir.appendingPathComponent("SOUL.md"), encoding: .utf8)) ?? ""
+        let agents = (try? String(contentsOf: dir.appendingPathComponent("AGENTS.md"), encoding: .utf8)) ?? ""
+        return (soul, agents)
+    }
+
+    private static func savePrompts(base: URL, id: String, soul: String, agents: String) throws {
+        let dir = base.appendingPathComponent(id, isDirectory: true)
+        try writePrompt(dir, "SOUL.md", soul)
+        try writePrompt(dir, "AGENTS.md", agents)
+    }
+
+    private static func writePrompt(_ dir: URL, _ name: String, _ content: String) throws {
+        let url = dir.appendingPathComponent(name)
+        let fm = FileManager.default
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            try? fm.removeItem(at: url) // empty → no file (Go treats it as absent)
+            return
+        }
+        try mkdir(dir)
+        do { try content.data(using: .utf8)?.write(to: url, options: .atomic) }
+        catch { throw ConfigError.io("write \(url.path): \(error.localizedDescription)") }
+    }
+
     // MARK: - helpers
+
+    /// Sets `dict[key] = value`, or removes the key when value is empty.
+    private static func setOrRemove(_ dict: inout [String: Any], _ key: String, _ value: String) {
+        if value.isEmpty { dict[key] = nil } else { dict[key] = value }
+    }
 
     private static func mkdir(_ url: URL) throws {
         do { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
         catch { throw ConfigError.io("mkdir \(url.path): \(error.localizedDescription)") }
-    }
-
-    private static func writeJSON<T: Encodable>(_ v: T, to url: URL) throws {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        do {
-            let data = try enc.encode(v)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            throw ConfigError.io("write \(url.path): \(error.localizedDescription)")
-        }
     }
 }

@@ -51,6 +51,15 @@ final class AppModel {
         // UI preview/screenshot mode: seed mock data, skip the daemon/bus.
         if ProcessInfo.processInfo.environment["XCLAW_UI_PREVIEW"] != nil {
             state = .preview()
+            config.bots = [
+                BotConfig(id: "main", apiURL: "https://octo.acme.example",
+                          model: "claude-opus-4-8",
+                          gatewayBaseURL: "https://gw.acme.example/v1",
+                          env: ["OCTO_BOT_ID": "main-7f3a", "GH_TOKEN": "ghp_…"],
+                          soul: "You are Atlas, the team's ops copilot. Calm, terse, precise.",
+                          agents: "Confirm before destructive actions. Prefer links over long pastes."),
+                BotConfig(id: "research", apiURL: "https://octo.acme.example"),
+            ]
             connected = true
             coreState = "running (preview)"
             publishBots()

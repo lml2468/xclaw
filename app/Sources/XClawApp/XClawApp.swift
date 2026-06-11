@@ -47,18 +47,11 @@ struct XClawApp: App {
 
 // MARK: - Menu bar popover
 
-/// The menu-bar status icon. In UI-preview mode it also opens the console on
-/// launch (the `Window` scene won't auto-open behind a `MenuBarExtra`).
+/// The menu-bar status icon.
 private struct MenuBarLabel: View {
     @Bindable var model: AppModel
-    @Environment(\.openWindow) private var openWindow
     var body: some View {
         Image(systemName: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
-            .onAppear {
-                if ProcessInfo.processInfo.environment["XCLAW_UI_PREVIEW"] != nil {
-                    openWindow(id: "console")
-                }
-            }
     }
 }
 

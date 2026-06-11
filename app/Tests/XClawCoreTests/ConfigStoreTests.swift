@@ -102,6 +102,57 @@ func slugValidation() {
     #expect(!ConfigStore.validSlug("a b"))
 }
 
+@Test
+func configPreservesModelAndUnmanagedKeys() throws {
+    try withTempBase { base in
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        // A config with keys the editor doesn't manage (rateLimit/context) + model.
+        let raw = #"{"apiUrl":"https://o","rateLimit":{"maxPerMinute":7},"context":{"maxContextChars":9000},"bots":[{"id":"alpha","apiUrl":"https://o","agent":{"model":"claude-opus-4-8","env":{"K":"V"}},"context":{"maxContextChars":1234}}]}"#
+        try raw.data(using: .utf8)!.write(to: base.appendingPathComponent("config.json"))
+
+        var bots = try ConfigStore.load(base: base)
+        #expect(bots.first?.model == "claude-opus-4-8")
+        #expect(bots.first?.env["K"] == "V")
+        bots[0].apiURL = "https://o2"     // edit one managed field
+        try ConfigStore.save(bots, base: base)
+
+        let data = try Data(contentsOf: base.appendingPathComponent("config.json"))
+        let root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        // top-level + per-bot unmanaged keys preserved
+        #expect((root["rateLimit"] as? [String: Any])?["maxPerMinute"] as? Int == 7)
+        #expect((root["context"] as? [String: Any])?["maxContextChars"] as? Int == 9000)
+        let b0 = (root["bots"] as! [[String: Any]])[0]
+        #expect((b0["agent"] as? [String: Any])?["model"] as? String == "claude-opus-4-8")
+        #expect((b0["context"] as? [String: Any])?["maxContextChars"] as? Int == 1234)
+        #expect(b0["apiUrl"] as? String == "https://o2")
+    }
+}
+
+@Test
+func configPersonaRoundTrip() throws {
+    try withTempBase { base in
+        let fm = FileManager.default
+        var bot = BotConfig(id: "alpha", apiURL: "https://o")
+        bot.soul = "You are Alpha, a terse ops bot."
+        bot.agents = "Always confirm destructive actions."
+        try ConfigStore.save([bot], base: base)
+
+        #expect(fm.fileExists(atPath: base.appendingPathComponent("alpha/SOUL.md").path))
+        #expect(fm.fileExists(atPath: base.appendingPathComponent("alpha/AGENTS.md").path))
+
+        let loaded = try ConfigStore.load(base: base).first
+        #expect(loaded?.soul == "You are Alpha, a terse ops bot.")
+        #expect(loaded?.agents == "Always confirm destructive actions.")
+
+        // Clearing a prompt removes its file (Go treats absent as omitted).
+        var cleared = loaded!
+        cleared.soul = ""
+        try ConfigStore.save([cleared], base: base)
+        #expect(!fm.fileExists(atPath: base.appendingPathComponent("alpha/SOUL.md").path))
+        #expect(fm.fileExists(atPath: base.appendingPathComponent("alpha/AGENTS.md").path))
+    }
+}
+
 /// Interop: a config written by the Swift ConfigStore must be parseable by the
 /// Go core (config.Load). Runs the dev xclawd with -config pointed at the
 /// Swift-written dir and asserts bots.list returns the bots. Skips if the dev

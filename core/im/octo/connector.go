@@ -10,6 +10,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/gateway"
+	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
 )
 
@@ -22,6 +23,12 @@ type Connector struct {
 	gateway *gateway.Gateway
 
 	botUID string
+
+	// persona, when its grantor uid is set, makes this connector a persona clone
+	// (openclaw OBO): extended trigger gate, OBO v2 relevance filter, and
+	// on_behalf_of reply routing. Set once at startup via SetPersona; read-only
+	// thereafter, so it needs no lock.
+	persona persona.Grantor
 
 	// runCtx is the context passed to Run; the sink/inbound callbacks (which the
 	// gateway.Sink interface does not thread a context through) tie their work to
@@ -60,7 +67,17 @@ func (c *Connector) setStatus(connected bool, lastErr string) {
 type replyTarget struct {
 	channelID   string
 	channelType ChannelType
+	// onBehalfOf, when set, routes the reply (and typing) as the grantor for a
+	// persona clone (openclaw OBO). Empty for normal replies.
+	onBehalfOf string
 }
+
+// SetPersona configures this connector as a persona clone of grantor (openclaw
+// OBO). When set, the connector (a) extends the group trigger gate so an
+// @grantor / @所有人 mention triggers a turn, (b) applies the OBO v2 relevance
+// filter, and (c) routes the reply back to the origin channel with on_behalf_of.
+// A zero Grantor (no uid) leaves the connector a regular bot.
+func (c *Connector) SetPersona(grantor persona.Grantor) { c.persona = grantor }
 
 // NewConnector builds a connector. The gateway must be constructed with this
 // connector as its Sink (see AsSink note in package docs).
@@ -212,6 +229,12 @@ func (c *Connector) heartbeatLoop(ctx context.Context) {
 
 // onInbound maps a decoded BotMessage to a router.InboundMessage and feeds the
 // gateway. Drops the bot's own messages and non-text payloads.
+//
+// Persona-clone path (openclaw OBO, inbound.ts): when this connector is a
+// persona clone, the group trigger gate is widened (an @grantor / @所有人
+// mention triggers a turn), the OBO v2 relevance filter drops irrelevant @AI
+// fan-out BEFORE any session state is recorded, and the reply target carries
+// on_behalf_of so the server presents the reply as the grantor.
 func (c *Connector) onInbound(m BotMessage) {
 	uid := c.uid()
 	if m.FromUID == uid {
@@ -221,10 +244,32 @@ func (c *Connector) onInbound(m BotMessage) {
 		return // MVP handles text only
 	}
 
+	// OBO v2 detection (openclaw inbound.ts ~L2102-2116). The grantor relays a
+	// fan-out message carrying an origin-channel hint so the clone replies in the
+	// origin group. SECURITY: only trust OBO fields when the message is sent by
+	// the configured grantor — otherwise any user could forge a reply-as-someone.
+	oboV2 := c.persona.Configured() &&
+		m.Payload.OBOOriginChannelID != "" &&
+		oboRespondAs(m.Payload) != "" &&
+		m.FromUID == c.persona.UID
+
+	// OBO v2 relevance filter (openclaw inbound.ts ~L2122-2160): drop pure @AI
+	// fan-out that does not address the grantor BEFORE recording any reply target
+	// or session state, so an irrelevant message never leaks into the clone's
+	// session.
+	if oboV2 && !c.persona.Relevant(m.PersonaMention()) {
+		c.logf("OBO v2 skipped — message not relevant to persona")
+		return
+	}
+
 	chType := router.ChannelDM
 	if m.ChannelType == ChannelGroup {
 		chType = router.ChannelGroup
 	}
+
+	// Trigger gate: persona-aware for clones (an @grantor / @所有人 mention is a
+	// call to the clone); a plain @bot / @AI mention otherwise.
+	triggered := m.Triggers(uid, c.persona)
 
 	inbound := router.InboundMessage{
 		FromUID:     m.FromUID,
@@ -232,21 +277,31 @@ func (c *Connector) onInbound(m BotMessage) {
 		ChannelID:   m.ChannelID,
 		ChannelType: chType,
 		Text:        m.Payload.Content,
-		Mentioned:   m.MentionsBot(uid),
+		Mentioned:   triggered,
 	}
 	key, err := inbound.SessionKey()
 	if err != nil {
 		return // unroutable
 	}
-	// Remember where to deliver the reply for this session.
+
+	// Resolve where (and as whom) the reply goes (openclaw inbound.ts
+	// ~L2301-2337). OBO v2: reply to the origin channel as the grantor. Group
+	// persona trigger-as-grantor: reply in the same group as the grantor.
+	tgt := replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
+	if oboV2 {
+		tgt = oboReplyTarget(m.Payload, c.persona.UID)
+	} else if chType == router.ChannelGroup &&
+		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(uid)) {
+		tgt.onBehalfOf = c.persona.UID
+	}
 	c.mu.Lock()
-	c.targets[key] = replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
+	c.targets[key] = tgt
 	c.mu.Unlock()
 
 	if c.gateway == nil {
 		return
 	}
-	// A group message that doesn't mention the bot is background context, not a
+	// A group message that doesn't trigger the bot is background context, not a
 	// turn: observe it so it becomes a later @-mention's delta. (The router
 	// would drop it anyway; observing first preserves group context.)
 	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned {
@@ -258,6 +313,34 @@ func (c *Connector) onInbound(m BotMessage) {
 	}
 }
 
+// oboRespondAs resolves the grantor uid the payload claims to respond as,
+// preferring obo_respond_as over obo_grantor_uid (openclaw inbound.ts L2104).
+func oboRespondAs(p MessagePayload) string {
+	if p.OBORespondAs != "" {
+		return p.OBORespondAs
+	}
+	return p.OBOGrantorUID
+}
+
+// oboReplyTarget derives the OBO v2 reply destination from a (grantor-trusted)
+// payload (openclaw inbound.ts ~L2305-2326). DM-relay origin → reply to the
+// original sender's uid; group/thread → reply to the origin group. The reply
+// always carries on_behalf_of=grantor (the trusted configured grantor uid, NOT
+// the payload's respond_as).
+func oboReplyTarget(p MessagePayload, grantorUID string) replyTarget {
+	chType := ChannelGroup
+	if p.OBOOriginChannelType != nil {
+		chType = ChannelType(*p.OBOOriginChannelType)
+	}
+	channelID := p.OBOOriginChannelID
+	if chType == ChannelDM && p.OBOOriginFromUID != "" {
+		// DM: the bot is only friends with the grantor; reply to the original
+		// sender via on_behalf_of=grantor, which bypasses the bot-friend gate.
+		channelID = p.OBOOriginFromUID
+	}
+	return replyTarget{channelID: channelID, channelType: chType, onBehalfOf: grantorUID}
+}
+
 // --- gateway.Sink ---
 
 // OnEvent surfaces a typing indicator on the first activity of a turn. (Token /
@@ -265,7 +348,7 @@ func (c *Connector) onInbound(m BotMessage) {
 func (c *Connector) OnEvent(sessionKey string, ev agent.AgentEvent) {
 	if ev.Kind == agent.KindSessionStarted {
 		if tgt, ok := c.target(sessionKey); ok {
-			if err := c.rest.SendTyping(c.ctx(), tgt.channelID, tgt.channelType); err != nil {
+			if err := c.rest.SendTypingAs(c.ctx(), tgt.channelID, tgt.channelType, tgt.onBehalfOf); err != nil {
 				c.logf("send typing for %s: %v", sessionKey, err)
 			}
 		}
@@ -273,7 +356,9 @@ func (c *Connector) OnEvent(sessionKey string, ev agent.AgentEvent) {
 }
 
 // OnReply delivers the assembled assistant reply back to the originating
-// channel, split into <=3500-char segments (api/stream-relay parity).
+// channel, split into <=3500-char segments (api/stream-relay parity). For a
+// persona clone replying as the grantor, the reply carries on_behalf_of so the
+// server presents it as the grantor (openclaw OBO).
 func (c *Connector) OnReply(sessionKey string, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -284,7 +369,7 @@ func (c *Connector) OnReply(sessionKey string, text string) {
 		return
 	}
 	for _, seg := range splitMessage(text, 3500) {
-		if _, err := c.rest.SendText(c.ctx(), tgt.channelID, tgt.channelType, seg, nil, false); err != nil {
+		if _, err := c.rest.SendTextAs(c.ctx(), tgt.channelID, tgt.channelType, seg, nil, false, tgt.onBehalfOf); err != nil {
 			c.logf("send reply to %s: %v", sessionKey, err)
 		}
 	}

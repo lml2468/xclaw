@@ -80,6 +80,14 @@ type SendMessageResult struct {
 // SendText posts a Text message to a channel (api.ts sendMessage). mentionUIDs
 // and mentionAll are optional.
 func (c *RESTClient) SendText(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionAll bool) (SendMessageResult, error) {
+	return c.SendTextAs(ctx, channelID, channelType, content, mentionUIDs, mentionAll, "")
+}
+
+// SendTextAs is SendText with an optional on_behalf_of grantor uid (openclaw OBO
+// relay). When onBehalfOf is non-empty, the server presents the message as the
+// grantor speaking (api-fetch.ts sendMessage `on_behalf_of`). An empty string
+// is identical to SendText.
+func (c *RESTClient) SendTextAs(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionAll bool, onBehalfOf string) (SendMessageResult, error) {
 	payload := map[string]any{
 		"type":    int(MsgText),
 		"content": content,
@@ -100,6 +108,9 @@ func (c *RESTClient) SendText(ctx context.Context, channelID string, channelType
 		"payload":       payload,
 		"client_msg_no": uuid.NewString(),
 	}
+	if onBehalfOf != "" {
+		body["on_behalf_of"] = onBehalfOf
+	}
 	var out SendMessageResult
 	if err := c.postJSON(ctx, "/v1/bot/sendMessage", body, &out); err != nil {
 		return SendMessageResult{}, err
@@ -109,9 +120,19 @@ func (c *RESTClient) SendText(ctx context.Context, channelID string, channelType
 
 // SendTyping posts a typing indicator (api.ts sendTyping).
 func (c *RESTClient) SendTyping(ctx context.Context, channelID string, channelType ChannelType) error {
-	return c.postJSON(ctx, "/v1/bot/typing", map[string]any{
+	return c.SendTypingAs(ctx, channelID, channelType, "")
+}
+
+// SendTypingAs is SendTyping with an optional on_behalf_of grantor uid (openclaw
+// OBO relay). An empty string is identical to SendTyping.
+func (c *RESTClient) SendTypingAs(ctx context.Context, channelID string, channelType ChannelType, onBehalfOf string) error {
+	body := map[string]any{
 		"channel_id": channelID, "channel_type": int(channelType),
-	}, nil)
+	}
+	if onBehalfOf != "" {
+		body["on_behalf_of"] = onBehalfOf
+	}
+	return c.postJSON(ctx, "/v1/bot/typing", body, nil)
 }
 
 // Heartbeat posts the REST heartbeat (api.ts sendHeartbeat).

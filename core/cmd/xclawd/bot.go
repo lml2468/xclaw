@@ -17,6 +17,7 @@ import (
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/im/octo"
+	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/sandbox"
 	"github.com/lml2468/xclaw/core/store"
@@ -221,6 +222,12 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// so an empty token here is allowed (the connector waits for it).
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
 
+	// Persona clone (openclaw OBO): when onBehalfOf is configured, the connector
+	// widens its trigger gate + routes replies as the grantor, and the gateway
+	// injects the persona system prompt. A zero grantor is a no-op (regular bot).
+	grantor := persona.Grantor{UID: cfg.OnBehalfOf.UID, Name: cfg.OnBehalfOf.Name}
+	connector.SetPersona(grantor)
+
 	// Sinks: the Octo connector (delivers replies to IM) + control bus (tagged
 	// with this bot's id) when a GUI is attached.
 	sinks := multiSink{connector}
@@ -231,6 +238,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
 		WithSystemPrompt(cfg.SystemPrompt).
+		WithPersona(grantor, cfg.OnBehalfOf.PersonaPrompt).
 		WithModel(cfg.Agent.Model).
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase, cfg.SkillsDir, cfg.GlobalSkillsDir)
 	connector.SetGateway(gw)

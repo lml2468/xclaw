@@ -214,3 +214,29 @@ func TestMissingConfigRejected(t *testing.T) {
 		t.Fatal("expected error for missing/empty config")
 	}
 }
+
+func TestOnBehalfOfParsedAsPersonaClone(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"clone","octoToken":"bf_x","onBehalfOf":{"uid":"u_admin","name":"Admin","personaPrompt":"reply in English"}}]}`)
+
+	bots, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	b := bots[0]
+	if b.OnBehalfOf.UID != "u_admin" || b.OnBehalfOf.Name != "Admin" || b.OnBehalfOf.PersonaPrompt != "reply in English" {
+		t.Fatalf("onBehalfOf not parsed: %+v", b.OnBehalfOf)
+	}
+}
+
+func TestNoOnBehalfOfIsRegularBot(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"plain","octoToken":"bf_x"}]}`)
+
+	bots, _ := Load(cfg)
+	if bots[0].OnBehalfOf.UID != "" {
+		t.Fatalf("regular bot must have empty grantor uid: %+v", bots[0].OnBehalfOf)
+	}
+}

@@ -24,6 +24,11 @@ type AgentConfig struct {
 	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
 	GatewayToken   string            `json:"gatewayToken,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
+	// Cron enables the per-bot scheduled-task scheduler (#115). Off by default;
+	// when true the bot loads <dataDir>/cron.json at startup and fires due tasks
+	// through the gateway. Owner-gated create/delete is exposed over the control
+	// bus (cron.create / cron.list / cron.delete).
+	Cron bool `json:"cron,omitempty"`
 }
 
 // RateLimitConfig mirrors the on-disk rateLimit block.
@@ -225,6 +230,11 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	}
 	if src.GatewayToken != "" {
 		dst.GatewayToken = src.GatewayToken
+	}
+	// Cron is a capability switch: a true at either the global or per-bot layer
+	// enables it (consistent with the other fields' "non-zero overrides" merge).
+	if src.Cron {
+		dst.Cron = true
 	}
 	// env merges per-key (global base + per-bot overrides/additions), not whole
 	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a

@@ -35,10 +35,37 @@ multi-bot (config) mode; it is ignored in single-bot mode.
 | `session.history` | `{botId?, sessionKey, limit}` | `[{role, content, ts}]` |
 | `session.reset` | `{botId?, uid}` | `{ok}` (clears the resume mapping) |
 | `secret.inject` | `{botId?, kind, value}` | `{ok}` (held in memory; never persisted) |
+| `cron.create` | `{botId?, uid, schedule, prompt, recurring?, channelId?, channelType?, fromName?}` | `{id, schedule, recurring, prompt, nextRun, enabled}` |
+| `cron.list` | `{botId?}` | `[{id, schedule, recurring, prompt, nextRun, enabled}]` |
+| `cron.delete` | `{botId?, uid, id}` | `{ok}` |
 
 `session.send` routes `uid` as a DM inbound. A non-`ok` outcome (router drop or
 turn error) is reported asynchronously as an `error` event, since the response
 returns immediately and the turn streams back.
+
+### Cron / scheduled tasks (#115)
+
+Per-bot scheduled tasks, enabled by `agent.cron` in the config. Faithful port of
+cc-channel-octo's cron feature (`cron-evaluator.ts`, `cron-store.ts`,
+`cron-scheduler.ts`, `cron-tool.ts`). In cc-channel these surfaced as an
+in-process MCP server the agent called; xclaw exposes the same create/list/delete
+over the control bus instead.
+
+- `schedule` is a **5-field cron expression** (`0 9 * * 1-5` = weekdays 9am, with
+  standard dom/dow OR semantics) **or a one-shot ISO datetime** (`2026-06-09T09:00:00Z`,
+  strictly validated — `Feb 30`/`hour 25`/past times are rejected).
+- `recurring` defaults to `true` for cron exprs and `false` for one-shots.
+- A created task **binds** to the session that created it: a `channelId` (with
+  `channelType` 2) targets a group; omitting it (or `channelType` 1) targets the
+  DM with `uid`. When the task fires, its `prompt` runs as a synthetic message in
+  that session and the reply is delivered there.
+- **Owner-gated:** only the bot owner (`owner_uid` from registration) may
+  `cron.create` / `cron.delete`; `cron.list` is read-only. Cron fires bypass the
+  group @mention gate and the rate limit (operator-scheduled, in-process); they
+  never run untrusted-user-created tasks (the security prefix carries the
+  advisory defense-in-depth layer).
+- Caps: ≤ 50 tasks/bot, ≤ 2048-byte prompt. A bot without `agent.cron` returns an
+  error for all three commands.
 
 **Planned (not yet implemented):** `bot.start`, `bot.stop`, `config.reload`.
 

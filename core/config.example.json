@@ -5,7 +5,9 @@
     "_comment": "Shared defaults for every bot; override per bot in bots[].",
     "model": "claude-opus-4-8",
     "gatewayBaseUrl": "https://your-model-gateway.example/v1",
-    "gatewayToken": "sk-your-gateway-token"
+    "gatewayToken": "sk-your-gateway-token",
+    "_comment_cron": "Set cron=true to enable per-bot scheduled tasks (#115): owner-gated cron.create/list/delete over the control bus, fired through the gateway. Off by default.",
+    "cron": false
   },
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },

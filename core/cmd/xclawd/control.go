@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/store"
@@ -19,6 +20,7 @@ type botTarget struct {
 	gateway *gateway.Gateway
 	store   *store.Store
 	secrets *secretStore
+	cron    *cron.Manager // nil when agent.cron is disabled for this bot
 }
 
 // handlerDeps adapts single-bot vs multi-bot wiring to one command dispatcher.
@@ -128,6 +130,75 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			_ = t.store.ClearResume(b.UID)
 			return control.OKBody{OK: true}, nil
 
+		case "cron.create":
+			var b control.CronCreateBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			if t.cron == nil {
+				return nil, fmt.Errorf("cron is not enabled for this bot")
+			}
+			coords := cron.SessionCoords{
+				ChannelID:   b.ChannelID,
+				ChannelType: cron.ChannelKind(channelTypeFor(b.ChannelType, b.ChannelID)),
+				FromUID:     b.UID,
+				FromName:    b.FromName,
+			}
+			task, err := t.cron.Create(cron.CreateParams{
+				Schedule:   b.Schedule,
+				Prompt:     b.Prompt,
+				Recurring:  b.Recurring,
+				Coords:     coords,
+				RequestUID: b.UID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return cronTaskInfo(task), nil
+
+		case "cron.list":
+			var b control.CronListBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			if t.cron == nil {
+				return nil, fmt.Errorf("cron is not enabled for this bot")
+			}
+			tasks, err := t.cron.List()
+			if err != nil {
+				return nil, err
+			}
+			out := make([]control.CronTaskInfo, 0, len(tasks))
+			for _, task := range tasks {
+				out = append(out, cronTaskInfo(task))
+			}
+			return out, nil
+
+		case "cron.delete":
+			var b control.CronDeleteBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			if t.cron == nil {
+				return nil, fmt.Errorf("cron is not enabled for this bot")
+			}
+			if err := t.cron.Delete(b.ID, b.UID); err != nil {
+				return nil, err
+			}
+			return control.OKBody{OK: true}, nil
+
 		default:
 			return nil, fmt.Errorf("unknown command %q", cmdType)
 		}
@@ -141,4 +212,34 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 		out = append(out, control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp})
 	}
 	return out
+}
+
+// channelTypeFor resolves the router/octo channel type for a cron task: an
+// explicit non-zero type wins; otherwise a present channelId implies a group and
+// its absence a DM. Mirrors the create-time coords binding in cron-tool.ts.
+func channelTypeFor(explicit int, channelID string) int {
+	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) {
+		return explicit
+	}
+	if channelID != "" {
+		return int(router.ChannelGroup)
+	}
+	return int(router.ChannelDM)
+}
+
+// cronTaskInfo projects a stored cron task onto the wire type (nextRun rendered
+// as RFC3339, mirroring cron-tool.ts summarize()).
+func cronTaskInfo(t cron.Task) control.CronTaskInfo {
+	next := ""
+	if t.NextRun != 0 {
+		next = time.UnixMilli(t.NextRun).UTC().Format(time.RFC3339)
+	}
+	return control.CronTaskInfo{
+		ID:        t.ID,
+		Schedule:  t.Schedule,
+		Recurring: t.Recurring,
+		Prompt:    t.Prompt,
+		NextRun:   next,
+		Enabled:   t.Enabled,
+	}
 }

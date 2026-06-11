@@ -211,14 +211,28 @@ func (c *Connector) heartbeatLoop(ctx context.Context) {
 }
 
 // onInbound maps a decoded BotMessage to a router.InboundMessage and feeds the
-// gateway. Drops the bot's own messages and non-text payloads.
+// gateway. Drops the bot's own messages and streaming partials; every other
+// payload type is rendered to text by ResolveContent (content.go).
 func (c *Connector) onInbound(m BotMessage) {
 	uid := c.uid()
 	if m.FromUID == uid {
 		return // ignore our own messages
 	}
-	if m.Payload.Type != MsgText || strings.TrimSpace(m.Payload.Content) == "" {
-		return // MVP handles text only
+	// Suppress streaming partial updates (inbound.ts settingStreamOn / G21): a
+	// streamOn message is an in-progress edit; only the final (streamOn=false)
+	// message carries the settled content. Routing partials would feed the agent
+	// half-typed text and re-fire turns on every keystroke.
+	if m.StreamOn {
+		return
+	}
+
+	// Render the payload to LLM-facing text. ResolveContent covers every type
+	// (text, media markers, location, card, RichText, MultipleForward) and
+	// sanitizes any untrusted name/body that lands in a label.
+	resolved := ResolveContent(m.Payload, c.rest.APIURL())
+	baseText := strings.TrimSpace(resolved.Text)
+	if baseText == "" {
+		return // nothing renderable (e.g. an empty/unknown payload)
 	}
 
 	chType := router.ChannelDM
@@ -231,7 +245,7 @@ func (c *Connector) onInbound(m BotMessage) {
 		FromName:    m.FromName,
 		ChannelID:   m.ChannelID,
 		ChannelType: chType,
-		Text:        m.Payload.Content,
+		Text:        baseText,
 		Mentioned:   m.MentionsBot(uid),
 	}
 	key, err := inbound.SessionKey()
@@ -243,19 +257,43 @@ func (c *Connector) onInbound(m BotMessage) {
 	c.targets[key] = replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
 	c.mu.Unlock()
 
+	// Acknowledge receipt (fire-and-forget) once we've decided to process it.
+	c.sendReadReceipt(m)
+
 	if c.gateway == nil {
 		return
 	}
 	// A group message that doesn't mention the bot is background context, not a
 	// turn: observe it so it becomes a later @-mention's delta. (The router
-	// would drop it anyway; observing first preserves group context.)
+	// would drop it anyway; observing first preserves group context.) Background
+	// context is stored history, so it carries the plain resolved text WITHOUT
+	// the quoted-reply prefix.
 	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned {
 		c.gateway.Observe(inbound)
 		return
 	}
+	// Prepend the quoted-reply context to the CURRENT turn only (never stored
+	// history): the sender quoted a prior message, so give the agent that
+	// context fenced ahead of the real request (inbound.ts quotePrefix).
+	if prefix := resolveQuotePrefix(m.Payload.Reply, c.rest.APIURL()); prefix != "" {
+		inbound.Text = prefix + inbound.Text
+	}
 	if _, err := c.gateway.Handle(c.ctx(), inbound); err != nil {
 		c.logf("handle turn for %s: %v", key, err)
 	}
+}
+
+// sendReadReceipt acks the message as read, fire-and-forget (api.ts
+// sendReadReceipt). Failures are logged but never block the turn.
+func (c *Connector) sendReadReceipt(m BotMessage) {
+	if m.MessageID == "" {
+		return
+	}
+	go func() {
+		if err := c.rest.SendReadReceipt(c.ctx(), m.ChannelID, m.ChannelType, []string{m.MessageID}); err != nil {
+			c.logf("read receipt for %s: %v", m.MessageID, err)
+		}
+	}()
 }
 
 // --- gateway.Sink ---

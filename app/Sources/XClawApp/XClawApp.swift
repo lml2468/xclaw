@@ -29,64 +29,49 @@ struct XClawApp: App {
         .menuBarExtraStyle(.window)
 
         Window("XClaw", id: "console") {
-            Group {
-#if DEBUG
-                // Debug screenshot aid: the Settings scene can't be opened via
-                // synthetic events, so XCLAW_UI_PREVIEW=settings renders the
-                // editor in this (reliably openable) window. No effect in release.
-                if ProcessInfo.processInfo.environment["XCLAW_UI_PREVIEW"] == "settings" {
-                    ConfigEditorView(config: model.config, onSaveAndRestart: {})
-                } else {
-                    ConsoleView(model: model)
-                        .onAppear { if model.coreState == "stopped" { model.start() } }
-                }
-#else
-                ConsoleView(model: model)
-                    .onAppear { if model.coreState == "stopped" { model.start() } }
-#endif
-            }
-            .preferredColorScheme(Self.previewScheme)
+            ConsoleView(model: model)
+                .onAppear { if model.coreState == "stopped" { model.start() } }
+                .preferredColorScheme(Self.previewScheme)
         }
         .defaultSize(width: 880, height: 600)
         .windowToolbarStyle(.unified)
-#if DEBUG
-        // Screenshot aid: a reliable (menu-shortcut) way to open the console
-        // window — synthetic clicks on the menu-bar popover don't fire its
-        // actions, and the Settings scene can't be opened via synthetic events.
-        .commands {
-            CommandGroup(after: .windowList) {
-                OpenConsoleCommand()
-            }
-        }
-#endif
 
-        // Config editor (Cmd-,). Loads the on-disk config when opened.
-        Settings {
+        // Bot configuration editor. A real Window, NOT a Settings pane: a
+        // master/detail NavigationSplitView needs a split-view window to render
+        // a flush, full-height sidebar — inside a Settings scene it collapses to
+        // a floating inset card with a dead top gap. Opened via ⌘, (the
+        // .appSettings command below) and the menu-bar "Edit Bots…" item.
+        Window("Edit Bots", id: "bot-editor") {
             ConfigEditorView(config: model.config,
                              onSaveAndRestart: { model.applyConfigAndRestart() })
                 .onAppear { model.config.load() }
+                .preferredColorScheme(Self.previewScheme)
+        }
+        .defaultSize(width: 820, height: 620)
+        .windowToolbarStyle(.unified)
+        .commands {
+            // XClaw's "settings" IS the bot editor: ⌘, opens it (replacing the
+            // default, now-empty "Settings…" app-menu item).
+            CommandGroup(replacing: .appSettings) { EditBotsCommand() }
         }
     }
 }
 
 // MARK: - Menu bar popover
 
-#if DEBUG
-/// A menu command (Cmd-Shift-O) that opens the console window. DEBUG-only;
-/// exists so on-device screenshot verification can open the window via a menu
-/// shortcut (reliable under synthetic events) rather than the popover.
-private struct OpenConsoleCommand: View {
+/// The ⌘, command that opens the bot editor window. XClaw has no traditional
+/// preferences pane — its "settings" is the bot editor — so this replaces the
+/// default "Settings…" app-menu item.
+private struct EditBotsCommand: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button("Open Console (Debug)") {
+        Button("Edit Bots…") {
             NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: "console")
+            openWindow(id: "bot-editor")
         }
-        .keyboardShortcut("o", modifiers: [.command, .shift])
+        .keyboardShortcut(",", modifiers: .command)
     }
 }
-#endif
-
 
 /// The menu-bar status icon.
 private struct MenuBarLabel: View {
@@ -124,12 +109,10 @@ private struct MenuBarContent: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: "console")
                 }
-                SettingsLink {
-                    Label("Edit Bots…", systemImage: "slider.horizontal.3")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                MenuRow(title: "Edit Bots…", systemImage: "slider.horizontal.3") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "bot-editor")
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10).padding(.vertical, 6)
                 MenuRow(title: "Restart Core", systemImage: "arrow.clockwise") {
                     model.stop(); model.start()
                 }
@@ -174,6 +157,7 @@ private struct MenuRow: View {
 
 struct ConsoleView: View {
     @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @State private var draft: String = ""
     @State private var selectedSessionKey: String?
     @FocusState private var composerFocused: Bool
@@ -233,7 +217,10 @@ struct ConsoleView: View {
             if model.coreState == "needs-config" {
                 InfoBanner(text: "No bots configured. Add one to get started.",
                            systemImage: "gearshape.badge.exclamationmark", tint: .orange) {
-                    SettingsLink { Text("Edit Bots…") }
+                    Button("Edit Bots…") {
+                        NSApp.activate(ignoringOtherApps: true)
+                        openWindow(id: "bot-editor")
+                    }
                 }
             }
             if model.config.needsRestart {

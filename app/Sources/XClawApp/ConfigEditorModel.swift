@@ -2,8 +2,8 @@ import Foundation
 import Observation
 import XClawCore
 
-/// View model for the bot-configuration editor (Settings / Cmd-,). Owns the
-/// editable bot list and persists it: non-secret fields to ~/.xclaw/config.json
+/// View model for the bot-configuration editor (its own window, opened via ⌘,).
+/// Owns the editable bot list and persists it: non-secret fields to ~/.xclaw/config.json
 /// (via `ConfigStore`), tokens to the Keychain. Kept separate from `AppModel` so
 /// runtime connection/supervision and config editing are distinct concerns.
 @MainActor
@@ -20,6 +20,11 @@ final class ConfigEditorModel {
     /// Keychain (falling back to any legacy value still in the file).
     func load() {
         error = nil
+#if DEBUG
+        // UI-preview mode renders seeded sample bots (see AppModel); skip the
+        // real config/Keychain read so screenshots need no daemon or Keychain.
+        if ProcessInfo.processInfo.environment["XCLAW_UI_PREVIEW"] != nil { return }
+#endif
         do {
             var loaded = try ConfigStore.load()
             for i in loaded.indices {

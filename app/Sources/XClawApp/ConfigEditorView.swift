@@ -1,10 +1,11 @@
 import SwiftUI
 import XClawCore
 
-/// Bot configuration editor (opened via Settings / Cmd-,). Lists configured
-/// bots, lets you add/remove and edit identity / connection / agent / persona /
-/// environment, and saves to ~/.xclaw/config.json (tokens → Keychain, persona →
-/// SOUL.md / AGENTS.md). See ConfigEditorModel / ConfigStore / Keychain.
+/// Bot configuration editor (its own window, opened via ⌘, or the menu-bar
+/// "Edit Bots…"). Lists configured bots, lets you add/remove and edit identity /
+/// connection / agent / persona / environment, and saves to ~/.xclaw/config.json
+/// (tokens → Keychain, persona → SOUL.md / AGENTS.md). See ConfigEditorModel /
+/// ConfigStore / Keychain.
 struct ConfigEditorView: View {
     @Bindable var config: ConfigEditorModel
     /// Invoked when the user chooses "Save & Restart" after a successful save.
@@ -64,7 +65,7 @@ struct ConfigEditorView: View {
                 }
             }
         }
-        .frame(width: 760, height: 580)
+        .frame(minWidth: 720, minHeight: 560)
         .safeAreaInset(edge: .bottom) { footer }
     }
 

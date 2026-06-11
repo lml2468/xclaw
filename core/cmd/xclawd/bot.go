@@ -220,6 +220,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// The Octo token is read lazily; it may arrive via secret.inject after start,
 	// so an empty token here is allowed (the connector waits for it).
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
+	connector.SetToolProgress(cfg.Agent.ToolProgress)
 
 	// Sinks: the Octo connector (delivers replies to IM) + control bus (tagged
 	// with this bot's id) when a GUI is attached.

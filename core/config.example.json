@@ -5,7 +5,9 @@
     "_comment": "Shared defaults for every bot; override per bot in bots[].",
     "model": "claude-opus-4-8",
     "gatewayBaseUrl": "https://your-model-gateway.example/v1",
-    "gatewayToken": "sk-your-gateway-token"
+    "gatewayToken": "sk-your-gateway-token",
+    "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief '🔧 Running <tool>(<params>)…' notice (deduped, capped at 10/turn). Off by default.",
+    "toolProgress": false
   },
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },

@@ -33,6 +33,12 @@ type Connector struct {
 	sock    *socketConn
 	closed  bool
 
+	// toolProgress mirrors the agent's tool invocations to the channel as it runs
+	// (opt-in; see config AgentConfig.ToolProgress). progress holds the per-turn
+	// dedup/cap state, keyed by sessionKey; both are guarded by c.mu.
+	toolProgress bool
+	progress     map[string]*toolProgressState
+
 	// onStatus, if set, is called when the connection state changes
 	// (connected=true after a successful register+handshake; false on drop).
 	onStatus func(connected bool, lastErr string)
@@ -40,6 +46,17 @@ type Connector struct {
 	// reconnect/backoff
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
+}
+
+// maxToolNotices caps how many "🔧 Running …" notices a single turn may emit, so
+// a tool-heavy run can't flood the channel. Mirrors cc-channel-octo's
+// MAX_TOOL_NOTICES (src/index.ts).
+const maxToolNotices = 10
+
+// toolProgressState is the per-turn dedup/cap state for tool-progress notices.
+type toolProgressState struct {
+	lastNotice string // last label sent, to collapse consecutive duplicates
+	count      int    // notices sent this turn
 }
 
 // awaitTokenPoll is how often Run rechecks for an injected token before it has
@@ -68,9 +85,19 @@ func NewConnector(rest *RESTClient) *Connector {
 	return &Connector{
 		rest:          rest,
 		targets:       make(map[string]replyTarget),
+		progress:      make(map[string]*toolProgressState),
 		reconnectBase: 3 * time.Second,
 		reconnectMax:  60 * time.Second,
 	}
+}
+
+// SetToolProgress enables/disables mirroring tool invocations to the channel as
+// "🔧 Running <tool>(<params>)…" notices (opt-in; off by default). Wired from
+// the bot's resolved AgentConfig.ToolProgress.
+func (c *Connector) SetToolProgress(on bool) {
+	c.mu.Lock()
+	c.toolProgress = on
+	c.mu.Unlock()
 }
 
 // SetGateway attaches the gateway (done after construction to resolve the
@@ -260,15 +287,80 @@ func (c *Connector) onInbound(m BotMessage) {
 
 // --- gateway.Sink ---
 
-// OnEvent surfaces a typing indicator on the first activity of a turn. (Token /
-// tool events are not mirrored to IM in the MVP.)
+// OnEvent surfaces a typing indicator on the first activity of a turn and, when
+// tool-progress is enabled, mirrors each tool invocation to the channel as a
+// brief "🔧 Running <tool>(<params>)…" notice. Ported from cc-channel-octo's
+// opt-in `sdk.toolProgress` hook (src/index.ts onToolUse): collapse consecutive
+// duplicates, cap at maxToolNotices per turn, reset on turn start/end.
 func (c *Connector) OnEvent(sessionKey string, ev agent.AgentEvent) {
-	if ev.Kind == agent.KindSessionStarted {
+	switch ev.Kind {
+	case agent.KindSessionStarted:
+		// Turn start: reset the per-turn progress state and show a typing hint.
+		c.mu.Lock()
+		if c.toolProgress {
+			c.progress[sessionKey] = &toolProgressState{}
+		}
+		c.mu.Unlock()
 		if tgt, ok := c.target(sessionKey); ok {
 			if err := c.rest.SendTyping(c.ctx(), tgt.channelID, tgt.channelType); err != nil {
 				c.logf("send typing for %s: %v", sessionKey, err)
 			}
 		}
+	case agent.KindToolUse:
+		c.maybeSendToolNotice(sessionKey, ev)
+	case agent.KindTurnDone:
+		// Turn end: drop the per-turn progress state so the next turn starts clean.
+		c.mu.Lock()
+		delete(c.progress, sessionKey)
+		c.mu.Unlock()
+	}
+}
+
+// maybeSendToolNotice emits a "🔧 Running <tool>(<params>)…" notice for a
+// KindToolUse event when tool-progress is on, collapsing consecutive identical
+// notices and capping the count per turn. The dedup/cap decision is made under
+// c.mu; the REST send happens after unlocking so a slow send never holds the
+// connector lock (and never blocks the agent stream's other sessions).
+func (c *Connector) maybeSendToolNotice(sessionKey string, ev agent.AgentEvent) {
+	label := ev.ToolName
+	if label == "" {
+		return
+	}
+	if ev.ToolParams != "" {
+		// ToolParams is already a whitespace-collapsed one-liner truncated to 120
+		// chars by claude.go's truncateParams — mirrors MAX_TOOL_PARAM_CHARS.
+		label += "(" + ev.ToolParams + ")"
+	}
+
+	c.mu.Lock()
+	if !c.toolProgress {
+		c.mu.Unlock()
+		return
+	}
+	st := c.progress[sessionKey]
+	if st == nil {
+		// No KindSessionStarted seen for this session this turn — start fresh.
+		st = &toolProgressState{}
+		c.progress[sessionKey] = st
+	}
+	if label == st.lastNotice {
+		c.mu.Unlock()
+		return // collapse exact consecutive repeats
+	}
+	st.lastNotice = label
+	if st.count >= maxToolNotices {
+		c.mu.Unlock()
+		return // capped — stay quiet for the rest of the turn
+	}
+	st.count++
+	c.mu.Unlock()
+
+	tgt, ok := c.target(sessionKey)
+	if !ok {
+		return
+	}
+	if _, err := c.rest.SendText(c.ctx(), tgt.channelID, tgt.channelType, "🔧 Running "+label+"…", nil, false); err != nil {
+		c.logf("send tool-progress for %s: %v", sessionKey, err)
 	}
 }
 

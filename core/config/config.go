@@ -24,6 +24,12 @@ type AgentConfig struct {
 	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
 	GatewayToken   string            `json:"gatewayToken,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
+
+	// ToolProgress, when true, makes the IM connector mirror each tool the agent
+	// invokes back to the channel as a brief "🔧 Running <tool>(<params>)…" notice
+	// (consecutive dups collapsed, capped per turn). Off by default — opt-in.
+	// Ported from cc-channel-octo `sdk.toolProgress` (src/config.ts, src/index.ts).
+	ToolProgress bool `json:"toolProgress,omitempty"`
 }
 
 // RateLimitConfig mirrors the on-disk rateLimit block.
@@ -225,6 +231,9 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	}
 	if src.GatewayToken != "" {
 		dst.GatewayToken = src.GatewayToken
+	}
+	if src.ToolProgress {
+		dst.ToolProgress = true
 	}
 	// env merges per-key (global base + per-bot overrides/additions), not whole
 	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a

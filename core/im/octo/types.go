@@ -19,6 +19,10 @@ type MessageType int
 const (
 	MsgText  MessageType = 1
 	MsgImage MessageType = 2
+	MsgGIF   MessageType = 3
+	MsgVoice MessageType = 4
+	MsgVideo MessageType = 5
+	MsgFile  MessageType = 8
 )
 
 // Mention is the @-mention payload (types.ts MentionPayload). Only the fields
@@ -36,6 +40,7 @@ type MessagePayload struct {
 	Content string      `json:"content,omitempty"`
 	URL     string      `json:"url,omitempty"`
 	Name    string      `json:"name,omitempty"`
+	Size    int64       `json:"size,omitempty"` // server-reported byte size (File payloads)
 	Mention *Mention    `json:"mention,omitempty"`
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safety"
 )
 
 // Connector wires the Octo IM platform to the gateway: it registers the bot,
@@ -76,6 +77,25 @@ func NewConnector(rest *RESTClient) *Connector {
 // SetGateway attaches the gateway (done after construction to resolve the
 // Connector-is-Sink-of-Gateway cycle).
 func (c *Connector) SetGateway(g *gateway.Gateway) { c.gateway = g }
+
+// MediaAuth returns the gateway hook that host-scopes the bot token on inbound
+// media downloads: the Bearer token is sent only while the current hop is
+// same-host as apiUrl, so a redirect to another host drops the credential
+// (inbound.ts S1 per-hop Authorization scoping). Wire it via
+// gateway.WithMediaAuth so the gateway can authenticate same-host media without
+// embedding an IM-specific token.
+func (c *Connector) MediaAuth() gateway.MediaAuth {
+	return func(rawURL string) string {
+		if !isSameHost(rawURL, c.rest.APIURL()) {
+			return ""
+		}
+		tok := c.rest.Token()
+		if tok == "" {
+			return ""
+		}
+		return "Bearer " + tok
+	}
+}
 
 // Run registers the bot and maintains the socket connection with reconnect
 // until ctx is cancelled. The initial registration is retried with backoff so a
@@ -211,14 +231,18 @@ func (c *Connector) heartbeatLoop(ctx context.Context) {
 }
 
 // onInbound maps a decoded BotMessage to a router.InboundMessage and feeds the
-// gateway. Drops the bot's own messages and non-text payloads.
+// gateway. Drops the bot's own messages and unsupported payloads. Text, image
+// (Image/GIF), and file payloads are resolved to LLM-facing text plus media
+// attachments the gateway materializes into the session cwd (inbound.ts G1).
 func (c *Connector) onInbound(m BotMessage) {
 	uid := c.uid()
 	if m.FromUID == uid {
 		return // ignore our own messages
 	}
-	if m.Payload.Type != MsgText || strings.TrimSpace(m.Payload.Content) == "" {
-		return // MVP handles text only
+
+	text, atts, ok := c.resolvePayload(m.Payload)
+	if !ok {
+		return // unsupported / empty payload
 	}
 
 	chType := router.ChannelDM
@@ -231,7 +255,8 @@ func (c *Connector) onInbound(m BotMessage) {
 		FromName:    m.FromName,
 		ChannelID:   m.ChannelID,
 		ChannelType: chType,
-		Text:        m.Payload.Content,
+		Text:        text,
+		Attachments: atts,
 		Mentioned:   m.MentionsBot(uid),
 	}
 	key, err := inbound.SessionKey()
@@ -255,6 +280,53 @@ func (c *Connector) onInbound(m BotMessage) {
 	}
 	if _, err := c.gateway.Handle(c.ctx(), inbound); err != nil {
 		c.logf("handle turn for %s: %v", key, err)
+	}
+}
+
+// resolvePayload renders a decoded payload into LLM-facing text plus any media
+// attachments (port of resolveContent's Text/Image/GIF/File branches in
+// inbound.ts). Media URLs are host-validated via buildMediaURL; the gateway
+// downloads them later. Returns ok=false for unsupported or empty payloads.
+func (c *Connector) resolvePayload(p MessagePayload) (text string, atts []router.Attachment, ok bool) {
+	apiURL := c.rest.APIURL()
+	switch p.Type {
+	case MsgText:
+		if strings.TrimSpace(p.Content) == "" {
+			return "", nil, false
+		}
+		return p.Content, nil, true
+
+	case MsgImage, MsgGIF:
+		marker := "[图片]"
+		if p.Type == MsgGIF {
+			marker = "[GIF]"
+		}
+		full := buildMediaURL(p.URL, apiURL)
+		if full == "" {
+			return marker, nil, true
+		}
+		atts = []router.Attachment{{Kind: router.AttachmentImage, URL: full}}
+		return marker + "\n" + full, atts, true
+
+	case MsgFile:
+		// SECURITY: p.Name is user-controlled and flows into a [文件: …] label and
+		// the <file_content name="…"> attribute. Sanitize at the source so no
+		// downstream label can forge a marker/role label (prompt injection).
+		filename := safety.SanitizeDisplayName(p.Name, "未知文件")
+		full := buildMediaURL(p.URL, apiURL)
+		if full == "" {
+			return "[文件: " + filename + "]", nil, true
+		}
+		atts = []router.Attachment{{
+			Kind: router.AttachmentFile,
+			URL:  full,
+			Name: filename,
+			Size: p.Size,
+		}}
+		return "[文件: " + filename + "]\n" + full, atts, true
+
+	default:
+		return "", nil, false // Voice/Video/Location/etc. unsupported in MVP
 	}
 }
 

@@ -28,6 +28,36 @@ const (
 	ChannelGroup ChannelType = 2
 )
 
+// AttachmentKind classifies an inbound attachment for materialization (gateway
+// media-download helper). Mirrors the MessageType branches cc-channel-octo's
+// inbound.ts feeds into downloadInboundImage / tryResolveFile.
+type AttachmentKind int
+
+const (
+	// AttachmentImage is a still/animated image (PNG/JPEG/GIF/WebP). The gateway
+	// downloads it into the session cwd so the agent's Read tool can open it.
+	AttachmentImage AttachmentKind = iota
+	// AttachmentFile is a generic file: inlined (small text) or downloaded to a
+	// temp path (large/binary), per tryResolveFile semantics.
+	AttachmentFile
+)
+
+// Attachment is one inbound media/file reference. The IM connector populates it
+// from the payload (URL + type) WITHOUT downloading — it has no session cwd. The
+// gateway materializes it after the cwd is resolved (see gateway/media.go),
+// mirroring cc-channel-octo/src/inbound.ts + media-inbound.ts.
+type Attachment struct {
+	Kind AttachmentKind
+	// URL is the fully-resolved, host-validated absolute download URL.
+	URL string
+	// Name is the (already-sanitized) display filename, used for the Read hint
+	// and the <file_content name="…"> attribute. Empty for images.
+	Name string
+	// Size is the server-reported byte size when known (0 = unknown). Lets the
+	// gateway skip downloading files known to exceed the cap.
+	Size int64
+}
+
 // InboundMessage is the agent/IM-agnostic unit the router operates on.
 type InboundMessage struct {
 	FromUID     string
@@ -36,6 +66,10 @@ type InboundMessage struct {
 	ChannelType ChannelType
 	SpaceID     string // optional isolation prefix (one bot = one space, usually "")
 	Text        string
+	// Attachments are inbound media/file references the gateway materializes into
+	// the session cwd before driver.Query (downloaded images, inlined text files).
+	// The connector fills these from the payload; it does not download.
+	Attachments []Attachment
 	// Mentioned reports whether the bot was addressed (group gate). DMs ignore it.
 	Mentioned bool
 	// CronFire marks an operator-scheduled synthetic message that bypasses the

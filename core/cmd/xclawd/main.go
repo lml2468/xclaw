@@ -117,7 +117,7 @@ func main() {
 	gw := gateway.New(drv, st, rt, sinks)
 	// Group-context injection is useful whenever an IM front end is active.
 	if connector != nil {
-		gw = gw.WithGroupContext(groupctx.New(6000))
+		gw = gw.WithGroupContext(groupctx.New(6000)).WithMediaAuth(connector.MediaAuth())
 	}
 
 	if srv != nil {

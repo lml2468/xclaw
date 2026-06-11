@@ -184,13 +184,21 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		}
 	}
 
+	// For GROUP turns, inject the channel roster + structured-mention format as
+	// operator-trusted system context (gateway-authored, not user text). DMs get
+	// no roster. Computed here where the channel id is in scope.
+	var rosterPrefix string
+	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
+		rosterPrefix = g.groups.MemberListPrefix(msg.ChannelID)
+	}
+
 	events, err := g.driver.Query(ctx, agent.Request{
 		Prompt:       prompt,
 		SessionID:    resumeID,
 		Cwd:          cwd,
 		MemoryDir:    memDir,
 		Model:        g.model,
-		SystemAppend: g.buildSystemPrompt(),
+		SystemAppend: g.buildSystemPrompt(rosterPrefix),
 	})
 	if err != nil {
 		return err
@@ -228,11 +236,18 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 
 // buildSystemPrompt assembles the frozen system-prompt append: the
 // non-overridable security prefix followed by the operator-trusted SOUL/config
-// prompt. (The driver's preset base prompt is prepended by the agent CLI.)
-func (g *Gateway) buildSystemPrompt() string {
+// prompt, and (for GROUP turns) the gateway-authored member roster + mention
+// format hint. (The driver's preset base prompt is prepended by the agent CLI.)
+// rosterPrefix is "" for DMs and for groups with no learned members; when set it
+// is gateway-authored, so it is wrapped as safety.TrustedText like the rest —
+// the security prefix always stays first and non-overridable.
+func (g *Gateway) buildSystemPrompt(rosterPrefix string) string {
 	parts := []safety.SafeText{safety.TrustedText(safety.SecurityPrefix)}
 	if g.systemPrompt != "" {
 		parts = append(parts, safety.TrustedText(g.systemPrompt))
+	}
+	if rosterPrefix != "" {
+		parts = append(parts, safety.TrustedText(rosterPrefix))
 	}
 	var b strings.Builder
 	for i, p := range parts {

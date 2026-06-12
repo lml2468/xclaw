@@ -14,6 +14,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/im/octo"
@@ -50,7 +51,8 @@ type botRuntime struct {
 	cfg     config.Resolved
 	gateway *gateway.Gateway
 	store   *store.Store
-	secrets *secretStore // in-memory tokens (seeded from cfg, updated by secret.inject)
+	secrets *secretStore  // in-memory tokens (seeded from cfg, updated by secret.inject)
+	cron    *cron.Manager // nil when agent.cron is disabled
 
 	mu        sync.Mutex
 	connected bool
@@ -246,10 +248,57 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		}
 	})
 
+	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
+	// tasks through the gateway as synthetic CronFire messages. The owner uid that
+	// gates create/delete is resolved from the bot registration (owner_uid).
+	if cfg.Agent.Cron {
+		cm := cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
+		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
+		cm.OnFire(func(f cron.Fire) {
+			fireCronTask(ctx, gw, connector, f.Task)
+		})
+		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
+		rtBot.cron = cm
+		cm.Start()
+		defer cm.Stop()
+		fmt.Printf("[%s] cron scheduler armed (tick %s)\n", cfg.BotID, cron.CronTickInterval)
+	}
+
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
 	return connector.Run(ctx)
+}
+
+// fireCronTask delivers one due cron task through the full turn pipeline. It
+// binds the connector's reply target to the task's session, then hands the
+// task's stored prompt to the gateway as a synthetic CronFire message (which the
+// router accepts past the group @mention gate and the rate limit). Best-effort:
+// a failed fire is logged, never propagated, so the scheduler loop survives.
+func fireCronTask(ctx context.Context, gw *gateway.Gateway, connector *octo.Connector, t cron.Task) {
+	chType := router.ChannelDM
+	octoType := octo.ChannelDM
+	if t.ChannelType == cron.ChannelKind(router.ChannelGroup) {
+		chType = router.ChannelGroup
+		octoType = octo.ChannelGroup
+	}
+	inbound := router.InboundMessage{
+		FromUID:     t.FromUID,
+		FromName:    t.FromName,
+		ChannelID:   t.ChannelID,
+		ChannelType: chType,
+		Text:        t.Prompt,
+		CronFire:    true,
+	}
+	key, err := inbound.SessionKey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cron: task %s has unroutable coords: %v\n", t.ID, err)
+		return
+	}
+	connector.RegisterReplyTarget(key, t.ChannelID, octoType)
+	if _, err := gw.Handle(ctx, inbound); err != nil {
+		fmt.Fprintf(os.Stderr, "cron: task %s fire failed: %v\n", t.ID, err)
+	}
 }
 
 // makeMultiBotHandler routes control-bus commands by botId across the registry.
@@ -265,7 +314,7 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot == nil {
 				return nil, fmt.Errorf("unknown bot %q", botID)
 			}
-			return &botTarget{gateway: bot.gateway, store: bot.store, secrets: bot.secrets}, nil
+			return &botTarget{gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
 		},
 		broadcast: func(eventType string, body any) {
 			if reg.srv != nil {

@@ -103,6 +103,49 @@ type SecretInjectBody struct {
 	Value string `json:"value"`
 }
 
+// CronCreateBody registers a scheduled task (proto: cron.create). Owner-gated:
+// uid must be the bot owner. The created task BINDS to the channel coords given
+// here (where the fired prompt runs and replies). Either channelId (group) or
+// uid (DM) identifies the bound session.
+type CronCreateBody struct {
+	BotID string `json:"botId,omitempty"`
+	// UID is the requesting user (owner-gate) AND the DM peer for DM tasks.
+	UID string `json:"uid"`
+	// Schedule is a 5-field cron expr ("0 9 * * 1-5") or one-shot ISO datetime.
+	Schedule string `json:"schedule"`
+	// Prompt is the instruction injected when the task fires (≤ 2048 bytes).
+	Prompt string `json:"prompt"`
+	// Recurring, when set, overrides the default (cron→true, one-shot→false).
+	Recurring *bool `json:"recurring,omitempty"`
+	// ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
+	// which binds to UID. ChannelType: 1 = DM, 2 = Group.
+	ChannelID   string `json:"channelId,omitempty"`
+	ChannelType int    `json:"channelType,omitempty"`
+	FromName    string `json:"fromName,omitempty"`
+}
+
+// CronListBody lists a bot's scheduled tasks (proto: cron.list).
+type CronListBody struct {
+	BotID string `json:"botId,omitempty"`
+}
+
+// CronDeleteBody removes a task by id (proto: cron.delete). Owner-gated.
+type CronDeleteBody struct {
+	BotID string `json:"botId,omitempty"`
+	UID   string `json:"uid"`
+	ID    string `json:"id"`
+}
+
+// CronTaskInfo is a task rendered for clients (nextRun as ISO; no internal churn).
+type CronTaskInfo struct {
+	ID        string `json:"id"`
+	Schedule  string `json:"schedule"`
+	Recurring bool   `json:"recurring"`
+	Prompt    string `json:"prompt"`
+	NextRun   string `json:"nextRun,omitempty"` // RFC3339, empty when none
+	Enabled   bool   `json:"enabled"`
+}
+
 // Responses / event bodies (server → client)
 
 type OKBody struct {

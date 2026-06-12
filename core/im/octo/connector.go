@@ -37,6 +37,10 @@ type Connector struct {
 	// (connected=true after a successful register+handshake; false on drop).
 	onStatus func(connected bool, lastErr string)
 
+	// onOwner, if set, is called with the bot owner uid after each (re)register
+	// (BotRegisterResp.owner_uid). Used to gate owner-only features (cron).
+	onOwner func(ownerUID string)
+
 	// reconnect/backoff
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
@@ -51,9 +55,29 @@ const awaitTokenPoll = 2 * time.Second
 // registry to surface per-bot status over the control bus).
 func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) { c.onStatus = fn }
 
+// OnOwner registers a callback invoked with the bot owner uid after each
+// (re)registration. The owner uid gates owner-only features (cron create/delete).
+func (c *Connector) OnOwner(fn func(ownerUID string)) { c.onOwner = fn }
+
+// RegisterReplyTarget binds a session key to a delivery channel so OnReply knows
+// where to send. Real inbound messages do this in onInbound; the cron fire hook
+// uses it so a scheduled task whose session never received a live message still
+// has its reply delivered to the bound channel.
+func (c *Connector) RegisterReplyTarget(sessionKey, channelID string, channelType ChannelType) {
+	c.mu.Lock()
+	c.targets[sessionKey] = replyTarget{channelID: channelID, channelType: channelType}
+	c.mu.Unlock()
+}
+
 func (c *Connector) setStatus(connected bool, lastErr string) {
 	if c.onStatus != nil {
 		c.onStatus(connected, lastErr)
+	}
+}
+
+func (c *Connector) notifyOwner(ownerUID string) {
+	if c.onOwner != nil && ownerUID != "" {
+		c.onOwner(ownerUID)
 	}
 }
 
@@ -116,6 +140,7 @@ func (c *Connector) Run(ctx context.Context) error {
 			}
 			reg = r
 			c.setUID(reg.RobotID)
+			c.notifyOwner(reg.OwnerUID)
 			registered = true
 			backoff = c.reconnectBase
 		}
@@ -138,6 +163,7 @@ func (c *Connector) Run(ctx context.Context) error {
 		if fresh, rerr := c.rest.Register(ctx, true); rerr == nil {
 			reg = fresh
 			c.setUID(reg.RobotID)
+			c.notifyOwner(reg.OwnerUID)
 		} else {
 			registered = false // force the retry path above
 		}

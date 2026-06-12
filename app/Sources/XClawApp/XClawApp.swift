@@ -30,11 +30,13 @@ struct XClawApp: App {
 
         Window("XClaw", id: "console") {
             ConsoleView(model: model)
-                .onAppear { if model.coreState == "stopped" { model.start() } }
+                .onAppear { if model.coreState == .stopped { model.start() } }
+                .tint(.brand)
                 .preferredColorScheme(Self.previewScheme)
         }
         .defaultSize(width: 880, height: 600)
         .windowToolbarStyle(.unified)
+        .windowResizability(.contentMinSize)
 
         // Bot configuration editor. A real Window, NOT a Settings pane: a
         // master/detail NavigationSplitView needs a split-view window to render
@@ -45,10 +47,12 @@ struct XClawApp: App {
             ConfigEditorView(config: model.config,
                              onSaveAndRestart: { model.applyConfigAndRestart() })
                 .onAppear { model.config.loadIfNeeded() }
+                .tint(.brand)
                 .preferredColorScheme(Self.previewScheme)
         }
         .defaultSize(width: 820, height: 620)
         .windowToolbarStyle(.unified)
+        .windowResizability(.contentMinSize)
         .commands {
             // XClaw's "settings" IS the bot editor: ⌘, opens it (replacing the
             // default, now-empty "Settings…" app-menu item).
@@ -73,11 +77,15 @@ private struct EditBotsCommand: View {
     }
 }
 
-/// The menu-bar status icon.
+/// The menu-bar status icon — the XClaw octopus mark, tinted when connected.
 private struct MenuBarLabel: View {
     @Bindable var model: AppModel
     var body: some View {
-        Image(systemName: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
+        OctopusShape()
+            .fill(style: FillStyle(eoFill: true))
+            .foregroundStyle(model.connected ? Color.primary : Color.secondary)
+            .frame(width: 18, height: 18)
+            .accessibilityLabel(model.connected ? "XClaw, connected" : "XClaw, disconnected")
     }
 }
 
@@ -90,9 +98,11 @@ private struct MenuBarContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "bolt.horizontal.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(model.connected ? Color.green : Color.secondary)
+                OctopusShape()
+                    .fill(style: FillStyle(eoFill: true))
+                    .foregroundStyle(model.connected ? Color.brand : Color.secondary)
+                    .frame(width: 26, height: 26)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("XClaw").font(.headline)
                     Text(statusLine).font(.caption).foregroundStyle(.secondary)
@@ -124,11 +134,12 @@ private struct MenuBarContent: View {
             .padding(8)
         }
         .frame(width: 260)
+        .tint(.brand)
     }
 
     private var statusLine: String {
         if model.connected { return "Connected · \(model.bots.count) bot(s)" }
-        return model.coreState == "needs-config" ? "Needs configuration" : "Disconnected"
+        return model.coreState == .needsConfig ? "Needs configuration" : "Disconnected"
     }
 }
 
@@ -147,9 +158,10 @@ private struct MenuRow: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(hovering ? Color.accentColor.opacity(0.15) : .clear,
+        .background(hovering ? Color.brand.opacity(0.15) : .clear,
                     in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { hovering = $0 }
+        .accessibilityLabel(title)
     }
 }
 
@@ -203,6 +215,21 @@ struct ConsoleView: View {
                     .tag(bot.id)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(bot.id), \(bot.connected ? "connected" : "offline"), \(bot.sessions.count) sessions")
+                    .contextMenu {
+                        Button {
+                            NSApp.activate(ignoringOtherApps: true)
+                            openWindow(id: "bot-editor")
+                        } label: { Label("Edit Bots…", systemImage: "slider.horizontal.3") }
+                        Button {
+                            model.selectedBotID = bot.id
+                            model.restartCore()
+                        } label: { Label("Restart Core", systemImage: "arrow.clockwise") }
+                        Divider()
+                        Button(role: .destructive) {
+                            model.selectedBotID = bot.id
+                            model.reset()
+                        } label: { Label("Clear Memory", systemImage: "eraser.line.dashed") }
+                    }
                 }
             }
         }
@@ -214,7 +241,7 @@ struct ConsoleView: View {
 
     private var detail: some View {
         VStack(spacing: 0) {
-            if model.coreState == "needs-config" {
+            if model.coreState == .needsConfig {
                 InfoBanner(text: "No bots configured. Add one to get started.",
                            systemImage: "gearshape.badge.exclamationmark", tint: .orange) {
                     Button("Edit Bots…") {
@@ -252,19 +279,33 @@ struct ConsoleView: View {
                     Image(systemName: "eraser.line.dashed")
                 }
                 .help("Clear this bot's conversation memory")
+                .accessibilityLabel("Clear conversation memory")
                 Button { model.restartCore() } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Restart the xclawd core process")
+                .accessibilityLabel("Restart core")
             }
         }
     }
 
     private var statusSubtitle: String {
         switch model.coreState {
-        case "needs-config": return "needs configuration"
-        default: return model.connected ? "connected" : model.coreState
+        case .needsConfig: return "needs configuration"
+        default: return model.connected ? "connected" : model.coreState.display
         }
+    }
+
+    /// Prettifies a raw sessionKey for the session picker: the GUI console
+    /// session reads as "Console"; DM/group keys (`dm:<space>:<uid>`,
+    /// `group:<channel>`) collapse to their trailing identifier.
+    private func sessionTitle(_ key: String) -> String {
+        if key == model.localUID { return "Console" }
+        let parts = key.split(separator: ":")
+        if let kind = parts.first, parts.count > 1, let tail = parts.last {
+            return "\(kind.capitalized) · \(tail)"
+        }
+        return key
     }
 
     private var transcript: some View {
@@ -296,7 +337,7 @@ struct ConsoleView: View {
                                 get: { current.sessionKey },
                                 set: { selectedSessionKey = $0 }
                             )) {
-                                ForEach(sessions) { Text($0.sessionKey).tag($0.sessionKey) }
+                                ForEach(sessions) { Text(sessionTitle($0.sessionKey)).tag($0.sessionKey) }
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
@@ -304,9 +345,13 @@ struct ConsoleView: View {
                         }
                         ForEach(current.messages) { msg in
                             ChatBubble(message: msg)
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                    removal: .opacity))
                         }
                         if current.awaitingReply {
                             TypingBubble()
+                                .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .leading)))
                         }
                         if current.outputTokens > 0 {
                             Text("\(current.inputTokens) in · \(current.outputTokens) out")
@@ -352,10 +397,11 @@ struct ConsoleView: View {
                     .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(canSend ? Color.accentColor : Color.secondary)
+            .foregroundStyle(canSend ? Color.brand : Color.secondary)
             .disabled(!canSend)
             .keyboardShortcut(.return, modifiers: [])
             .help("Send (Return)")
+            .accessibilityLabel("Send message")
         }
         .padding(10)
         .background(.bar)
@@ -387,7 +433,7 @@ private struct InfoBanner<Trailing: View>: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(.regularMaterial)
+        .liquidGlass(in: Rectangle(), fallback: .regularMaterial)
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -438,12 +484,10 @@ private struct BubbleRow: View {
     private var bubble: some View {
         HStack(spacing: 0) {
             if isUser { Spacer(minLength: 48) }
-            Text(message.text)
-                .textSelection(.enabled)
-                .foregroundStyle(isUser ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            content
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(isUser ? AnyShapeStyle(Color.accentColor)
+                .background(isUser ? AnyShapeStyle(Color.brand)
                                    : AnyShapeStyle(Color(nsColor: .controlBackgroundColor)),
                             in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
@@ -452,8 +496,31 @@ private struct BubbleRow: View {
                             .stroke(.quaternary, lineWidth: 1)
                     }
                 }
+                .floatingShadow()
+                .contextMenu {
+                    Button { copy() } label: { Label("Copy", systemImage: "doc.on.doc") }
+                }
             if !isUser { Spacer(minLength: 48) }
         }
+    }
+
+    /// User text stays plain (white on the brand bubble); assistant text renders
+    /// Markdown (inline styling + fenced code panels) and is width-capped so long
+    /// agent output stays readable on a wide window.
+    @ViewBuilder private var content: some View {
+        if isUser {
+            Text(message.text)
+                .textSelection(.enabled)
+                .foregroundStyle(.white)
+        } else {
+            MarkdownMessage(text: message.text)
+                .frame(maxWidth: 640, alignment: .leading)
+        }
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.text, forType: .string)
     }
 
     private var meta: some View {
@@ -468,13 +535,13 @@ private struct BubbleRow: View {
 
     private var copyButton: some View {
         Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(message.text, forType: .string)
+            copy()
         } label: {
             Image(systemName: "doc.on.doc")
         }
         .buttonStyle(.borderless)
         .help("Copy message")
+        .accessibilityLabel("Copy message")
     }
 }
 

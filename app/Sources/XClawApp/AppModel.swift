@@ -2,6 +2,34 @@ import Foundation
 import Observation
 import XClawCore
 
+/// UI-facing core lifecycle state. Mirrors `CoreSupervisor.State` plus the two
+/// app-level conditions the supervisor doesn't model (`needsConfig`, `preview`),
+/// so views switch on a closed set instead of comparing magic strings.
+enum CoreUIState: Equatable {
+    case stopped
+    case starting
+    case restarting
+    case needsConfig
+    case preview
+    case running(pid: Int)
+    case failed(String)
+    case error(String)
+
+    /// Human-readable status used as the subtitle fallback.
+    var display: String {
+        switch self {
+        case .stopped: return "stopped"
+        case .starting: return "starting"
+        case .restarting: return "restarting"
+        case .needsConfig: return "needs configuration"
+        case .preview: return "running (preview)"
+        case .running(let pid): return "running (pid \(pid))"
+        case .failed: return "failed"
+        case .error: return "error"
+        }
+    }
+}
+
 /// Central app state: owns the CoreSupervisor (xclawd lifecycle) and the
 /// ControlClient (the bus), folds the inbound event stream into an AppState on
 /// the main actor, and exposes everything the SwiftUI views render. The XClaw
@@ -10,7 +38,7 @@ import XClawCore
 @Observable
 final class AppModel {
     // Surfaced to the UI.
-    var coreState: String = "stopped"
+    var coreState: CoreUIState = .stopped
     var connected: Bool = false
     var bots: [AppState.BotView] = []
     var selectedBotID: String?
@@ -61,7 +89,7 @@ final class AppModel {
                 BotConfig(id: "research", apiURL: "https://octo.acme.example"),
             ]
             connected = true
-            coreState = "running (preview)"
+            coreState = .preview
             publishBots()
             selectedBotID = "main"
             return
@@ -69,14 +97,14 @@ final class AppModel {
 #endif
 
         guard let bin = CorePaths.resolveBinary() else {
-            coreState = "error"
+            coreState = .error("xclawd binary not found")
             lastError = "xclawd binary not found (set XCLAWD_BIN or build core)"
             return
         }
 
         let useConfig = CorePaths.configExists
         if !useConfig {
-            coreState = "needs-config"
+            coreState = .needsConfig
             lastError = "No config at \(CorePaths.configPath). Create it (see config.example.json) to run bots."
             return
         }
@@ -106,7 +134,7 @@ final class AppModel {
             Task { await sup.stop() }
         }
         supervisor = nil
-        coreState = "stopped"
+        coreState = .stopped
     }
 
     /// Tears down the bus connection + background tasks (shared by stop/restart).
@@ -132,7 +160,7 @@ final class AppModel {
     /// socket — leaving the GUI unable to reconnect.
     func restartCore() {
         teardownBus()
-        coreState = "restarting"
+        coreState = .restarting
         let old = supervisor
         supervisor = nil
         Task { @MainActor in
@@ -172,16 +200,16 @@ final class AppModel {
     private func applyCoreState(_ st: CoreSupervisor.State) {
         switch st {
         case .stopped:
-            coreState = "stopped"
+            coreState = .stopped
             connected = false
         case .starting:
-            coreState = "starting"
+            coreState = .starting
         case .running(let pid):
-            coreState = "running (pid \(pid))"
+            coreState = .running(pid: Int(pid))
             // The daemon needs a moment to bind the socket; connect with retry.
             connectWithRetry()
         case .restarting(let err):
-            coreState = "restarting"
+            coreState = .restarting
             lastError = err
             connected = false
             // Drop the stale connection; reconnect after the new daemon is up.
@@ -190,7 +218,7 @@ final class AppModel {
             client?.disconnect()
             client = nil
         case .failed(let reason):
-            coreState = "failed"
+            coreState = .failed(reason)
             lastError = reason
             connected = false
             consumeTask?.cancel()
@@ -291,7 +319,10 @@ final class AppModel {
         pollTask?.cancel()
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
+                // The core pushes `bot.status` broadcasts on every change, so this
+                // is only a slow reconciliation fallback (missed pushes / clock
+                // drift) — not the primary update path.
+                try? await Task.sleep(for: .seconds(15))
                 guard let self, self.client === c else { return }
                 _ = try? c.send(type: "bots.list", body: [String: String]())
             }

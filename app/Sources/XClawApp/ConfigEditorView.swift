@@ -33,6 +33,13 @@ struct ConfigEditorView: View {
                                 .foregroundStyle(.tint)
                         }
                         .tag(bot.rowID)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                let rid = bot.rowID
+                                config.remove(rowID: rid)
+                                if selection == rid { selection = config.bots.first?.rowID }
+                            } label: { Label("Remove Bot", systemImage: "trash") }
+                        }
                     }
                     .onDelete { idx in
                         let ids = idx.map { config.bots[$0].rowID }
@@ -48,6 +55,7 @@ struct ConfigEditorView: View {
                         selection = config.bots.last?.rowID
                     } label: { Image(systemName: "plus") }
                     .help("Add a bot")
+                    .accessibilityLabel("Add a bot")
                 }
             }
         } detail: {
@@ -259,6 +267,7 @@ private struct RevealableSecureField: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .help(revealed ? "Hide" : "Reveal")
+            .accessibilityLabel(revealed ? "Hide value" : "Reveal value")
         }
     }
 }
@@ -278,7 +287,7 @@ private struct EnvEditor: View {
                     TextField("KEY", text: $row.key)
                         .labelsHidden()
                         .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: 180)
+                        .frame(minWidth: 120, maxWidth: 200)
                         .onChange(of: row.key) { sync() }
                     Text("=").foregroundStyle(.secondary)
                     SecureField("value", text: $row.value)
@@ -289,6 +298,7 @@ private struct EnvEditor: View {
                         sync()
                     } label: { Image(systemName: "minus.circle") }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove variable")
                 }
             }
             Button {

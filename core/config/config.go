@@ -29,6 +29,11 @@ type AgentConfig struct {
 	// through the gateway. Owner-gated create/delete is exposed over the control
 	// bus (cron.create / cron.list / cron.delete).
 	Cron bool `json:"cron,omitempty"`
+	// ToolProgress, when true, makes the IM connector mirror each tool the agent
+	// invokes back to the channel as a brief "🔧 Running <tool>(<params>)…" notice
+	// (consecutive dups collapsed, capped per turn). Off by default — opt-in.
+	// Ported from cc-channel-octo `sdk.toolProgress` (src/config.ts, src/index.ts).
+	ToolProgress bool `json:"toolProgress,omitempty"`
 }
 
 // RateLimitConfig mirrors the on-disk rateLimit block.
@@ -282,10 +287,13 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src.GatewayToken != "" {
 		dst.GatewayToken = src.GatewayToken
 	}
-	// Cron is a capability switch: a true at either the global or per-bot layer
-	// enables it (consistent with the other fields' "non-zero overrides" merge).
+	// Capability switches: a true at either the global or per-bot layer enables
+	// it (consistent with the other fields' "non-zero overrides" merge).
 	if src.Cron {
 		dst.Cron = true
+	}
+	if src.ToolProgress {
+		dst.ToolProgress = true
 	}
 	// env merges per-key (global base + per-bot overrides/additions), not whole
 	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a

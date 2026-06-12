@@ -7,7 +7,9 @@
     "gatewayBaseUrl": "https://your-model-gateway.example/v1",
     "gatewayToken": "sk-your-gateway-token",
     "_comment_cron": "Set cron=true to enable per-bot scheduled tasks (#115): owner-gated cron.create/list/delete over the control bus, fired through the gateway. Off by default.",
-    "cron": false
+    "cron": false,
+    "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief '🔧 Running <tool>(<params>)…' notice (deduped, capped at 10/turn). Off by default.",
+    "toolProgress": false
   },
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },

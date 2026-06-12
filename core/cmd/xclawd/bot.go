@@ -224,6 +224,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// The Octo token is read lazily; it may arrive via secret.inject after start,
 	// so an empty token here is allowed (the connector waits for it).
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
+	connector.SetToolProgress(cfg.Agent.ToolProgress)
 
 	// Persona clone (openclaw OBO): when onBehalfOf is configured, the connector
 	// widens its trigger gate + routes replies as the grantor, and the gateway

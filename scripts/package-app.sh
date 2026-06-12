@@ -11,6 +11,9 @@
 #   XCLAW_NOTARY_PROFILE  notarytool keychain profile (requires signing)
 #   XCLAW_VERSION         CFBundleShortVersionString (default 0.1.0)
 #   XCLAW_UNIVERSAL=true  build a universal (arm64 + x86_64) xclawd + app
+#   XCLAW_KEEP_BUNDLE=true  keep the unpacked output/XClaw.app (default: remove
+#                           it after zipping so it doesn't register with
+#                           LaunchServices as a duplicate of the installed app)
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -26,6 +29,7 @@ build_number="${XCLAW_BUILD_NUMBER:-$(git -C "$repo_root" rev-list --count HEAD 
 sign_identity="${XCLAW_SIGN_IDENTITY:-}"
 notary_profile="${XCLAW_NOTARY_PROFILE:-}"
 universal="${XCLAW_UNIVERSAL:-false}"
+keep_bundle="${XCLAW_KEEP_BUNDLE:-false}"
 
 out_dir="$repo_root/output"
 bundle_dir="$out_dir/$app_name.app"
@@ -136,9 +140,22 @@ else
     echo "  (create-dmg not installed — skipping DMG; install with: brew install create-dmg)"
 fi
 
+# --- clean up the staged bundle so it doesn't register as a duplicate app ---
+# The distributable artifacts are the .zip (and .dmg). The unpacked bundle left
+# in output/ otherwise registers with LaunchServices under the same bundle id as
+# the installed /Applications/XClaw.app, surfacing as a duplicate in Spotlight /
+# Launchpad / "Open With". Remove it (and drop its LS registration) by default;
+# set XCLAW_KEEP_BUNDLE=true to keep it for direct local testing.
+if [[ "$keep_bundle" != "true" ]]; then
+    lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    [[ -x "$lsregister" ]] && "$lsregister" -u "$bundle_dir" >/dev/null 2>&1 || true
+    rm -rf "$bundle_dir"
+fi
+
 echo
 echo "✓ packaged:"
-echo "  bundle: $bundle_dir"
+[[ -d "$bundle_dir" ]] && echo "  bundle: $bundle_dir"
 echo "  zip:    $zip_path"
 [[ -f "$dmg_path" ]] && echo "  dmg:    $dmg_path"
+[[ "$keep_bundle" != "true" ]] && echo "  (staged bundle removed to avoid a duplicate registration; set XCLAW_KEEP_BUNDLE=true to keep it)"
 [[ -z "$sign_identity" ]] && echo "  (ad-hoc signed — for distribution set XCLAW_SIGN_IDENTITY + XCLAW_NOTARY_PROFILE)"

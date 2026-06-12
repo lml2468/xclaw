@@ -1,48 +1,59 @@
 #!/bin/zsh
-# Generates app/Packaging/AppIcon.icns from a programmatic master image:
-# a graphite rounded-rect with a blue chat-bubbles glyph (XClaw mark).
-# Re-run if the mark changes. Requires macOS (AppKit + sips + iconutil).
+# Generates app/Packaging/AppIcon.icns from the brand source image
+# app/Packaging/Octo.png, fitted onto the native macOS icon grid: an 824×824
+# squircle centered in a 1024 canvas (≈100 px margin) with a subtle contact
+# shadow, so it sits naturally among other Dock/Launchpad icons.
+# Re-run if Octo.png changes. Requires macOS (AppKit + sips + iconutil).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
 master="$work/icon_1024.png"
+source_img="$here/Octo.png"
 
-swift - "$master" <<'SWIFT'
+[ -f "$source_img" ] || { echo "missing $source_img" >&2; exit 1; }
+
+swift - "$master" "$source_img" <<'SWIFT'
 import AppKit
 
 let size: CGFloat = 1024
 let outPath = CommandLine.arguments[1]
+let srcPath = CommandLine.arguments[2]
 
-func tintedSymbol(_ name: String, pt: CGFloat, color: NSColor) -> NSImage? {
-    let cfg = NSImage.SymbolConfiguration(pointSize: pt, weight: .semibold)
-    guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-        .withSymbolConfiguration(cfg) else { return nil }
-    let s = base.size
-    let out = NSImage(size: s)
-    out.lockFocus()
-    base.draw(in: NSRect(origin: .zero, size: s))
-    color.set()
-    NSRect(origin: .zero, size: s).fill(using: .sourceAtop)
-    out.unlockFocus()
-    return out
+guard let src = NSImage(contentsOfFile: srcPath) else {
+    FileHandle.standardError.write(Data("cannot load source image\n".utf8)); exit(1)
 }
 
 let img = NSImage(size: NSSize(width: size, height: size))
 img.lockFocus()
-let rect = NSRect(x: 0, y: 0, width: size, height: size)
-// macOS masks app icons to a squircle; a rounded rect reads well at all sizes.
-let bg = NSBezierPath(roundedRect: rect, xRadius: size * 0.225, yRadius: size * 0.225)
-let grad = NSGradient(starting: NSColor(srgbRed: 0.20, green: 0.22, blue: 0.27, alpha: 1),
-                      ending: NSColor(srgbRed: 0.10, green: 0.11, blue: 0.14, alpha: 1))!
-grad.draw(in: bg, angle: -90)
+let ctx = NSGraphicsContext.current!
+ctx.imageInterpolation = .high
 
-if let glyph = tintedSymbol("bubble.left.and.bubble.right.fill",
-                            pt: size * 0.5,
-                            color: NSColor(srgbRed: 0.30, green: 0.66, blue: 1.0, alpha: 1)) {
-    let gs = glyph.size
-    let origin = NSPoint(x: (size - gs.width) / 2, y: (size - gs.height) / 2)
-    glyph.draw(in: NSRect(origin: origin, size: gs), from: .zero, operation: .sourceOver, fraction: 1)
-}
+// Apple icon grid: an 824×824 rounded-rect centered in the 1024 canvas, leaving
+// a ~100 px transparent margin on each side. Corner radius ratio matches the
+// system squircle (≈0.2247 of the side).
+let inset: CGFloat = 100
+let container = NSRect(x: inset, y: inset, width: size - 2*inset, height: size - 2*inset)
+let radius = container.width * 0.2247
+let squircle = NSBezierPath(roundedRect: container, xRadius: radius, yRadius: radius)
+
+// Subtle contact shadow under the squircle (Finder/Launchpad render the icon on
+// light backgrounds where the Dock's own shadow isn't applied).
+NSGraphicsContext.saveGraphicsState()
+let shadow = NSShadow()
+shadow.shadowColor = NSColor.black.withAlphaComponent(0.20)
+shadow.shadowOffset = NSSize(width: 0, height: -8)   // y-up canvas: negative = downward
+shadow.shadowBlurRadius = 22
+shadow.set()
+NSColor.black.setFill()
+squircle.fill()
+NSGraphicsContext.restoreGraphicsState()
+
+// Clip to the squircle and draw the brand image edge-to-edge inside it.
+NSGraphicsContext.saveGraphicsState()
+squircle.addClip()
+src.draw(in: container, from: .zero, operation: .sourceOver, fraction: 1.0)
+NSGraphicsContext.restoreGraphicsState()
+
 img.unlockFocus()
 
 guard let tiff = img.tiffRepresentation,

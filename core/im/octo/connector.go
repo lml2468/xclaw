@@ -12,6 +12,7 @@ import (
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safety"
 )
 
 // Connector wires the Octo IM platform to the gateway: it registers the bot,
@@ -160,6 +161,25 @@ func (c *Connector) SetToolProgress(on bool) {
 // Connector-is-Sink-of-Gateway cycle).
 func (c *Connector) SetGateway(g *gateway.Gateway) { c.gateway = g }
 
+// MediaAuth returns the gateway hook that host-scopes the bot token on inbound
+// media downloads: the Bearer token is sent only while the current hop is
+// same-host as apiUrl, so a redirect to another host drops the credential
+// (inbound.ts S1 per-hop Authorization scoping). Wire it via
+// gateway.WithMediaAuth so the gateway can authenticate same-host media without
+// embedding an IM-specific token.
+func (c *Connector) MediaAuth() gateway.MediaAuth {
+	return func(rawURL string) string {
+		if !isSameHost(rawURL, c.rest.APIURL()) {
+			return ""
+		}
+		tok := c.rest.Token()
+		if tok == "" {
+			return ""
+		}
+		return "Bearer " + tok
+	}
+}
+
 // Run registers the bot and maintains the socket connection with reconnect
 // until ctx is cancelled. The initial registration is retried with backoff so a
 // transient API outage at startup doesn't kill the bot.
@@ -297,7 +317,9 @@ func (c *Connector) heartbeatLoop(ctx context.Context) {
 
 // onInbound maps a decoded BotMessage to a router.InboundMessage and feeds the
 // gateway. Drops the bot's own messages and streaming partials; every other
-// payload type is rendered to text by ResolveContent (content.go).
+// payload type is rendered to LLM-facing text by ResolveContent (content.go),
+// and image/file payloads also surface media Attachments the gateway
+// materializes into the session cwd (inbound.ts G1).
 //
 // Persona-clone path (openclaw OBO, inbound.ts): when this connector is a
 // persona clone, the group trigger gate is widened (an @grantor / @所有人
@@ -364,6 +386,7 @@ func (c *Connector) onInbound(m BotMessage) {
 		ChannelID:   m.ChannelID,
 		ChannelType: chType,
 		Text:        baseText,
+		Attachments: c.resolveAttachments(m.Payload),
 		Mentioned:   triggered,
 	}
 	key, err := inbound.SessionKey()
@@ -450,6 +473,33 @@ func (c *Connector) sendReadReceipt(m BotMessage) {
 			c.logf("read receipt for %s: %v", m.MessageID, err)
 		}
 	}()
+}
+
+// resolveAttachments extracts downloadable media/file attachments from a payload
+// (image/GIF/file). LLM-facing text rendering is handled by ResolveContent
+// (content.go); this only surfaces the URLs the gateway materializes into the
+// session cwd. Media URLs are host-validated via buildMediaURL (inbound.ts G1).
+func (c *Connector) resolveAttachments(p MessagePayload) []router.Attachment {
+	apiURL := c.rest.APIURL()
+	switch p.Type {
+	case MsgImage, MsgGIF:
+		full := buildMediaURL(p.URL, apiURL)
+		if full == "" {
+			return nil
+		}
+		return []router.Attachment{{Kind: router.AttachmentImage, URL: full}}
+	case MsgFile:
+		// SECURITY: p.Name is user-controlled; sanitize before it flows into the
+		// <file_content name="…"> attribute the gateway writes.
+		filename := safety.SanitizeDisplayName(p.Name, "未知文件")
+		full := buildMediaURL(p.URL, apiURL)
+		if full == "" {
+			return nil
+		}
+		return []router.Attachment{{Kind: router.AttachmentFile, URL: full, Name: filename, Size: p.Size}}
+	default:
+		return nil // Voice/Video/Location/etc. carry no downloadable attachment
+	}
 }
 
 // --- gateway.Sink ---

@@ -40,8 +40,9 @@ func NewRESTClient(apiURL string, token func() string) *RESTClient {
 // decide whether a token has been injected yet).
 func (c *RESTClient) Token() string { return c.token() }
 
-// APIURL returns the configured API base (trailing slash stripped). Used by the
-// connector to resolve relative media storage paths against the bot host.
+// APIURL returns the (trailing-slash-stripped) base API URL. The connector uses
+// it to resolve relative media paths and to host-scope the bot token on inbound
+// media downloads.
 func (c *RESTClient) APIURL() string { return c.apiURL }
 
 // RegisterResponse mirrors BotRegisterResp (types.ts) — all six fields.

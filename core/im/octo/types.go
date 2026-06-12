@@ -57,6 +57,7 @@ type MessagePayload struct {
 	Content string   // string `content` (Text et al.); empty for array content
 	URL     string   // media storage path / URL
 	Name    string   // file name / card name
+	Size    int64    // server-reported byte size (File payloads)
 	UID     string   // card uid (types.ts Card payload)
 	Plain   string   // RichText server-authoritative plain text
 	Mention *Mention // @-mention payload
@@ -95,6 +96,7 @@ type payloadWire struct {
 	Content   json.RawMessage  `json:"content"`
 	URL       string           `json:"url"`
 	Name      string           `json:"name"`
+	Size      int64            `json:"size"`
 	UID       string           `json:"uid"`
 	Plain     string           `json:"plain"`
 	Mention   *Mention         `json:"mention"`
@@ -127,6 +129,7 @@ func (p *MessagePayload) UnmarshalJSON(b []byte) error {
 		Type:      w.Type,
 		URL:       w.URL,
 		Name:      w.Name,
+		Size:      w.Size,
 		UID:       w.UID,
 		Plain:     w.Plain,
 		Mention:   w.Mention,

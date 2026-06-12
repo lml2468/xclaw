@@ -66,6 +66,13 @@ type Gateway struct {
 	// turn runs in cwdBase/<hash>, with auto-memory under memoryBase/<hash> and
 	// operator skills symlinked in. Empty cwdBase = no isolation (inherit proc).
 	cwdBase, memoryBase, skillsDir, globalSkillsDir string
+	// mediaAuth, when set, supplies the Authorization header for an inbound-media
+	// download URL (scoped to the IM's apiUrl host). Set via WithMediaAuth by the
+	// IM connector; keeps the gateway IM-agnostic (it never embeds a token).
+	mediaAuth MediaAuth
+	// assertPublic overrides the media-download SSRF guard (defaults to
+	// config.AssertPublicURL). Test seam only — production never sets it.
+	assertPublic func(ctx context.Context, rawURL string) error
 }
 
 // New constructs a Gateway.
@@ -142,6 +149,15 @@ func (g *Gateway) WithSandbox(cwdBase, memoryBase, skillsDir, globalSkillsDir st
 	g.memoryBase = memoryBase
 	g.skillsDir = skillsDir
 	g.globalSkillsDir = globalSkillsDir
+	return g
+}
+
+// WithMediaAuth sets the hook that scopes the IM credential per inbound-media
+// download URL (see MediaAuth). Without it, downloads carry no Authorization
+// header — fine for public CDN media, but same-host authenticated media won't
+// fetch.
+func (g *Gateway) WithMediaAuth(fn MediaAuth) *Gateway {
+	g.mediaAuth = fn
 	return g
 }
 
@@ -245,6 +261,16 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	var rosterPrefix string
 	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
 		rosterPrefix = g.groups.MemberListPrefix(msg.ChannelID)
+	}
+
+	// Materialize inbound media/file attachments now that the session cwd is
+	// known but before driver.Query (inbound.ts G1/G2 + media-inbound.ts #86):
+	// images download into <cwd>/.xclaw-media for the Read tool; small text files
+	// inline as a base64 <file_content> block. The returned hint/blocks go into
+	// THIS turn's prompt ONLY — never the stored history (already persisted as the
+	// original text above), so it can't accumulate stale paths or inlined bodies.
+	if media := g.materializeAttachments(ctx, cwd, msg.Attachments); media != "" {
+		prompt += media
 	}
 
 	events, err := g.driver.Query(ctx, agent.Request{

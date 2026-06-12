@@ -179,7 +179,13 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	}
 	defer st.Close()
 
-	rt := router.New(router.Config{MaxPerMinute: cfg.RateLimit.MaxPerMinute})
+	rt := router.New(router.Config{
+		MaxPerMinute:      cfg.RateLimit.MaxPerMinute,
+		MentionFreeGroups: cfg.MentionFreeGroups,
+		KnownBotUids:      cfg.KnownBotUids,
+		AllowedBotUids:    cfg.AllowedBotUids,
+		BotBlocklist:      cfg.BotBlocklist,
+	})
 
 	// Periodic reaper: enforce the session/sandbox TTLs and bound the router's
 	// per-session maps over the daemon's lifetime (a one-shot startup sweep would
@@ -225,6 +231,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// so an empty token here is allowed (the connector waits for it).
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
 	connector.SetToolProgress(cfg.Agent.ToolProgress)
+	connector.SetMentionFreeGroups(cfg.MentionFreeGroups)
 
 	// Persona clone (openclaw OBO): when onBehalfOf is configured, the connector
 	// widens its trigger gate + routes replies as the grantor, and the gateway

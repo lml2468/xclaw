@@ -291,3 +291,65 @@ func TestNoOnBehalfOfIsRegularBot(t *testing.T) {
 		t.Fatalf("regular bot must have empty grantor uid: %+v", bots[0].OnBehalfOf)
 	}
 }
+
+// TestGatingFieldsResolution verifies the G12/G14/blocklist gating lists resolve
+// with override-replaces-default precedence: a bot inheriting the top-level
+// default, and a bot whose per-bot value replaces it (including clearing it with
+// an empty array).
+func TestGatingFieldsResolution(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{
+	  "apiUrl":"https://octo.example",
+	  "mentionFreeGroups":["g-global"],
+	  "knownBotUids":["kb1"],
+	  "allowedBotUids":["ab1"],
+	  "botBlocklist":["bad1"],
+	  "bots":[
+	    {"id":"inherit","octoToken":"bf_a"},
+	    {"id":"override","octoToken":"bf_b",
+	     "mentionFreeGroups":["g-bot"],
+	     "knownBotUids":[],
+	     "botBlocklist":["bad2","bad3"]}
+	  ]
+	}`)
+
+	bots, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	byID := map[string]Resolved{}
+	for _, b := range bots {
+		byID[b.BotID] = b
+	}
+	in, ov := byID["inherit"], byID["override"]
+
+	// inherit: every list comes from the top-level default.
+	if len(in.MentionFreeGroups) != 1 || in.MentionFreeGroups[0] != "g-global" {
+		t.Fatalf("inherit mentionFreeGroups = %v, want [g-global]", in.MentionFreeGroups)
+	}
+	if len(in.KnownBotUids) != 1 || in.KnownBotUids[0] != "kb1" {
+		t.Fatalf("inherit knownBotUids = %v, want [kb1]", in.KnownBotUids)
+	}
+	if len(in.AllowedBotUids) != 1 || in.AllowedBotUids[0] != "ab1" {
+		t.Fatalf("inherit allowedBotUids = %v, want [ab1]", in.AllowedBotUids)
+	}
+	if len(in.BotBlocklist) != 1 || in.BotBlocklist[0] != "bad1" {
+		t.Fatalf("inherit botBlocklist = %v, want [bad1]", in.BotBlocklist)
+	}
+
+	// override: per-bot value replaces default; an explicit [] clears it; an
+	// omitted field (allowedBotUids) still inherits the default.
+	if len(ov.MentionFreeGroups) != 1 || ov.MentionFreeGroups[0] != "g-bot" {
+		t.Fatalf("override mentionFreeGroups = %v, want [g-bot]", ov.MentionFreeGroups)
+	}
+	if len(ov.KnownBotUids) != 0 {
+		t.Fatalf("override knownBotUids = %v, want [] (explicit clear)", ov.KnownBotUids)
+	}
+	if len(ov.AllowedBotUids) != 1 || ov.AllowedBotUids[0] != "ab1" {
+		t.Fatalf("override allowedBotUids = %v, want inherited [ab1]", ov.AllowedBotUids)
+	}
+	if len(ov.BotBlocklist) != 2 {
+		t.Fatalf("override botBlocklist = %v, want [bad2 bad3]", ov.BotBlocklist)
+	}
+}

@@ -80,6 +80,15 @@ type BotEntry struct {
 	GroupConfigDir string `json:"groupConfigDir,omitempty"`
 	// OnBehalfOf, when its uid is set, marks this bot a persona clone (openclaw OBO).
 	OnBehalfOf *OnBehalfOf `json:"onBehalfOf,omitempty"`
+
+	// Gating overrides (cc-channel-octo session-router.ts: G12 mention-free
+	// groups, G14 bot-loop guard, DM blocklist). When non-nil, the slice REPLACES
+	// the top-level default of the same name (override ?? base), matching the
+	// reference's resolveBotConfigs precedence.
+	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
+	KnownBotUids      []string `json:"knownBotUids,omitempty"`
+	AllowedBotUids    []string `json:"allowedBotUids,omitempty"`
+	BotBlocklist      []string `json:"botBlocklist,omitempty"`
 }
 
 // File is the on-disk shape of the single ~/.xclaw/config.json. The top-level
@@ -91,7 +100,14 @@ type File struct {
 	RateLimit      *RateLimitConfig `json:"rateLimit,omitempty"`
 	Context        *ContextConfig   `json:"context,omitempty"`
 	GroupConfigDir string           `json:"groupConfigDir,omitempty"`
-	Bots           []BotEntry       `json:"bots,omitempty"`
+
+	// Top-level gating defaults; a bots[] entry may override each (override ?? base).
+	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
+	KnownBotUids      []string `json:"knownBotUids,omitempty"`
+	AllowedBotUids    []string `json:"allowedBotUids,omitempty"`
+	BotBlocklist      []string `json:"botBlocklist,omitempty"`
+
+	Bots []BotEntry `json:"bots,omitempty"`
 }
 
 // Resolved is a single bot's fully-resolved, ready-to-run configuration.
@@ -103,6 +119,12 @@ type Resolved struct {
 	Agent     AgentConfig
 	RateLimit RateLimitConfig
 	Context   ContextConfig
+
+	// Gating policy ported from cc-channel-octo session-router.ts.
+	MentionFreeGroups []string // channel ids the bot answers without an @mention (G12)
+	KnownBotUids      []string // uids known to be bots, for the loop guard (G14)
+	AllowedBotUids    []string // bot-looking uids exempt from the loop guard (G14)
+	BotBlocklist      []string // uids whose DMs are silently dropped
 
 	// SystemPrompt is the operator-trusted persona/behavior prompt, assembled
 	// from SOUL.md + AGENTS.md in the bot dir (not from config).
@@ -231,6 +253,13 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		mergeCtx(&r.Context, global.Context)
 		mergeCtx(&r.Context, bot.Context)
 
+		// Gating lists: per-bot REPLACES top-level when non-nil (override ?? base),
+		// matching session-router.ts resolveBotConfigs.
+		r.MentionFreeGroups = firstNonNil(bot.MentionFreeGroups, global.MentionFreeGroups)
+		r.KnownBotUids = firstNonNil(bot.KnownBotUids, global.KnownBotUids)
+		r.AllowedBotUids = firstNonNil(bot.AllowedBotUids, global.AllowedBotUids)
+		r.BotBlocklist = firstNonNil(bot.BotBlocklist, global.BotBlocklist)
+
 		// System prompt: SOUL.md (identity) + AGENTS.md (behavior), file-based.
 		r.SystemPrompt = soul(botRoot)
 
@@ -272,6 +301,16 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// firstNonNil returns override when it is non-nil (including a deliberately empty
+// slice, which clears the default), else base. Mirrors the reference's
+// `override ?? base` precedence for the gating lists.
+func firstNonNil(override, base []string) []string {
+	if override != nil {
+		return override
+	}
+	return base
 }
 
 func mergeAgent(dst *AgentConfig, src *AgentConfig) {

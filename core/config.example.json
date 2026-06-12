@@ -26,6 +26,16 @@
         }
       },
       "context": { "maxContextChars": 8000 }
+    },
+    {
+      "id": "admin-clone",
+      "octoToken": "bf_persona_clone_token_here",
+      "_comment_persona": "Persona clone (openclaw OBO): replies in the grantor's voice. Triggered when the grantor is @-mentioned or the group is @所有人. uid is the grantor's server uid (the security anchor — only OBO fields signed by this uid are trusted); name is woven into the persona system prompt; personaPrompt is an optional free-form instruction.",
+      "onBehalfOf": {
+        "uid": "u_admin_grantor_uid",
+        "name": "Admin",
+        "personaPrompt": "Always reply concisely and in English."
+      }
     }
   ]
 }

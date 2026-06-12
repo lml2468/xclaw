@@ -41,6 +41,22 @@ type ContextConfig struct {
 	MaxContextChars int `json:"maxContextChars,omitempty"`
 }
 
+// OnBehalfOf marks a bot as a persona clone: it speaks for a grantor (a human
+// identity), replying in the grantor's voice when the grantor or the group is
+// @-mentioned. Ported from openclaw-channel-octo (config-schema.ts
+// `account.config.onBehalfOf`); cc-channel-octo has no persona clones.
+type OnBehalfOf struct {
+	// UID is the grantor's server-authoritative uid. It is the security anchor:
+	// only OBO v2 fields signed by this uid are trusted (see im/octo OBO relay).
+	UID string `json:"uid,omitempty"`
+	// Name is the grantor's display name woven into the persona instruction;
+	// falls back to UID when empty.
+	Name string `json:"name,omitempty"`
+	// PersonaPrompt is an optional free-form instruction (e.g. "always reply in
+	// English") appended to the persona system prompt. Operator-trusted.
+	PersonaPrompt string `json:"personaPrompt,omitempty"`
+}
+
 // BotEntry is one bot's full inline configuration in the global config's bots[]
 // list. octoToken is OPTIONAL — it may be injected at runtime (secret.inject)
 // instead of stored here; apiUrl/agent/rateLimit/context override the global
@@ -57,6 +73,8 @@ type BotEntry struct {
 	// instruction files (<channelId>.md), injected as a trusted [Group instructions]
 	// block. Overrides the top-level default. MUST be outside CwdBase — see Resolved.
 	GroupConfigDir string `json:"groupConfigDir,omitempty"`
+	// OnBehalfOf, when its uid is set, marks this bot a persona clone (openclaw OBO).
+	OnBehalfOf *OnBehalfOf `json:"onBehalfOf,omitempty"`
 }
 
 // File is the on-disk shape of the single ~/.xclaw/config.json. The top-level
@@ -92,6 +110,10 @@ type Resolved struct {
 	// agent-writable sandbox (else a user-driven agent could write its own future
 	// instructions). Mirrors cc-channel-octo's assertGroupConfigDirOutsideCwd.
 	GroupConfigDir string
+
+	// OnBehalfOf, when its UID is set, marks this bot as a persona clone of the
+	// named grantor (openclaw OBO). nil/empty UID = a regular bot.
+	OnBehalfOf OnBehalfOf
 
 	// Derived per-bot directories (never from file).
 	DataDir         string // ~/.xclaw/<id>/data       — SQLite + state
@@ -209,6 +231,12 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 
 		// Per-bot groupConfigDir overrides the top-level default. Empty = feature off.
 		r.GroupConfigDir = firstNonEmpty(bot.GroupConfigDir, global.GroupConfigDir)
+
+		// Persona clone (openclaw OBO): grantor identity comes from config, not
+		// from message payloads. A nil block leaves r.OnBehalfOf zero (regular bot).
+		if bot.OnBehalfOf != nil {
+			r.OnBehalfOf = *bot.OnBehalfOf
+		}
 
 		// validation. octoToken is intentionally NOT required: it may be omitted
 		// from the file and injected at runtime via the control bus (secret.inject)

@@ -19,6 +19,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/groupmd"
+	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/safety"
 	"github.com/lml2468/xclaw/core/sandbox"
@@ -52,6 +53,13 @@ type Gateway struct {
 	// Operator-trusted system prompt (assembled from SOUL.md + AGENTS.md).
 	// Appended after the non-overridable security prefix.
 	systemPrompt string
+	// Persona-clone grantor (openclaw OBO). When configured, a persona
+	// instruction is injected into the system prompt so the bot replies in the
+	// grantor's voice. Zero value = a regular (non-clone) bot. personaPrompt is
+	// the optional free-form persona instruction appended after the synthesized
+	// group hint.
+	persona       persona.Grantor
+	personaPrompt string
 	// Optional model override passed to the driver (empty = driver default).
 	model string
 	// Per-session sandbox roots (set via WithSandbox). When cwdBase is set, each
@@ -82,6 +90,18 @@ func (g *Gateway) WithGroupMD(l *groupmd.Loader) *Gateway {
 // WithSystemPrompt sets the operator-trusted system prompt (SOUL.md + AGENTS.md).
 func (g *Gateway) WithSystemPrompt(p string) *Gateway {
 	g.systemPrompt = p
+	return g
+}
+
+// WithPersona marks this gateway as a persona clone of the given grantor
+// (openclaw OBO). When the grantor is configured, buildSystemPrompt injects an
+// operator-trusted persona instruction (the synthesized group hint plus the
+// optional free-form personaPrompt) so the LLM replies in the grantor's voice
+// instead of returning NO_REPLY on a `@grantor` mention. A zero Grantor (no
+// uid) is a no-op (regular bot).
+func (g *Gateway) WithPersona(grantor persona.Grantor, personaPrompt string) *Gateway {
+	g.persona = grantor
+	g.personaPrompt = personaPrompt
 	return g
 }
 
@@ -249,15 +269,17 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 
 // buildSystemPrompt assembles the frozen system-prompt append: the
 // non-overridable security prefix, the operator-trusted SOUL/config prompt,
-// then (for GROUP/thread turns only) the gateway-authored member roster +
-// mention-format hint and the operator-authored [Group instructions] block for
-// this channel. The SecurityPrefix always stays first and non-overridable. (The
-// driver's preset base prompt is prepended by the agent CLI.)
+// then (for GROUP/thread turns) the gateway-authored member roster +
+// mention-format hint, the operator-authored [Group instructions] block for
+// this channel, and (for persona clones) the persona instruction. The
+// SecurityPrefix always stays first and non-overridable. (The driver's preset
+// base prompt is prepended by the agent CLI.)
 //
-// rosterPrefix is "" for DMs and for groups with no learned members; when set it
-// is gateway-authored. [Group instructions] is injected only for groups — DMs
-// key on the peer uid, not a shared channel (mirrors cc-channel-octo index.ts).
-// Both are wrapped as safety.TrustedText, being gateway/operator-authored.
+// rosterPrefix is "" for DMs and for groups with no learned members. [Group
+// instructions] is injected only for groups (cc-channel-octo index.ts). Persona
+// injection mirrors openclaw inbound.ts (synthesized group hint + free-form
+// persona prompt). All are config/gateway-authored (never from message
+// payloads), so each is wrapped as safety.TrustedText after the SecurityPrefix.
 func (g *Gateway) buildSystemPrompt(msg router.InboundMessage, rosterPrefix string) string {
 	parts := []safety.SafeText{safety.TrustedText(safety.SecurityPrefix)}
 	if g.systemPrompt != "" {
@@ -269,6 +291,14 @@ func (g *Gateway) buildSystemPrompt(msg router.InboundMessage, rosterPrefix stri
 	if g.groupMD != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
 		if instr, ok := g.groupMD.Load(msg.ChannelID); ok {
 			parts = append(parts, safety.TrustedText("[Group instructions]\n"+instr))
+		}
+	}
+	if g.persona.Configured() {
+		if p := g.persona.BuildGroupSystemPrompt(); p != "" {
+			parts = append(parts, safety.TrustedText(p))
+		}
+		if h := g.persona.ComposeHint(g.personaPrompt); h != "" {
+			parts = append(parts, safety.TrustedText(h))
 		}
 	}
 	var b strings.Builder

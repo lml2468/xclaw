@@ -155,8 +155,8 @@ private struct CodeBlock: View {
 // MARK: - Octopus brand glyph
 
 /// The XClaw octopus mark as a vector `Shape` (mantle + tentacle skirt, eyes
-/// punched out via even-odd fill). Used as the menu-bar icon so the status item
-/// matches the app icon. Monochrome → templates correctly in the menu bar.
+/// punched out via even-odd fill). Used for in-app glyphs (e.g. the menu-bar
+/// popover header). Monochrome → tints cleanly.
 struct OctopusShape: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()

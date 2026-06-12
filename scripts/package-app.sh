@@ -136,6 +136,25 @@ if command -v create-dmg >/dev/null 2>&1; then
         codesign --force --sign "$sign_identity" --timestamp "$dmg_path"
         [[ -n "$notary_profile" ]] && { xcrun notarytool submit "$dmg_path" --keychain-profile "$notary_profile" --wait; xcrun stapler staple -v "$dmg_path"; }
     fi
+    # create-dmg mounts a temporary staging volume (/Volumes/dmg.XXXXXX) to lay
+    # out the DMG. Even on a clean run it registers the app with LaunchServices
+    # during that brief mount, leaving a phantom /Volumes/dmg.*/XClaw.app entry
+    # behind after it detaches; a failed run can also leave the volume mounted.
+    # Detach any straggler volume, then sweep the LS database for stale staging
+    # registrations and drop them so they never read as a "duplicate" app.
+    lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    for vol in /Volumes/dmg.*(N); do
+        [[ -d "$vol" ]] || continue
+        hdiutil detach "$vol" -force >/dev/null 2>&1 && echo "  detached leftover DMG volume $vol"
+    done
+    if [[ -x "$lsregister" ]]; then
+        "$lsregister" -dump 2>/dev/null \
+            | grep -oE "/Volumes/dmg\.[^ ]*/$app_name\.app" \
+            | sort -u \
+            | while read -r stale; do
+                "$lsregister" -u "$stale" >/dev/null 2>&1 && echo "  unregistered stale $stale"
+            done
+    fi
 else
     echo "  (create-dmg not installed — skipping DMG; install with: brew install create-dmg)"
 fi

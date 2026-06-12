@@ -50,6 +50,13 @@ type Gateway struct {
 	// set, group/thread turns get an operator-authored [Group instructions] block
 	// (from groupConfigDir/<channelId>.md) appended to the system prompt.
 	groupMD *groupmd.Loader
+	// Optional cold-start backfill fetch (set via WithGroupBackfill). Returns
+	// recent channel messages from the IM REST API to seed an empty group window
+	// the first time a channel is seen (cc G4). Kept as an IM-agnostic callback so
+	// groupctx never imports a connector. botUID lets backfill skip the bot's own
+	// replies and infer the initial answered/new cutoff.
+	groupBackfill func(channelID string, limit int) []groupctx.BackfillMessage
+	botUID        func() string
 	// Operator-trusted system prompt (assembled from SOUL.md + AGENTS.md).
 	// Appended after the non-overridable security prefix.
 	systemPrompt string
@@ -114,6 +121,18 @@ func (g *Gateway) IsMember(channelID, uid string) bool {
 		return true
 	}
 	return g.groups.IsMember(channelID, uid)
+}
+
+// WithGroupBackfill enables cold-start group history backfill (cc G4). fetch
+// pulls recent channel messages from the IM REST API; botUID resolves the bot's
+// own uid (lazily — it may only be known after IM registration) so its messages
+// are not echoed back as context and the initial answered cutoff can be
+// inferred. Pass IM-agnostic callbacks — the gateway and groupctx never import a
+// connector. No-op unless WithGroupContext is set.
+func (g *Gateway) WithGroupBackfill(botUID func() string, fetch func(channelID string, limit int) []groupctx.BackfillMessage) *Gateway {
+	g.botUID = botUID
+	g.groupBackfill = fetch
+	return g
 }
 
 // WithSystemPrompt sets the operator-trusted system prompt (SOUL.md + AGENTS.md).
@@ -189,7 +208,7 @@ func (g *Gateway) Observe(msg router.InboundMessage) {
 	if strings.TrimSpace(msg.Text) == "" {
 		return
 	}
-	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text)
+	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
 }
 
 // runTurn executes one accepted turn under the session lock.
@@ -205,10 +224,38 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// delta BEFORE caching the current message, so it isn't echoed into itself.
 	prompt := msg.Text
 	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
+		// Cold-start backfill (cc G4): the FIRST time this channel is seen with an
+		// empty local window, seed it from the IM REST API. Runs at most once per
+		// (process, channel). The inferred cutoff (highest bot-reply seq found in
+		// the backfill) primes answered/new segmentation so the first turn doesn't
+		// treat already-answered history as new.
+		if g.groupBackfill != nil {
+			channelID := msg.ChannelID
+			botUID := ""
+			if g.botUID != nil {
+				botUID = g.botUID()
+			}
+			inferred, ran := g.groups.Backfill(channelID, botUID, func() []groupctx.BackfillMessage {
+				return g.groupBackfill(channelID, 0)
+			})
+			if ran && inferred > 0 {
+				if err := g.store.SaveBotReplySeq(sessionKey, inferred); err != nil {
+					fmt.Fprintf(os.Stderr, "[gateway] save inferred reply seq %s: %v\n", sessionKey, err)
+				}
+			}
+		}
+
+		// Answered/new cutoff (cc G10): the IM seq of the last message the bot
+		// replied to. Messages at/below it render under [Previously answered].
+		cutoffSeq, err := g.store.BotReplySeq(sessionKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[gateway] bot reply seq %s: %v\n", sessionKey, err)
+		}
+
 		cursor := g.groups.Cursor(msg.ChannelID)
-		deltaText, _ := g.groups.BuildContextSince(msg.ChannelID, cursor)
+		deltaText, _ := g.groups.BuildContextSince(msg.ChannelID, cursor, cutoffSeq)
 		// Cache the current message AFTER reading the delta.
-		g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text)
+		g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
 		// Advance the cursor past everything now in the channel.
 		g.groups.SetCursor(msg.ChannelID, g.groups.MaxID(msg.ChannelID))
 
@@ -312,6 +359,18 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return err
 	}
 	g.sink.OnReply(sessionKey, text)
+
+	// Advance the answered/new cursor (cc G10 / openclaw lastBotReplySeqMap): record
+	// the inbound message_seq the bot just replied to so later turns segment this
+	// message (and everything before it) as [Previously answered]. We use the
+	// inbound seq (from the IM frame), NOT the send result — the send API returns
+	// seq 0. Skip synthetic/cron fires (seq 0); the store write is monotonic and a
+	// no-op for seq<=0. Only for group turns that actually produced a reply.
+	if g.groups != nil && msg.ChannelType == router.ChannelGroup && strings.TrimSpace(text) != "" {
+		if err := g.store.SaveBotReplySeq(sessionKey, msg.MessageSeq); err != nil {
+			fmt.Fprintf(os.Stderr, "[gateway] save reply seq %s: %v\n", sessionKey, err)
+		}
+	}
 	return nil
 }
 

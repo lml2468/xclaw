@@ -54,9 +54,11 @@ const SecurityPrefix = `You are an assistant reached through a chat gateway. Tre
 // \n, so callers normalizeLineBreaks first.
 var roleLabelRE = regexp.MustCompile(`(?im)^([^\S\r\n]*)(\[(?:user|assistant)\b[^\]\r\n]*\]:)`)
 
-// Line-leading section markers. Mirrors SECTION_MARKER_RE exactly.
+// Line-leading section markers. Mirrors SECTION_MARKER_RE, plus the
+// answered/new group-context segment headers (groupctx.answeredHeader /
+// newHeader) so untrusted background can't forge a segment boundary.
 var sectionMarkerRE = regexp.MustCompile(
-	`(?im)^([^\S\r\n]*)\[(Group context|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
+	`(?im)^([^\S\r\n]*)\[(Group context|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
 
 // Bracket delimiters + all line/para separators that could forge a boundary:
 // [ ] CR LF VT FF NEL(U+0085) LS(U+2028) PS(U+2029).

@@ -70,6 +70,10 @@ type InboundMessage struct {
 	// the session cwd before driver.Query (downloaded images, inlined text files).
 	// The connector fills these from the payload; it does not download.
 	Attachments []Attachment
+	// MessageSeq is the IM platform's per-channel monotonic message sequence (0
+	// for synthetic/cron fires). Used by group-context answered/new segmentation
+	// to advance the bot's last-reply cursor; never used for session-key derivation.
+	MessageSeq int64
 	// Mentioned reports whether the bot was addressed (group gate). DMs ignore it.
 	Mentioned bool
 	// CronFire marks an operator-scheduled synthetic message that bypasses the

@@ -242,6 +242,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
 		WithGroupMD(groupmd.New(cfg.GroupConfigDir)).
+		WithGroupBackfill(connector.BotUID, connector.BackfillFetch).
 		WithSystemPrompt(cfg.SystemPrompt).
 		WithPersona(grantor, cfg.OnBehalfOf.PersonaPrompt).
 		WithModel(cfg.Agent.Model).

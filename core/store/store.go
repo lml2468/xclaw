@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   updated_at  INTEGER NOT NULL
 );
 
+-- Group answered/new segmentation cursor (cc G10 / openclaw lastBotReplySeqMap):
+-- the IM message_seq of the last group message the bot replied to, keyed by the
+-- group's sessionKey (the channel id). Group context renders messages at or
+-- below this seq under [Previously answered] and newer ones under [New since
+-- your last reply]. Advanced only after a successful reply to a real message.
+CREATE TABLE IF NOT EXISTS group_reply_cursors (
+  session_key TEXT PRIMARY KEY,
+  last_seq    INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 `
 
@@ -200,6 +211,40 @@ func (s *Store) ClearResume(sessionKey string) error {
 	return err
 }
 
+// --- group reply cursor (answered/new segmentation) ---
+
+// BotReplySeq returns the IM message_seq of the last group message the bot
+// replied to for this session key (0 if none / cold start).
+func (s *Store) BotReplySeq(sessionKey string) (int64, error) {
+	var seq int64
+	err := s.db.QueryRow(`SELECT last_seq FROM group_reply_cursors WHERE session_key=?`, sessionKey).Scan(&seq)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("query bot reply seq: %w", err)
+	}
+	return seq, nil
+}
+
+// SaveBotReplySeq advances the bot's last-reply cursor for a session key. The
+// write is monotonic: a lower (or equal) seq is ignored, matching the
+// lastBotReplySeqMap guard in openclaw inbound.ts. seq<=0 (synthetic/cron) is a
+// no-op since those are never "answered".
+func (s *Store) SaveBotReplySeq(sessionKey string, seq int64) error {
+	if seq <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO group_reply_cursors(session_key, last_seq, updated_at)
+		 VALUES(?,?,?)
+		 ON CONFLICT(session_key) DO UPDATE SET last_seq=excluded.last_seq,
+		   updated_at=excluded.updated_at
+		 WHERE excluded.last_seq > group_reply_cursors.last_seq;`,
+		sessionKey, seq, s.now().Unix())
+	return err
+}
+
 // --- maintenance ---
 
 // CleanupExpired deletes sessions (and, via cascade, their messages) plus
@@ -212,6 +257,9 @@ func (s *Store) CleanupExpired(ttl time.Duration) (int, error) {
 		return 0, err
 	}
 	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE updated_at < ?`, cutoff); err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM group_reply_cursors WHERE updated_at < ?`, cutoff); err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()

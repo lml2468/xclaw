@@ -7,11 +7,11 @@ import (
 
 func TestMembersReturnsLearnedSorted(t *testing.T) {
 	gc := New(6000)
-	gc.Push("c1", "u2", "bob", "hi")
-	gc.Push("c1", "u1", "alice", "hey")
+	gc.Push("c1", "u2", "bob", "hi", 1)
+	gc.Push("c1", "u1", "alice", "hey", 2)
 	gc.LearnMember("c1", "u3", "carol")
 	// other channel is isolated
-	gc.Push("c2", "u9", "zoe", "yo")
+	gc.Push("c2", "u9", "zoe", "yo", 1)
 
 	got := gc.Members("c1")
 	if len(got) != 3 {
@@ -42,8 +42,8 @@ func TestMemberListPrefixEmpty(t *testing.T) {
 
 func TestMemberListPrefixInlineSmall(t *testing.T) {
 	gc := New(6000)
-	gc.Push("c1", "u1", "alice", "hi")
-	gc.Push("c1", "u2", "bob", "yo")
+	gc.Push("c1", "u1", "alice", "hi", 1)
+	gc.Push("c1", "u2", "bob", "yo", 2)
 
 	p := gc.MemberListPrefix("c1")
 	if !strings.Contains(p, "[Group Members]") {
@@ -69,7 +69,7 @@ func TestMemberListPrefixLookupHintWhenLarge(t *testing.T) {
 	for i := 0; i < 11; i++ {
 		uid := string(rune('a'+i)) + "id"
 		name := "member" + string(rune('A'+i))
-		gc.Push("c1", uid, name, "hi")
+		gc.Push("c1", uid, name, "hi", int64(i+1))
 	}
 	p := gc.MemberListPrefix("c1")
 	if !strings.Contains(p, "too many to list") {

@@ -247,8 +247,13 @@ func (c *Connector) onInbound(m BotMessage) {
 		return // MVP handles text only
 	}
 
+	// A CommunityTopic (thread / 子区) is group-like for routing: its channel id
+	// is the compound "<groupNo>____<shortId>", so it lands in its OWN session
+	// (distinct from the parent group and sibling threads) while membership and
+	// the mention gate are inherited from the parent group. See thread.go and
+	// openclaw inbound.ts thread routing.
 	chType := router.ChannelDM
-	if m.ChannelType == ChannelGroup {
+	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
 		chType = router.ChannelGroup
 	}
 
@@ -320,6 +325,23 @@ func (c *Connector) target(sessionKey string) (replyTarget, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t, ok := c.targets[sessionKey]
+	if !ok {
+		return t, false
+	}
+	// issue #98 auto-reroute: a thread session's sessionKey is the compound
+	// "<groupNo>____<shortId>" channel id (router maps group/thread sessionKey →
+	// ChannelID). If the stored reply target drifted to the bare parent group of
+	// that thread, send back to the thread so the reply lands in the sub-topic,
+	// not the parent group. See thread.go / openclaw actions.ts. Restricted to
+	// group-like targets so a DM (whose sessionKey/uid is unconstrained and could
+	// in theory contain the separator) is never rewritten into a CommunityTopic.
+	if t.channelType != ChannelDM {
+		if rerouted, did := RerouteTarget(sessionKey, t.channelID); did {
+			c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", sessionKey, t.channelID, rerouted)
+			t.channelID = rerouted
+			t.channelType = ChannelCommunityTopic
+		}
+	}
 	return t, ok
 }
 

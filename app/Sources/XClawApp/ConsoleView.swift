@@ -222,15 +222,6 @@ private struct TranscriptDetail: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            HStack(spacing: 6) {
-                Circle().fill(model.connected ? Color.green : Color.secondary).frame(width: 7, height: 7)
-                Text(model.selectedBotID ?? "XClaw").appFont(.headline)
-                Text("· \(statusSubtitle)").appFont(.caption).foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(model.selectedBotID ?? "XClaw"), \(statusSubtitle)")
-        }
         ToolbarItemGroup(placement: .primaryAction) {
             Button { model.reset() } label: { Image(systemName: "eraser.line.dashed") }
                 .help("Clear this bot's conversation memory")
@@ -238,13 +229,6 @@ private struct TranscriptDetail: View {
             Button { model.restartCore() } label: { Image(systemName: "arrow.clockwise") }
                 .help("Restart the xclawd core process")
                 .accessibilityLabel("Restart core")
-        }
-    }
-
-    private var statusSubtitle: String {
-        switch model.coreState {
-        case .needsConfig: return "needs configuration"
-        default: return model.connected ? "connected" : model.coreState.display
         }
     }
 

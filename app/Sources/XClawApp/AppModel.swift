@@ -61,6 +61,9 @@ final class AppModel {
     /// Bot ids whose transcript history is currently being fetched (drives the
     /// loading skeleton). Cleared when the history response lands.
     var historyLoadingBots: Set<String> = []
+    /// Increments on every coalesced transcript publish — a cheap (O(1)) signal
+    /// the UI observes to follow streamed text without deep-comparing the session.
+    var transcriptTick: Int = 0
 
     /// The selected bot's subtree, derived from the published `bots` tree (which
     /// refreshes at ~30fps during streaming). Computed — no per-token storage.
@@ -432,6 +435,7 @@ final class AppModel {
         flushScheduled = false
         guard rosterDirty || transcriptDirty else { return }
         bots = state.sortedBots
+        if transcriptDirty { transcriptTick &+= 1 }
         if rosterDirty {
             roster = bots.map {
                 BotRosterItem(id: $0.id, connected: $0.connected,

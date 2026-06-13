@@ -185,6 +185,7 @@ private struct TranscriptDetail: View {
     @Bindable var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @State private var draft: String = ""
+    @State private var atBottom: Bool = true
     @FocusState private var composerFocused: Bool
 
     private var currentMessages: [AppState.ChatMessage] { model.currentSession?.messages ?? [] }
@@ -290,7 +291,16 @@ private struct TranscriptDetail: View {
             }
             .scrollContentBackground(.hidden)
             .onChange(of: currentMessages.count) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
-            .onChange(of: model.selectedSessionKey) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: model.selectedSessionKey) { _, _ in
+                atBottom = true
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+            // Follow streamed text only while parked at the bottom — never fights a
+            // user who has scrolled up to read history. Cheap: observes an Int tick
+            // + scroll geometry, not the (heavy) session value. (macOS 15+.)
+            .modifier(StreamingFollow(tick: model.transcriptTick, atBottom: $atBottom) {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            })
         }
     }
 
@@ -498,6 +508,33 @@ struct TypingBubble: View {
         }
         .onReceive(timer) { _ in phase = (phase + 1) % 3 }
         .accessibilityLabel("Agent is replying")
+    }
+}
+
+/// Follows streamed transcript updates by scrolling to the bottom on each tick,
+/// but only while the user is parked near the bottom (tracked via scroll geometry
+/// on macOS 15+). On older macOS it's a no-op (count-based scroll still applies),
+/// so it never fights a user who has scrolled up. Cheap: observes an Int tick +
+/// scroll offset, never the heavy session value.
+private struct StreamingFollow: ViewModifier {
+    let tick: Int
+    @Binding var atBottom: Bool
+    let scrollToBottom: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 120
+                } action: { _, nearBottom in
+                    atBottom = nearBottom
+                }
+                .onChange(of: tick) { _, _ in
+                    if atBottom { scrollToBottom() }
+                }
+        } else {
+            content
+        }
     }
 }
 

@@ -48,10 +48,12 @@ func (d *ClaudeDriver) Capabilities() Capabilities {
 
 func (d *ClaudeDriver) buildArgs(req Request) []string {
 	args := []string{"-p", req.Prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
-	// Headless gateway invariants (claude-only, fixed): grant all tools and
-	// bypass interactive approval — there is no terminal to answer prompts, so
-	// any other permission mode would hang the turn forever.
-	args = append(args, "--allowedTools", "*", "--permission-mode", "bypassPermissions")
+	// Headless gateway invariant (claude-only, fixed): bypass interactive
+	// approval — there is no terminal to answer prompts, so any other permission
+	// mode would hang the turn forever. bypassPermissions grants every tool, so
+	// no --allowedTools is needed (and claude 2.1+ rejects "*" in allow rules,
+	// which only spammed a per-turn warning; verified tools still run without it).
+	args = append(args, "--permission-mode", "bypassPermissions")
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
 	}

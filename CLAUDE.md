@@ -75,10 +75,13 @@ Key invariants to preserve:
   the gateway persists it after a turn and passes it as `Request.SessionID` next
   turn. 7-day TTL on sessions/messages/sandboxes.
 - **ClaudeDriver headless invariants** (`core/agent/claude.go`): always spawns
-  `claude -p --output-format stream-json --verbose --allowedTools * --permission-mode bypassPermissions`.
+  `claude -p --output-format stream-json --verbose --include-partial-messages --permission-mode bypassPermissions`.
   Bypass is mandatory — there is no terminal to answer approval prompts, so any
-  other mode hangs the turn. Tool/permission policy is intentionally NOT in
-  `agent.Request`; it is a fixed claude-only invariant.
+  other mode hangs the turn; it also grants every tool, so no `--allowedTools` is
+  passed (claude 2.1+ rejects `*` in allow rules). `--include-partial-messages`
+  gives token-level streaming: the driver parses `stream_event` deltas and
+  suppresses the duplicate complete block. Tool/permission policy is
+  intentionally NOT in `agent.Request`; it is a fixed claude-only invariant.
 - **Feature modules layered on the pipeline** (each cites its TS source in its
   package doc): `core/cron/` — per-bot scheduled tasks, owner-gated
   `cron.create/list/delete` over the control bus; `core/groupmd/` — operator

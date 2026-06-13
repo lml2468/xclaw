@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,8 +53,9 @@ const (
 	maxFileDownloadBytes = 5 * 1024 * 1024 // MAX_FILE_DOWNLOAD_BYTES
 	inlineFileMaxBytes   = 20 * 1024       // INLINE_FILE_MAX_BYTES
 	maxImagesPerMessage  = 6               // MAX_IMAGES_PER_MESSAGE
-	downloadTimeout      = 30 * time.Second
+	downloadTimeout      = 15 * time.Second
 	maxRedirects         = 10
+	mediaConcurrency     = 4 // max simultaneous attachment downloads per message
 )
 
 // allowedImageTypes maps the content types Claude can natively Read to a file
@@ -104,34 +106,79 @@ var mediaHTTPClient = &http.Client{
 // When cwd is "" (sandbox disabled) images can't be materialized for the Read
 // tool; image attachments are skipped (the text already carries the URL marker).
 // Text-file inlining still works since it doesn't need the cwd.
+//
+// Downloads run concurrently (bounded by mediaConcurrency) so N attachments cost
+// roughly one download's wall time instead of the sum — a slow URL can't serialize
+// the whole turn for downloadTimeout × N before driver.Query. Output order is
+// preserved (results are assembled by attachment index after the fan-out joins).
 func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts []router.Attachment) string {
 	if len(atts) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	var imageRelPaths []string
 
-	for _, att := range atts {
+	// Honor maxImagesPerMessage deterministically by attachment order, decided
+	// up front so concurrency doesn't make the cutoff nondeterministic.
+	doImage := make([]bool, len(atts))
+	imageBudget := 0
+	for i, att := range atts {
+		if att.Kind == router.AttachmentImage && cwd != "" && imageBudget < maxImagesPerMessage {
+			doImage[i] = true
+			imageBudget++
+		}
+	}
+
+	// Per-attachment result, filled concurrently and assembled in order. Each
+	// goroutine writes only its own index, so no shared-write synchronization is
+	// needed beyond the WaitGroup join.
+	type result struct {
+		imageRel  string // non-empty → a downloaded image
+		fileBlock string // non-empty → an inline/description block
+	}
+	results := make([]result, len(atts))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, mediaConcurrency)
+	for i, att := range atts {
 		switch att.Kind {
 		case router.AttachmentImage:
-			if cwd == "" {
-				continue // no sandbox: leave the URL marker in place
-			}
-			if len(imageRelPaths) >= maxImagesPerMessage {
+			if !doImage[i] {
 				continue
 			}
-			rel, err := g.downloadImage(ctx, cwd, att.URL)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[gateway] inbound image skipped: %v\n", err)
-				continue
-			}
-			imageRelPaths = append(imageRelPaths, rel)
 		case router.AttachmentFile:
-			block := g.resolveFile(ctx, cwd, att)
-			if block != "" {
-				b.WriteString("\n")
-				b.WriteString(block)
+			// always handled
+		default:
+			continue
+		}
+		wg.Add(1)
+		go func(i int, att router.Attachment) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			switch att.Kind {
+			case router.AttachmentImage:
+				rel, err := g.downloadImage(ctx, cwd, att.URL)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[gateway] inbound image skipped: %v\n", err)
+					return
+				}
+				results[i].imageRel = rel
+			case router.AttachmentFile:
+				results[i].fileBlock = g.resolveFile(ctx, cwd, att)
 			}
+		}(i, att)
+	}
+	wg.Wait()
+
+	// Assemble in attachment order: file blocks inline; image paths gather into a
+	// single trailing Read hint.
+	var b strings.Builder
+	var imageRelPaths []string
+	for i := range results {
+		if results[i].fileBlock != "" {
+			b.WriteString("\n")
+			b.WriteString(results[i].fileBlock)
+		} else if results[i].imageRel != "" {
+			imageRelPaths = append(imageRelPaths, results[i].imageRel)
 		}
 	}
 

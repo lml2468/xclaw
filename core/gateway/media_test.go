@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/store"
@@ -139,6 +140,37 @@ func TestMaterializeImage_NoCwdSkips(t *testing.T) {
 	atts := []router.Attachment{{Kind: router.AttachmentImage, URL: "https://example.com/x.png"}}
 	if hint := g.materializeAttachments(context.Background(), "", atts); hint != "" {
 		t.Fatalf("no-cwd should skip images, got %q", hint)
+	}
+}
+
+// TestMaterialize_DownloadsConcurrently proves the async fix: N slow downloads
+// complete in ~one delay (parallel) rather than N×delay (the old sequential path
+// that could block the turn for downloadTimeout × N before driver.Query).
+func TestMaterialize_DownloadsConcurrently(t *testing.T) {
+	const delay = 200 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngBytes)
+	}))
+	defer srv.Close()
+
+	cwd := t.TempDir()
+	g := testGW()
+	var atts []router.Attachment
+	for i := 0; i < mediaConcurrency; i++ { // all run at once under the bound
+		atts = append(atts, router.Attachment{Kind: router.AttachmentImage, URL: fmt.Sprintf("%s/%d", srv.URL, i)})
+	}
+	start := time.Now()
+	g.materializeAttachments(context.Background(), cwd, atts)
+	elapsed := time.Since(start)
+	// Sequential would be ~mediaConcurrency*delay; concurrent should be ~1*delay.
+	if elapsed > 3*delay {
+		t.Fatalf("downloads not concurrent: %v (sequential would be ~%v)", elapsed, time.Duration(mediaConcurrency)*delay)
+	}
+	entries, _ := os.ReadDir(filepath.Join(cwd, InboundMediaDir))
+	if len(entries) != mediaConcurrency {
+		t.Fatalf("expected %d images, got %d", mediaConcurrency, len(entries))
 	}
 }
 

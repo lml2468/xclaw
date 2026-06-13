@@ -290,7 +290,6 @@ private struct TranscriptDetail: View {
             }
             .scrollContentBackground(.hidden)
             .onChange(of: currentMessages.count) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
-            .onChange(of: model.currentSession) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: model.selectedSessionKey) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }

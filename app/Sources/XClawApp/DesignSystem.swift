@@ -201,7 +201,9 @@ enum RenderedBlock {
 /// long/code-heavy conversations. The cache makes a re-render an O(1) lookup.
 enum MarkdownRenderer {
     private final class Box { let blocks: [RenderedBlock]; init(_ b: [RenderedBlock]) { blocks = b } }
-    private static let cache: NSCache<NSString, Box> = {
+    // NSCache is internally thread-safe; the values are immutable. nonisolated(unsafe)
+    // satisfies Swift 6's global-isolation check (we only touch it from the main actor).
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Box> = {
         let c = NSCache<NSString, Box>()
         c.countLimit = 400   // bounds memory; streaming-intermediate strings evict
         return c

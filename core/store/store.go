@@ -110,6 +110,22 @@ type Session struct {
 	UpdatedAt   int64
 }
 
+// Touch creates the session if absent and refreshes updated_at so the TTL sweep
+// keeps it alive — without GetOrCreate's extra round-trip to read the row back.
+// Use this when the caller only needs the session to exist (the gateway's
+// per-turn path), not the Session value.
+func (s *Store) Touch(id, channelID string, channelType int) error {
+	now := s.now().Unix()
+	if _, err := s.db.Exec(
+		`INSERT INTO sessions(id, channel_id, channel_type, created_at, updated_at)
+		 VALUES(?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at;`,
+		id, channelID, channelType, now, now); err != nil {
+		return fmt.Errorf("touch: %w", err)
+	}
+	return nil
+}
+
 // GetOrCreate returns the session for id, creating it if absent. updated_at is
 // refreshed on every call so the TTL sweep keeps active sessions alive.
 func (s *Store) GetOrCreate(id, channelID string, channelType int) (Session, error) {

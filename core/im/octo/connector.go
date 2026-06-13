@@ -659,6 +659,11 @@ func (c *Connector) maybeSendToolNotice(sessionKey string, ev agent.AgentEvent) 
 // the turn (cc-channel-octo index.ts behavior).
 func (c *Connector) OnReply(sessionKey string, text string) {
 	c.stopTyping(sessionKey)
+	// The reply target is only needed through this turn's delivery; drop it
+	// afterwards so the map doesn't accumulate one entry per distinct session
+	// forever. The next inbound (or cron fire) re-registers it, and the router
+	// serializes turns per session so nothing races this delete.
+	defer func() { c.mu.Lock(); delete(c.targets, sessionKey); c.mu.Unlock() }()
 	text = strings.TrimSpace(text)
 	tgt, ok := c.target(sessionKey)
 	if !ok {

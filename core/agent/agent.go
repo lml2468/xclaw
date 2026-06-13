@@ -42,6 +42,12 @@ type AgentEvent struct {
 	// Text carries assistant/thinking text for KindTextDelta / KindThinking.
 	Text string `json:"text,omitempty"`
 
+	// Partial is true for incrementally-streamed text/thinking deltas (from
+	// --include-partial-messages). The driver streams these live and suppresses
+	// the duplicate complete block, so consumers append deltas without
+	// double-counting.
+	Partial bool `json:"-"`
+
 	// SessionID is set on KindSessionStarted (used to resume next turn).
 	SessionID string `json:"session_id,omitempty"`
 

@@ -114,7 +114,11 @@ func EscapeSectionMarkers(text string) string {
 // SanitizePromptBody fully neutralizes a free-form user body (role labels +
 // section markers).
 func SanitizePromptBody(text string) string {
-	return EscapeSectionMarkers(EscapeRoleLabels(text))
+	// Normalize line breaks once, then apply both escapers directly — calling
+	// EscapeRoleLabels + EscapeSectionMarkers would normalize the text twice.
+	t := normalizeLineBreaks(text)
+	t = roleLabelRE.ReplaceAllString(t, "$1\\$2")
+	return sectionMarkerRE.ReplaceAllString(t, "$1\\[$2]")
 }
 
 // SafeText is text that has provably passed a prompt-safety escaper. Only this

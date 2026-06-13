@@ -192,17 +192,21 @@ func (s *Server) respondErr(c *client, id, msg string) {
 
 // Broadcast sends an event to all connected clients. Used by the gateway bridge.
 func (s *Server) Broadcast(eventType string, body any) {
-	env := Envelope{Kind: KindEvent, Type: eventType, TS: s.now().Unix(), Body: mustJSON(body)}
-	line, err := Encode(env)
-	if err != nil {
-		return
-	}
 	s.mu.Lock()
+	if len(s.clients) == 0 {
+		s.mu.Unlock()
+		return // no client attached — skip the per-event marshal+encode entirely
+	}
 	cs := make([]*client, 0, len(s.clients))
 	for c := range s.clients {
 		cs = append(cs, c)
 	}
 	s.mu.Unlock()
+	env := Envelope{Kind: KindEvent, Type: eventType, TS: s.now().Unix(), Body: mustJSON(body)}
+	line, err := Encode(env)
+	if err != nil {
+		return
+	}
 	for _, c := range cs {
 		c.enqueue(line)
 	}

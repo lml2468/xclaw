@@ -47,7 +47,7 @@ func (d *ClaudeDriver) Capabilities() Capabilities {
 }
 
 func (d *ClaudeDriver) buildArgs(req Request) []string {
-	args := []string{"-p", req.Prompt, "--output-format", "stream-json", "--verbose"}
+	args := []string{"-p", req.Prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	// Headless gateway invariants (claude-only, fixed): grant all tools and
 	// bypass interactive approval — there is no terminal to answer prompts, so
 	// any other permission mode would hang the turn forever.
@@ -144,13 +144,39 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 		sc := bufio.NewScanner(stdout)
 		// stream-json lines can be large (tool inputs with file contents).
 		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+		// Dedupe partial vs complete: with --include-partial-messages, claude emits
+		// live text/thinking deltas AND a final complete block carrying the same
+		// text. Stream the deltas; drop the duplicate complete text — falling back
+		// to the complete block when no deltas streamed (e.g. partials disabled).
+		var streamedText, streamedThinking bool
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if line == "" {
 				continue
 			}
 			for _, ev := range parseClaudeLine(line) {
-				emit(ev)
+				switch {
+				case ev.Kind == KindTextDelta && ev.Partial:
+					streamedText = true
+					emit(ev)
+				case ev.Kind == KindTextDelta:
+					if streamedText { // already streamed live; skip the complete dup
+						streamedText = false
+						continue
+					}
+					emit(ev)
+				case ev.Kind == KindThinking && ev.Partial:
+					streamedThinking = true
+					emit(ev)
+				case ev.Kind == KindThinking:
+					if streamedThinking {
+						streamedThinking = false
+						continue
+					}
+					emit(ev)
+				default:
+					emit(ev)
+				}
 			}
 		}
 	}()
@@ -191,6 +217,20 @@ type claudeLine struct {
 	// system/api_retry
 	Error       string `json:"error"`
 	ErrorStatus int    `json:"error_status"`
+
+	// stream_event (--include-partial-messages): incremental token deltas.
+	Event *claudeStreamEvent `json:"event"`
+}
+
+// claudeStreamEvent is the Anthropic streaming event wrapped in a stream-json
+// line of type "stream_event". Only content_block_delta carries token text.
+type claudeStreamEvent struct {
+	Type  string `json:"type"` // content_block_delta | content_block_start | message_* | ...
+	Delta *struct {
+		Type     string `json:"type"`     // text_delta | thinking_delta | input_json_delta
+		Text     string `json:"text"`     // text_delta
+		Thinking string `json:"thinking"` // thinking_delta
+	} `json:"delta"`
 }
 
 type claudeMessage struct {
@@ -222,6 +262,26 @@ func parseClaudeLine(line string) []AgentEvent {
 	}
 
 	switch cl.Type {
+	case "stream_event":
+		// Token-level streaming (--include-partial-messages): content_block_delta
+		// carries incremental text/thinking. Other stream events (message_start,
+		// content_block_start/stop, input_json_delta, …) are ignored — the complete
+		// assistant message still arrives for tool_use and as the dedup fallback.
+		if cl.Event == nil || cl.Event.Type != "content_block_delta" || cl.Event.Delta == nil {
+			return nil
+		}
+		switch cl.Event.Delta.Type {
+		case "text_delta":
+			if cl.Event.Delta.Text != "" {
+				return []AgentEvent{{Kind: KindTextDelta, Text: cl.Event.Delta.Text, Partial: true, Raw: line}}
+			}
+		case "thinking_delta":
+			if cl.Event.Delta.Thinking != "" {
+				return []AgentEvent{{Kind: KindThinking, Text: cl.Event.Delta.Thinking, Partial: true, Raw: line}}
+			}
+		}
+		return nil
+
 	case "system":
 		switch cl.Subtype {
 		case "init":

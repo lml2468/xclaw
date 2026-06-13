@@ -74,6 +74,26 @@ func TestParseToolUse(t *testing.T) {
 	}
 }
 
+func TestParseTextDeltaIsPartial(t *testing.T) {
+	evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hel"}}}`)
+	if len(evs) != 1 || evs[0].Kind != KindTextDelta || evs[0].Text != "hel" || !evs[0].Partial {
+		t.Fatalf("want partial text delta, got %+v", evs)
+	}
+}
+
+func TestParseThinkingDeltaIsPartial(t *testing.T) {
+	evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}}`)
+	if len(evs) != 1 || evs[0].Kind != KindThinking || evs[0].Text != "hmm" || !evs[0].Partial {
+		t.Fatalf("want partial thinking delta, got %+v", evs)
+	}
+}
+
+func TestParseNonDeltaStreamEventIgnored(t *testing.T) {
+	if evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_start","index":0}}`); len(evs) != 0 {
+		t.Fatalf("non-delta stream_event should be ignored, got %+v", evs)
+	}
+}
+
 func TestParseToolResult(t *testing.T) {
 	evs := parseClaudeLine(lineToolRes)
 	if len(evs) != 1 || evs[0].Kind != KindToolResult {

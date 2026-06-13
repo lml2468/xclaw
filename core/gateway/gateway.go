@@ -277,8 +277,9 @@ func (g *Gateway) Observe(msg router.InboundMessage) {
 
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
-	// Ensure the session row exists (refreshes TTL).
-	if _, err := g.store.GetOrCreate(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
+	// Ensure the session row exists (refreshes TTL). Touch avoids the extra
+	// read-back the turn doesn't use.
+	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
 		return err
 	}
 

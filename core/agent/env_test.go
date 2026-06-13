@@ -113,3 +113,58 @@ exit 3
 		t.Fatal("non-zero exit was not surfaced as an error event")
 	}
 }
+
+func TestPartialDeltasSuppressCompleteDuplicate(t *testing.T) {
+	// With --include-partial-messages, claude streams live text deltas, then a
+	// final complete assistant block carrying the same full text. The driver must
+	// stream the deltas and DROP the duplicate complete block (no double text).
+	bin := writeFakeBin(t, `
+echo '{"type":"system","subtype":"init","session_id":"s1"}'
+echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hel"}}}'
+echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}}'
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"hello","usage":{"input_tokens":1,"output_tokens":1}}'
+`)
+	ch, err := NewClaudeDriver(bin).Query(context.Background(), Request{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	var completeTextEvents int
+	for ev := range ch {
+		if ev.Kind == KindTextDelta {
+			text += ev.Text
+			if !ev.Partial {
+				completeTextEvents++
+			}
+		}
+	}
+	if text != "hello" {
+		t.Fatalf("streamed text = %q, want %q (no duplication)", text, "hello")
+	}
+	if completeTextEvents != 0 {
+		t.Fatalf("complete assistant text must be suppressed when deltas streamed; got %d", completeTextEvents)
+	}
+}
+
+func TestCompleteTextEmittedWhenNoDeltas(t *testing.T) {
+	// Fallback: with no partial deltas (e.g. partials disabled), the complete
+	// assistant text must still be emitted.
+	bin := writeFakeBin(t, `
+echo '{"type":"system","subtype":"init","session_id":"s1"}'
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"plain"}]}}'
+`)
+	ch, err := NewClaudeDriver(bin).Query(context.Background(), Request{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for ev := range ch {
+		if ev.Kind == KindTextDelta {
+			text += ev.Text
+		}
+	}
+	if text != "plain" {
+		t.Fatalf("complete text = %q, want %q", text, "plain")
+	}
+}

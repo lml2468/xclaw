@@ -82,25 +82,16 @@ private struct EditBotsCommand: View {
     }
 }
 
-/// The menu-bar status icon — the XClaw octopus as a custom SF Symbol compiled
-/// into the app bundle's asset catalog (see scripts/package-app.sh), so the menu
-/// bar auto-tints it exactly like a built-in symbol. Falls back to a bolt SF
-/// Symbol when the custom symbol isn't present (e.g. plain `swift build` dev
-/// runs, where no Assets.car is produced).
+/// The menu-bar status icon — the XClaw octopus as a fixed 18-pt monochrome
+/// template image (WeChat-style status item). `.renderingMode(.template)` makes
+/// the menu bar tint it (white on dark, dark on light) and highlight it when the
+/// popover opens, at a stable full-bar size.
 private struct MenuBarLabel: View {
     @Bindable var model: AppModel
-    private static let hasOctopus = NSImage(named: "octopus") != nil
     var body: some View {
-        Group {
-            if Self.hasOctopus {
-                Image("octopus")   // custom symbol from the bundle's Assets.car
-                    .font(.system(size: 22)).imageScale(.large)
-            } else {
-                Image(systemName: model.connected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
-                    .font(.system(size: 16))
-            }
-        }
-        .accessibilityLabel(model.connected ? "XClaw, connected" : "XClaw, disconnected")
+        Image(nsImage: .octopusMenuBar)
+            .renderingMode(.template)
+            .accessibilityLabel(model.connected ? "XClaw, connected" : "XClaw, disconnected")
     }
 }
 

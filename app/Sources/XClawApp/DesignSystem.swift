@@ -289,3 +289,34 @@ struct OctopusShape: Shape {
         return p
     }
 }
+
+extension NSImage {
+    /// The octopus drawn as an 18-pt monochrome **template** image for the menu
+    /// bar — the WeChat-style status-item convention: a fixed, full-bar-height
+    /// glyph that macOS auto-tints (white on dark, dark on light) and highlights
+    /// when the menu opens. Fixed size (unlike an SF Symbol, whose menu-bar size
+    /// MenuBarExtra clamps), so it fills the bar like WeChat's icon. AppKit is
+    /// y-up: the head sits high, the tentacles hang below.
+    static let octopusMenuBar: NSImage = {
+        let s: CGFloat = 18
+        let r = s * 0.13
+        let img = NSImage(size: NSSize(width: s, height: s))
+        img.lockFocus()
+        let p = NSBezierPath()
+        p.windingRule = .evenOdd
+        // mantle / head — fills most of the width for WeChat-like visual weight
+        p.appendOval(in: NSRect(x: s*0.15, y: s*0.40, width: s*0.70, height: s*0.56))
+        // tentacle skirt hanging below, inner pair longer
+        for (fx, drop) in [(CGFloat(0.26), CGFloat(0.27)), (0.42, 0.35), (0.58, 0.35), (0.74, 0.27)] {
+            p.appendOval(in: NSRect(x: s*fx - r, y: s*0.50 - s*drop, width: 2*r, height: s*drop))
+        }
+        // eyes (punched out via even-odd)
+        p.appendOval(in: NSRect(x: s*0.37, y: s*0.62, width: s*0.10, height: s*0.13))
+        p.appendOval(in: NSRect(x: s*0.53, y: s*0.62, width: s*0.10, height: s*0.13))
+        NSColor.black.setFill()
+        p.fill()
+        img.unlockFocus()
+        img.isTemplate = true
+        return img
+    }()
+}

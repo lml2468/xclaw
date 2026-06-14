@@ -14,6 +14,16 @@ extension Color {
             ? NSColor(srgbRed: 0.40, green: 0.66, blue: 1.00, alpha: 1)
             : NSColor(srgbRed: 0.16, green: 0.46, blue: 0.92, alpha: 1)
     })
+
+    /// Secondary brand hue (ocean → aurora/violet) for the signature gradient.
+    /// Used only as an accent (user bubble, send button, selection, hero), never
+    /// on reading surfaces — keeps the base Apple-restrained.
+    static let brandSecondary = Color(nsColor: NSColor(name: "XClawBrand2") { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 0.62, green: 0.55, blue: 1.00, alpha: 1)
+            : NSColor(srgbRed: 0.45, green: 0.36, blue: 0.95, alpha: 1)
+    })
 }
 
 // MARK: - Liquid Glass + depth
@@ -45,6 +55,17 @@ extension View {
 enum AppTheme {
     /// The global motion curve — hovers, selections, insertions, focus.
     static let spring = Animation.spring(response: 0.4, dampingFraction: 0.8)
+
+    /// The signature brand gradient (ocean → aurora). Diagonal so it reads as a
+    /// light sweep. Accent-only: user bubbles, send button, selection, hero.
+    static let brandGradient = LinearGradient(
+        colors: [.brand, .brandSecondary],
+        startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    /// A soft brand halo for hero moments (empty state, focus glow).
+    static let brandGlow = RadialGradient(
+        colors: [Color.brand.opacity(0.28), .clear],
+        center: .center, startRadius: 2, endRadius: 160)
 }
 
 // MARK: - Typography
@@ -79,13 +100,13 @@ extension View {
 // MARK: - Interaction modifiers
 
 extension View {
-    /// Focus ring: brand 2pt stroke + soft glow, spring-animated. For text inputs.
+    /// Focus ring: brand-gradient 2pt stroke + soft glow, spring-animated.
     func focusRing(_ focused: Bool, cornerRadius: CGFloat = 9) -> some View {
         overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(Color.brand, lineWidth: focused ? 2 : 0)
+                .strokeBorder(AppTheme.brandGradient, lineWidth: focused ? 2 : 0)
         )
-        .shadow(color: Color.brand.opacity(focused ? 0.30 : 0), radius: 4)
+        .shadow(color: Color.brand.opacity(focused ? 0.32 : 0), radius: 5)
         .animation(AppTheme.spring, value: focused)
     }
 
@@ -93,12 +114,16 @@ extension View {
     func hoverScale(_ scale: CGFloat = 1.02) -> some View { modifier(HoverScale(scale: scale)) }
 
     /// Selected-row highlight pill that slides between rows via matchedGeometry.
+    /// A faint brand-gradient fill + hairline, with subtle depth so selection pops.
     @ViewBuilder
     func selectionPill(_ selected: Bool, in namespace: Namespace.ID, cornerRadius: CGFloat = 8) -> some View {
         background {
             if selected {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.brand.opacity(0.14))
+                    .fill(AppTheme.brandGradient.opacity(0.16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(Color.brand.opacity(0.25), lineWidth: 0.5))
                     .matchedGeometryEffect(id: "selectionPill", in: namespace)
             }
         }
@@ -112,8 +137,8 @@ extension View {
             .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
     }
 
-    /// Loading shimmer for skeleton placeholders.
-    func shimmering() -> some View { modifier(Shimmer()) }
+    /// Loading shimmer for skeleton placeholders. `delay` staggers rows.
+    func shimmering(delay: Double = 0) -> some View { modifier(Shimmer(delay: delay)) }
 }
 
 private struct HoverScale: ViewModifier {
@@ -128,6 +153,7 @@ private struct HoverScale: ViewModifier {
 }
 
 private struct Shimmer: ViewModifier {
+    var delay: Double = 0
     @State private var phase: CGFloat = -1
     func body(content: Content) -> some View {
         content.overlay(
@@ -141,7 +167,7 @@ private struct Shimmer: ViewModifier {
             }
         )
         .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { phase = 1.6 }
+            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false).delay(delay)) { phase = 1.6 }
         }
     }
 }
@@ -189,16 +215,16 @@ enum MarkdownBlock: Equatable {
 }
 
 /// A fully-rendered Markdown block: prose pre-converted to `AttributedString`,
-/// fenced code kept as raw text for a monospaced panel.
+/// fenced code pre-highlighted (raw kept for copy).
 enum RenderedBlock {
     case prose(AttributedString)
-    case code(String, language: String?)
+    case code(raw: String, highlighted: AttributedString, language: String?)
 }
 
-/// Memoizes the (parse + AttributedString) work per message text. Without this,
-/// `MarkdownMessage.body` re-parsed Markdown for every visible bubble on every
-/// view evaluation — i.e. on every scroll frame — which froze the transcript on
-/// long/code-heavy conversations. The cache makes a re-render an O(1) lookup.
+/// Memoizes the (parse + AttributedString + syntax highlight) work per message
+/// text. Without this, `MarkdownMessage.body` re-parsed/re-highlighted for every
+/// visible bubble on every view evaluation — i.e. on every scroll frame — which
+/// froze the transcript. The cache makes a re-render an O(1) lookup.
 enum MarkdownRenderer {
     private final class Box { let blocks: [RenderedBlock]; init(_ b: [RenderedBlock]) { blocks = b } }
     // NSCache is internally thread-safe; the values are immutable. nonisolated(unsafe)
@@ -215,7 +241,7 @@ enum MarkdownRenderer {
         let rendered: [RenderedBlock] = MarkdownBlock.parse(text).map { block in
             switch block {
             case .prose(let s): return .prose(attributed(s))
-            case .code(let c, let l): return .code(c, language: l)
+            case .code(let c, let l): return .code(raw: c, highlighted: highlight(c, language: l), language: l)
             }
         }
         cache.setObject(Box(rendered), forKey: key)
@@ -229,6 +255,52 @@ enum MarkdownRenderer {
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible)
         return (try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s)
+    }
+
+    // Languages whose `#` starts a line comment (others, like CSS/Swift, do not).
+    private static let hashCommentLangs: Set<String> = [
+        "py", "python", "rb", "ruby", "sh", "bash", "zsh", "fish", "yaml", "yml",
+        "toml", "ini", "conf", "cfg", "r", "pl", "perl", "makefile", "dockerfile",
+    ]
+
+    /// Lightweight, language-agnostic syntax tinting for fenced code: keywords,
+    /// numbers, strings, then comments (applied last so they win inside). Computed
+    /// once here (memoized), never per frame. Colors are dynamic system hues that
+    /// adapt to light/dark. Imperfect by design (e.g. `//` inside a string) — it's
+    /// decorative, not a parser.
+    private static func highlight(_ code: String, language: String?) -> AttributedString {
+        var attr = AttributedString(code)
+        attr.font = .system(.callout, design: .monospaced)
+        attr.foregroundColor = .primary
+
+        let keywords = ["func", "return", "if", "else", "for", "while", "switch",
+            "case", "break", "continue", "let", "var", "const", "def", "class",
+            "struct", "enum", "import", "from", "package", "public", "private",
+            "static", "new", "try", "catch", "throw", "async", "await", "yield",
+            "is", "as", "nil", "null", "true", "false", "self", "void", "type",
+            "interface", "fn", "use", "pub", "mut", "match", "do", "end", "module"]
+        apply(&attr, code, "\\b(" + keywords.joined(separator: "|") + ")\\b", Color(nsColor: .systemPink))
+        apply(&attr, code, "\\b\\d[\\d_.eExXa-fA-F]*\\b", Color(nsColor: .systemPurple))
+        apply(&attr, code, "\"(?:[^\"\\\\\\n]|\\\\.)*\"", Color(nsColor: .systemGreen))
+        apply(&attr, code, "'(?:[^'\\\\\\n]|\\\\.)*'", Color(nsColor: .systemGreen))
+        apply(&attr, code, "`[^`\\n]*`", Color(nsColor: .systemGreen))
+        apply(&attr, code, "//[^\\n]*", .secondary)
+        apply(&attr, code, "/\\*[\\s\\S]*?\\*/", .secondary)
+        if let l = language?.lowercased(), hashCommentLangs.contains(l) {
+            apply(&attr, code, "#[^\\n]*", .secondary)
+        }
+        return attr
+    }
+
+    private static func apply(_ attr: inout AttributedString, _ source: String, _ pattern: String, _ color: Color) {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return }
+        let ns = source as NSString
+        for m in re.matches(in: source, range: NSRange(location: 0, length: ns.length)) {
+            guard let sr = Range(m.range, in: source),
+                  let lo = AttributedString.Index(sr.lowerBound, within: attr),
+                  let hi = AttributedString.Index(sr.upperBound, within: attr) else { continue }
+            attr[lo..<hi].foregroundColor = color
+        }
     }
 }
 
@@ -246,57 +318,53 @@ struct MarkdownMessage: View {
                     Text(attributed)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                case .code(let code, let lang):
-                    CodeBlock(code: code, language: lang)
+                case .code(let raw, let highlighted, let lang):
+                    CodeBlock(raw: raw, highlighted: highlighted, language: lang)
                 }
             }
         }
     }
 }
 
-/// A monospaced, horizontally-scrollable code panel with an optional language
-/// tag and a hover-revealed copy button.
+/// A monospaced, horizontally-scrollable code panel with a header bar (language +
+/// copy) and a themed background — reads as a distinct artifact, not UI chrome.
 private struct CodeBlock: View {
-    let code: String
+    let raw: String
+    let highlighted: AttributedString
     let language: String?
-    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let language {
-                Text(language)
-                    .font(.caption2.weight(.medium))
+            HStack(spacing: 6) {
+                Text((language?.isEmpty == false ? language! : "code").lowercased())
+                    .font(.system(.caption2, design: .monospaced).weight(.medium))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(raw, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Copy code")
             }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(.quaternary.opacity(0.5))
+
+            Divider().opacity(0.5)
+
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(.callout, design: .monospaced))
+                Text(highlighted)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(12)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.55),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.quaternary, lineWidth: 1)
-        )
-        .overlay(alignment: .topTrailing) {
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(code, forType: .string)
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-            .buttonStyle(.borderless)
-            .padding(6)
-            .opacity(hovering ? 1 : 0)
-            .accessibilityLabel("Copy code")
-        }
-        .onHover { hovering = $0 }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.quaternary, lineWidth: 1))
     }
 }
 

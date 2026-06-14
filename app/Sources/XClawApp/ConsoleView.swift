@@ -40,38 +40,59 @@ private struct BotSidebarColumn: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        List(selection: Binding(get: { model.selectedBotID },
-                                set: { model.selectedBotID = $0 })) {
-            Section {
-                if model.roster.isEmpty {
-                    Text("No bots configured")
-                        .appFont(.callout).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            identityHeader
+            List(selection: Binding(get: { model.selectedBotID },
+                                    set: { model.selectedBotID = $0 })) {
+                Section {
+                    if model.roster.isEmpty {
+                        Text("No bots configured")
+                            .appFont(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(model.roster) { item in
+                        BotRow(item: item)
+                            .tag(item.id)
+                            .contextMenu {
+                                Button {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                    openWindow(id: "bot-editor")
+                                } label: { Label("Edit Bots…", systemImage: "slider.horizontal.3") }
+                                Button {
+                                    model.selectedBotID = item.id; model.restartCore()
+                                } label: { Label("Restart Core", systemImage: "arrow.clockwise") }
+                                Divider()
+                                Button(role: .destructive) {
+                                    model.selectedBotID = item.id; model.reset()
+                                } label: { Label("Clear Memory", systemImage: "eraser.line.dashed") }
+                            }
+                    }
+                } header: {
+                    Text("BOTS").appFont(.caption).tracking(0.6).foregroundStyle(.secondary)
                 }
-                ForEach(model.roster) { item in
-                    BotRow(item: item)
-                        .tag(item.id)
-                        .contextMenu {
-                            Button {
-                                NSApp.activate(ignoringOtherApps: true)
-                                openWindow(id: "bot-editor")
-                            } label: { Label("Edit Bots…", systemImage: "slider.horizontal.3") }
-                            Button {
-                                model.selectedBotID = item.id; model.restartCore()
-                            } label: { Label("Restart Core", systemImage: "arrow.clockwise") }
-                            Divider()
-                            Button(role: .destructive) {
-                                model.selectedBotID = item.id; model.reset()
-                            } label: { Label("Clear Memory", systemImage: "eraser.line.dashed") }
-                        }
-                }
-            } header: {
-                Text("Bots").appFont(.caption).foregroundStyle(.secondary)
             }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .animation(AppTheme.spring, value: model.roster.map(\.id))
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
         .background(.ultraThinMaterial)
-        .animation(AppTheme.spring, value: model.roster.map(\.id))
+    }
+
+    /// Signature identity header — gives the app a face. The faint brand-gradient
+    /// wash extends under the window's traffic lights (content padded clear of them).
+    private var identityHeader: some View {
+        HStack(spacing: 9) {
+            OctopusShape()
+                .fill(AppTheme.brandGradient, style: FillStyle(eoFill: true))
+                .frame(width: 22, height: 22)
+            Text("XClaw").appFont(.headline)
+            Spacer()
+        }
+        .padding(.top, 30)   // clear the traffic lights (full-size-content title bar)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.brandGradient.opacity(0.10))
+        .overlay(alignment: .bottom) { Divider().opacity(0.4) }
     }
 }
 
@@ -199,8 +220,17 @@ private struct TranscriptDetail: View {
             banners
             transcript
         }
+        .background(detailBackground)
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .toolbar { toolbar }
+    }
+
+    /// A very faint brand-tinted wash over the window background — subtle depth,
+    /// not a loud color field (restraint).
+    private var detailBackground: some View {
+        LinearGradient(colors: [Color.brand.opacity(0.05), .clear],
+                       startPoint: .top, endPoint: .center)
+            .ignoresSafeArea()
     }
 
     @ViewBuilder private var banners: some View {
@@ -246,7 +276,7 @@ private struct TranscriptDetail: View {
                     }
 
                     if isLoadingHistory {
-                        ForEach(0..<5, id: \.self) { i in MessageSkeleton(fromUser: i % 2 == 1) }
+                        ForEach(0..<5, id: \.self) { i in MessageSkeleton(fromUser: i % 2 == 1, delay: Double(i) * 0.12) }
                     } else if currentMessages.isEmpty {
                         emptyState
                     } else {
@@ -289,19 +319,52 @@ private struct TranscriptDetail: View {
         }
     }
 
+    /// Sample prompts shown in the empty state; tapping one fills the composer.
+    private let samplePrompts = [
+        "What can you help me with?",
+        "Summarize the latest messages in this channel.",
+        "Draft a concise status update for the team.",
+    ]
+
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label {
-                Text("Start a conversation").appFont(.title)
-            } icon: {
-                OctopusShape().fill(style: FillStyle(eoFill: true))
-                    .foregroundStyle(Color.brand)
-                    .frame(width: 52, height: 52)
+        VStack(spacing: 20) {
+            ZStack {
+                Circle().fill(AppTheme.brandGlow).frame(width: 230, height: 230)
+                OctopusShape()
+                    .fill(AppTheme.brandGradient, style: FillStyle(eoFill: true))
+                    .frame(width: 88, height: 88)
+                    .shadow(color: Color.brand.opacity(0.35), radius: 18, y: 8)
             }
-        } description: {
-            Text("Send a message below to talk to the agent.").appFont(.body).foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                Text("Talk to your agent").appFont(.largeTitle)
+                Text("Ask anything below, or start with one of these.")
+                    .appFont(.body).foregroundStyle(.secondary)
+            }
+            VStack(spacing: 9) {
+                ForEach(samplePrompts, id: \.self) { prompt in
+                    Button {
+                        draft = prompt
+                        composerFocused = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles").font(.caption).foregroundStyle(Color.brand)
+                            Text(prompt).appFont(.callout).foregroundStyle(.primary)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: 360, alignment: .leading)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.brand.opacity(0.18), lineWidth: 1))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .hoverScale(1.03)
+                }
+            }
+            .padding(.top, 4)
         }
-        .padding(.top, 60)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 56)
     }
 
     private var canSend: Bool {
@@ -322,20 +385,26 @@ private struct TranscriptDetail: View {
                             in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .focusRing(composerFocused, cornerRadius: 10)
             Button(action: sendDraft) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 26))
-                    .symbolRenderingMode(.hierarchical)
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(canSend ? AnyShapeStyle(AppTheme.brandGradient)
+                                        : AnyShapeStyle(Color.secondary.opacity(0.35)),
+                                in: Circle())
+                    .shadow(color: canSend ? Color.brand.opacity(0.40) : .clear, radius: 5, y: 2)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(canSend ? Color.brand : Color.secondary)
             .disabled(!canSend)
             .keyboardShortcut(.return, modifiers: [])
             .help("Send (Return)")
             .accessibilityLabel("Send message")
             .hoverScale(1.08)
+            .animation(AppTheme.spring, value: canSend)
         }
         .padding(12)
         .background(.bar)
+        .overlay(alignment: .top) { Divider().opacity(0.5) }
     }
 
     private func sendDraft() {
@@ -391,6 +460,32 @@ struct ChatBubble: View {
     }
 }
 
+/// A 28pt chat avatar: the octopus mark for the assistant, a brand-gradient
+/// person glyph for the user — gives each bubble a clear identity.
+private struct AvatarView: View {
+    let isUser: Bool
+    var body: some View {
+        ZStack {
+            if isUser {
+                Circle().fill(AppTheme.brandGradient)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+            } else {
+                Circle().fill(.thickMaterial)
+                Circle().strokeBorder(Color.brand.opacity(0.25), lineWidth: 1)
+                OctopusShape()
+                    .fill(style: FillStyle(eoFill: true))
+                    .foregroundStyle(Color.brand)
+                    .frame(width: 17, height: 17)
+            }
+        }
+        .frame(width: 28, height: 28)
+        .floatingShadow()
+        .accessibilityHidden(true)
+    }
+}
+
 /// A user/assistant bubble that reveals a timestamp + copy button on hover.
 private struct BubbleRow: View {
     let message: AppState.ChatMessage
@@ -412,17 +507,18 @@ private struct BubbleRow: View {
     }
 
     private var bubble: some View {
-        HStack(spacing: 0) {
-            if isUser { Spacer(minLength: 56) }
+        HStack(alignment: .top, spacing: 8) {
+            if !isUser { AvatarView(isUser: false) }
+            if isUser { Spacer(minLength: 40) }
             content
                 .padding(.vertical, 9)
                 .padding(.horizontal, 13)
-                .background(isUser ? AnyShapeStyle(Color.brand)
+                .background(isUser ? AnyShapeStyle(AppTheme.brandGradient)
                                    : AnyShapeStyle(.thickMaterial),
-                            in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay {
                     if !isUser {
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(.quaternary, lineWidth: 1)
                     }
                 }
@@ -430,7 +526,8 @@ private struct BubbleRow: View {
                 .contextMenu {
                     Button { copy() } label: { Label("Copy", systemImage: "doc.on.doc") }
                 }
-            if !isUser { Spacer(minLength: 56) }
+            if !isUser { Spacer(minLength: 40) }
+            if isUser { AvatarView(isUser: true) }
         }
     }
 
@@ -508,7 +605,8 @@ struct TypingBubble: View {
     private let timer = Timer.publish(every: 0.35, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
+            AvatarView(isUser: false)
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
@@ -558,16 +656,25 @@ private struct StreamingFollow: ViewModifier {
     }
 }
 
-/// A shimmering placeholder bubble shown while a transcript's history loads.
+/// A shimmering placeholder (avatar + two text lines) shown while a transcript's
+/// history loads. `delay` staggers the shimmer per row.
 private struct MessageSkeleton: View {
     let fromUser: Bool
+    var delay: Double = 0
     var body: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
             if fromUser { Spacer(minLength: 80) }
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(.quaternary)
-                .frame(width: fromUser ? 180 : 280, height: 38)
-                .shimmering()
+            if !fromUser { Circle().fill(.quaternary).frame(width: 28, height: 28) }
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(.quaternary).frame(width: fromUser ? 150 : 240, height: 11)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(.quaternary).frame(width: fromUser ? 100 : 170, height: 11)
+            }
+            .padding(.vertical, 11).padding(.horizontal, 13)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shimmering(delay: delay)
+            if fromUser { Circle().fill(.quaternary).frame(width: 28, height: 28) }
             if !fromUser { Spacer(minLength: 80) }
         }
     }

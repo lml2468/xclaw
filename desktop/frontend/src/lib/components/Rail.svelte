@@ -71,10 +71,12 @@
   }
   .slot:hover .pill { background: color-mix(in srgb, var(--rail-ink) 14%, transparent); }
   .slot.sel .pill {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent),
-                0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
+  /* No green outline ring around the avatar; show focus as a background tint. */
+  .slot:focus-visible { outline: none; }
+  .slot:focus-visible .pill { background: color-mix(in srgb, var(--rail-ink) 22%, transparent); }
+  .slot.sel:focus-visible .pill { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 
   .tile { position: relative; width: 40px; height: 40px; }
   .status {

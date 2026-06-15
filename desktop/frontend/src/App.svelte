@@ -7,6 +7,7 @@
   import Transcript from "./lib/components/Transcript.svelte";
   import Composer from "./lib/components/Composer.svelte";
   import ConfigEditor from "./lib/components/ConfigEditor.svelte";
+  import TrafficLights from "./lib/components/TrafficLights.svelte";
 
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
@@ -18,6 +19,7 @@
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
+<TrafficLights />
 <div class="shell">
   <Rail onedit={() => (showEditor = true)} />
   <section class="list"><Conversations /></section>
@@ -45,6 +47,8 @@
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--chat); }
+  /* Custom window controls for the frameless window — top-left over the rail. */
+  :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
   .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100vh; border-right: 1px solid var(--hairline); overflow: hidden; }
   .chat { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; background: var(--chat); }
 

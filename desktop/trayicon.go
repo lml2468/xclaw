@@ -7,23 +7,32 @@ import (
 	"image/png"
 )
 
-// xMarkTemplatePNG draws a bold, X-logo-style letterform as a monochrome
+// xMarkTemplatePNG draws a stylized, designed "X" letterform as a monochrome
 // template image for the macOS menu bar (macOS tints it white/dark to match the
-// bar). Two thick diagonal bars with flat top/bottom caps cross to form the X.
-// Rendered at 2x (44px) for retina, 3x-supersampled for clean diagonals.
+// bar). It reads as an X — two crossing bars with open triangular notches — but
+// with design tension: an italic shear plus unequal stroke weights (a heavier
+// "\" and a lighter "/"). Rendered at 2x (44px), 3x-supersampled for clean
+// diagonals.
 func xMarkTemplatePNG() []byte {
-	const s = 44
-	img := image.NewRGBA(image.Rect(0, 0, s, s))
-
-	// Bars span the padded box [L,R]x[T,B] with stroke width w and flat caps on
-	// the top/bottom edges — the X-logo look.
 	const (
-		L, R = 5.0, 39.0
-		T, B = 5.0, 39.0
-		w    = 12.0
+		s      = 44
+		center = 22.0
+		shear  = 0.16 // italic lean
+		L, R   = 5.0, 39.0
+		T, B   = 6.0, 38.0
+		wBack  = 14.0 // "\" stroke — heavier
+		wFwd   = 8.5  // "/" stroke — lighter
 	)
-	a := [4][2]float64{{L, T}, {L + w, T}, {R, B}, {R - w, B}} // top-left → bottom-right
-	b := [4][2]float64{{R - w, T}, {R, T}, {L + w, B}, {L, B}} // top-right → bottom-left
+
+	shearQ := func(q [4][2]float64) [4][2]float64 {
+		for i := range q {
+			q[i][0] -= shear * (q[i][1] - center)
+		}
+		return q
+	}
+	// Constant-width bars with flat top/bottom caps.
+	back := shearQ([4][2]float64{{L, T}, {L + wBack, T}, {R, B}, {R - wBack, B}}) // top-left → bottom-right
+	fwd := shearQ([4][2]float64{{R - wFwd, T}, {R, T}, {L + wFwd, B}, {L, B}})    // top-right → bottom-left
 
 	inside := func(q [4][2]float64, px, py float64) bool {
 		sign := 0
@@ -49,6 +58,7 @@ func xMarkTemplatePNG() []byte {
 		return true
 	}
 
+	img := image.NewRGBA(image.Rect(0, 0, s, s))
 	for y := 0; y < s; y++ {
 		for x := 0; x < s; x++ {
 			hits := 0
@@ -56,7 +66,7 @@ func xMarkTemplatePNG() []byte {
 				for sx := 0; sx < 3; sx++ {
 					px := float64(x) + (float64(sx)+0.5)/3
 					py := float64(y) + (float64(sy)+0.5)/3
-					if inside(a, px, py) || inside(b, px, py) {
+					if inside(back, px, py) || inside(fwd, px, py) {
 						hits++
 					}
 				}

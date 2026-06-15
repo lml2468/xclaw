@@ -50,7 +50,7 @@
   /* Custom window controls for the frameless window — top-left over the rail. */
   :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
   .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100vh; border-right: 1px solid var(--hairline); overflow: hidden; }
-  .chat { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; background: var(--chat); }
+  .chat { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; background: radial-gradient(130% 90% at 50% 0%, color-mix(in srgb, var(--surface) 22%, var(--chat)) 0%, var(--chat) 58%); }
 
   .chat-bar {
     height: var(--header-h); flex: 0 0 var(--header-h);

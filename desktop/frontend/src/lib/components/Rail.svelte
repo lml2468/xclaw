@@ -1,14 +1,14 @@
 <script lang="ts">
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
-  import Octopus from "./Octopus.svelte";
+  import octoUrl from "../assets/octo.png";
 
   let { onedit }: { onedit: () => void } = $props();
 </script>
 
 <div class="rail">
   <div class="brand" style="--wails-draggable: drag;" title="XClaw">
-    <Octopus size={30} />
+    <img class="mark" src={octoUrl} alt="XClaw" width="40" height="40" />
   </div>
 
   <div class="bots">
@@ -39,15 +39,22 @@
 <style>
   .rail {
     width: var(--rail-w); flex: 0 0 var(--rail-w); height: 100%;
-    background: var(--rail); color: var(--rail-ink);
+    background: var(--rail-grad); color: var(--rail-ink);
     display: flex; flex-direction: column; align-items: center;
     padding-bottom: 12px;
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
   }
   .brand {
     height: 72px; flex: 0 0 72px;
     display: flex; align-items: center; justify-content: center;
     padding-top: var(--titlebar);
     color: #fff;
+  }
+  /* Brand logo: the Octo app icon, rounded with a soft lift. */
+  .mark {
+    width: 40px; height: 40px; border-radius: 10px;
+    object-fit: cover; display: block;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
   }
   .bots { width: var(--rail-w); flex: 1; overflow-y: auto; overflow-x: hidden; padding-top: 4px; scrollbar-width: none; }
   .bots::-webkit-scrollbar { width: 0; height: 0; }
@@ -60,10 +67,14 @@
   }
   .pill {
     width: 52px; height: 52px; display: grid; place-items: center;
-    border-radius: 4px; transition: background 0.14s ease;
+    border-radius: 4px; transition: background 0.14s ease, box-shadow 0.14s ease;
   }
   .slot:hover .pill { background: color-mix(in srgb, var(--rail-ink) 14%, transparent); }
-  .slot.sel .pill { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  .slot.sel .pill {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent),
+                0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
 
   .tile { position: relative; width: 40px; height: 40px; }
   .status {
@@ -72,7 +83,10 @@
     border: 2.5px solid var(--rail);
   }
   .slot.sel .status { border-color: var(--rail-active); }
-  .status.on { background: var(--online); }
+  .status.on {
+    background: var(--online);
+    box-shadow: 0 0 7px color-mix(in srgb, var(--online) 80%, transparent);
+  }
 
   .foot { padding-top: 8px; }
   .icon {

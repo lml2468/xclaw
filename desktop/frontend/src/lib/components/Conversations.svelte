@@ -71,7 +71,11 @@
     color: var(--ink-faint);
     transition: border-color 0.15s ease, background 0.15s ease;
   }
-  .search:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .search:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
   .search input { flex: 1; border: none; background: transparent; outline: none; color: var(--ink); font-size: 13px; }
   .search input::placeholder { color: var(--ink-faint); }
 
@@ -84,7 +88,10 @@
     border-radius: 4px; text-align: left; color: var(--ink);
   }
   .row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
-  .row.sel, .row.sel:hover { background: var(--list-sel); }
+  .row.sel, .row.sel:hover {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--list-sel) 92%, #fff 8%), var(--list-sel));
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
 
   .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .r1 { display: flex; align-items: baseline; gap: 8px; }

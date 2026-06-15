@@ -61,12 +61,15 @@
     background: var(--in-bubble); color: var(--in-ink);
     border-radius: var(--bubble-radius);
     border-top-left-radius: 3px;
-    box-shadow: 0 1px 1.5px rgba(20, 22, 28, 0.08);
+    border: 1px solid var(--bubble-border);
+    box-shadow: var(--elev-1);
   }
   .bubble.user {
     background: var(--out-bubble); color: var(--out-ink);
+    border: 1px solid color-mix(in srgb, var(--out-bubble) 65%, #000 14%);
     border-top-left-radius: var(--bubble-radius);
     border-top-right-radius: 3px;
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 22%, transparent), var(--elev-1);
   }
   .plain { white-space: pre-wrap; word-break: break-word; }
 

@@ -51,7 +51,7 @@
   }
   .field {
     max-width: var(--content-max); margin: 0 auto;
-    display: flex; align-items: flex-end; gap: 9px;
+    display: flex; align-items: center; gap: 9px;
   }
   textarea {
     flex: 1; border: 1px solid var(--hairline); outline: none; resize: none;
@@ -68,7 +68,7 @@
   textarea::placeholder { color: var(--ink-faint); }
   .send {
     flex: 0 0 34px; width: 34px; height: 34px; border-radius: 4px; border: none;
-    display: grid; place-items: center; margin-bottom: 1px;
+    display: grid; place-items: center;
     background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink-faint);
     transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
   }

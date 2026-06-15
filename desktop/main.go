@@ -93,12 +93,16 @@ func openConsole() {
 		Height:    720,
 		MinWidth:  820,
 		MinHeight: 560,
+		// Frameless + transparent window: the OS draws no chrome and the corners
+		// outside the content's 4px CSS radius show through, so the app gets a
+		// subtle ≤4px rounding (not the native ~10px, not dead-square). Custom
+		// traffic lights live in-app.
+		Frameless: true,
 		Mac: application.MacWindow{
-			InvisibleTitleBarHeight: 36,
-			Backdrop:                application.MacBackdropNormal, // opaque paper — the watercolor canvas, not glass
-			TitleBar:                application.MacTitleBarHiddenInset,
+			Backdrop: application.MacBackdropNormal,
 		},
-		BackgroundColour: application.NewRGB(22, 23, 25), // neutral dark; only shows at the window's rounded corners
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
 		URL:              baseURL,
 	})
 	w.Show()

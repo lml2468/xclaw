@@ -60,13 +60,13 @@
     font-size: 14px; line-height: 1.5;
     background: var(--in-bubble); color: var(--in-ink);
     border-radius: var(--bubble-radius);
-    border-top-left-radius: 5px;
+    border-top-left-radius: 3px;
     box-shadow: 0 1px 1.5px rgba(20, 22, 28, 0.08);
   }
   .bubble.user {
     background: var(--out-bubble); color: var(--out-ink);
     border-top-left-radius: var(--bubble-radius);
-    border-top-right-radius: 5px;
+    border-top-right-radius: 3px;
   }
   .plain { white-space: pre-wrap; word-break: break-word; }
 
@@ -75,7 +75,7 @@
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 11px; color: var(--ink-soft);
     background: color-mix(in srgb, var(--ink) 6%, transparent);
-    padding: 4px 11px; border-radius: 999px;
+    padding: 4px 11px; border-radius: 4px;
     max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .tool .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
@@ -91,7 +91,7 @@
 
   /* Code block — header bar (language + copy) over a tinted mono panel. */
   .md :global(.codeblock) {
-    margin: 8px 0; border-radius: 7px; overflow: hidden;
+    margin: 8px 0; border-radius: 4px; overflow: hidden;
     border: 1px solid var(--hairline);
     background: var(--code-bg);
   }
@@ -104,7 +104,7 @@
   .md :global(.cb-lang) { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); letter-spacing: 0.3px; }
   .md :global(.cb-copy) {
     font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
-    background: transparent; border: none; padding: 5px 9px; border-radius: 5px; cursor: pointer;
+    background: transparent; border: none; padding: 5px 9px; border-radius: 3px; cursor: pointer;
     transition: color 0.14s ease, background 0.14s ease;
   }
   .md :global(.cb-copy:hover) { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }

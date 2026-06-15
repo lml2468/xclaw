@@ -45,10 +45,10 @@
   --row-h: 72px;
   --avatar: 40px;
   --avatar-sm: 36px;
-  --bubble-radius: 8px;
+  --bubble-radius: 4px;
   --content-max: 720px;
   --gutter: 28px;
-  --radius: 9px;
+  --radius: 4px;
 
   --shadow-pop: 0 8px 30px rgba(20, 22, 28, 0.16), 0 2px 8px rgba(20, 22, 28, 0.08);
 
@@ -125,15 +125,21 @@
 
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
-/* #app must fill the window edge-to-edge — no template max-width/padding ring. */
-#app { width: 100%; max-width: none; padding: 0; }
+/* The window is frameless + transparent. html/body stay transparent so the
+   corners outside #app's 4px radius show through to the desktop, giving a
+   subtle ≤4px rounding instead of the native ~10px (or dead-square). #app is
+   the rounded, clipping content surface and fills the window edge-to-edge. */
+html, body { background: transparent; }
+#app {
+  width: 100%; max-width: none; padding: 0;
+  border-radius: 4px; overflow: hidden;
+}
 
 body {
   font-family: var(--ui);
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink);
-  background: var(--chat);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;

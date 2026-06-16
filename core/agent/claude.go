@@ -146,39 +146,14 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 		sc := bufio.NewScanner(stdout)
 		// stream-json lines can be large (tool inputs with file contents).
 		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-		// Dedupe partial vs complete: with --include-partial-messages, claude emits
-		// live text/thinking deltas AND a final complete block carrying the same
-		// text. Stream the deltas; drop the duplicate complete text — falling back
-		// to the complete block when no deltas streamed (e.g. partials disabled).
-		var streamedText, streamedThinking bool
+		var dedup blockDedup
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if line == "" {
 				continue
 			}
-			for _, ev := range parseClaudeLine(line) {
-				switch {
-				case ev.Kind == KindTextDelta && ev.Partial:
-					streamedText = true
-					emit(ev)
-				case ev.Kind == KindTextDelta:
-					if streamedText { // already streamed live; skip the complete dup
-						streamedText = false
-						continue
-					}
-					emit(ev)
-				case ev.Kind == KindThinking && ev.Partial:
-					streamedThinking = true
-					emit(ev)
-				case ev.Kind == KindThinking:
-					if streamedThinking {
-						streamedThinking = false
-						continue
-					}
-					emit(ev)
-				default:
-					emit(ev)
-				}
+			for _, ev := range dedup.filter(parseClaudeLine(line)) {
+				emit(ev)
 			}
 		}
 	}()
@@ -196,6 +171,58 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}()
 
 	return out, nil
+}
+
+// kindBlockStart is an internal sentinel parseClaudeLine emits for a
+// content_block_start stream event. It never reaches the gateway — blockDedup
+// consumes it to reset per-block dedup state and drops it from the stream.
+const kindBlockStart EventKind = "_block_start"
+
+// blockDedup suppresses the complete text/thinking block that duplicates the
+// partial deltas already streamed under --include-partial-messages. claude emits
+// live text/thinking deltas AND, when that content block finalizes, a complete
+// block carrying the same text. We stream the deltas and drop the duplicate
+// complete block — but fall back to the complete block when no deltas streamed
+// (e.g. partials disabled).
+//
+// State is per content block, reset on content_block_start: claude emits one
+// assistant line per block, right after that block's deltas, so a multi-block
+// turn (text → tool_use → text) must dedup each block independently. A one-shot
+// flag would let the second text block leak through as a duplicate.
+type blockDedup struct {
+	streamedText     bool
+	streamedThinking bool
+}
+
+// filter returns the events to emit for one parsed line, updating dedup state.
+func (d *blockDedup) filter(evs []AgentEvent) []AgentEvent {
+	out := make([]AgentEvent, 0, len(evs))
+	for _, ev := range evs {
+		switch {
+		case ev.Kind == kindBlockStart:
+			// New content block: forget whether the previous one streamed.
+			d.streamedText, d.streamedThinking = false, false
+		case ev.Kind == KindTextDelta && ev.Partial:
+			d.streamedText = true
+			out = append(out, ev)
+		case ev.Kind == KindTextDelta:
+			if d.streamedText { // already streamed live; drop the complete dup
+				continue
+			}
+			out = append(out, ev)
+		case ev.Kind == KindThinking && ev.Partial:
+			d.streamedThinking = true
+			out = append(out, ev)
+		case ev.Kind == KindThinking:
+			if d.streamedThinking {
+				continue
+			}
+			out = append(out, ev)
+		default:
+			out = append(out, ev)
+		}
+	}
+	return out
 }
 
 // --- stream-json line shapes (only the fields we consume) ---
@@ -266,10 +293,18 @@ func parseClaudeLine(line string) []AgentEvent {
 	switch cl.Type {
 	case "stream_event":
 		// Token-level streaming (--include-partial-messages): content_block_delta
-		// carries incremental text/thinking. Other stream events (message_start,
-		// content_block_start/stop, input_json_delta, …) are ignored — the complete
-		// assistant message still arrives for tool_use and as the dedup fallback.
-		if cl.Event == nil || cl.Event.Type != "content_block_delta" || cl.Event.Delta == nil {
+		// carries incremental text/thinking. content_block_start resets per-block
+		// dedup state (emitted as an internal sentinel, consumed by blockDedup).
+		// Other stream events (message_start, content_block_stop, input_json_delta,
+		// …) are ignored — the complete assistant message still arrives for tool_use
+		// and as the dedup fallback.
+		if cl.Event == nil {
+			return nil
+		}
+		if cl.Event.Type == "content_block_start" {
+			return []AgentEvent{{Kind: kindBlockStart, Raw: line}}
+		}
+		if cl.Event.Type != "content_block_delta" || cl.Event.Delta == nil {
 			return nil
 		}
 		switch cl.Event.Delta.Type {

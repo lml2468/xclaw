@@ -269,6 +269,10 @@ const (
 	rateLimitedReply = "请稍后再试"
 	// timeoutReply is sent when a turn exceeds the dispatch timeout (#141).
 	timeoutReply = "⚠️ 处理超时，请稍后重试。"
+	// errorReply is sent when a turn ends in a terminal agent error (e.g.
+	// max_turns) or the agent process fails. Like the timeout path, the partial
+	// reply is not persisted and the resume id is not advanced.
+	errorReply = "⚠️ 出错了，请稍后重试。"
 )
 
 // Observe caches a non-triggering group message into the group context so it
@@ -437,6 +441,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 
 	var reply strings.Builder
 	var newResume string
+	var termErr string
 	for ev := range events {
 		g.sink.OnEvent(sessionKey, ev)
 		switch ev.Kind {
@@ -446,6 +451,14 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			}
 		case agent.KindTextDelta:
 			reply.WriteString(ev.Text)
+		case agent.KindError:
+			// Terminal (non-recoverable) errors — a result is_error (e.g. max_turns)
+			// or a non-zero agent exit — abort the turn. Recoverable errors (stderr
+			// warnings, api_retry) are informational and don't gate the reply. Keep
+			// the last one for the log; any terminal error is enough to abort.
+			if !ev.Recoverable {
+				termErr = ev.Err
+			}
 		}
 	}
 
@@ -455,6 +468,16 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	if g.dispatchTimeout > 0 && turnCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "[gateway] dispatch timed out after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
 		g.sink.OnReply(sessionKey, timeoutReply)
+		return nil
+	}
+
+	// Terminal agent error: treat like the timeout path. Do NOT persist the
+	// partial reply as the assistant turn and do NOT advance the resume id —
+	// otherwise an errored turn silently commits a truncated answer and skips
+	// forward, corrupting continuity. Signal the user and release the lock.
+	if termErr != "" {
+		fmt.Fprintf(os.Stderr, "[gateway] terminal agent error (session=%s): %s\n", sessionKey, termErr)
+		g.sink.OnReply(sessionKey, errorReply)
 		return nil
 	}
 

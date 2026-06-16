@@ -25,7 +25,7 @@
 
 <TrafficLights />
 <div class="shell">
-  <Rail onedit={() => (showEditor = true)} />
+  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} />
   <div class="content">
     <section class="list"><Conversations /></section>
     <main class="chat">

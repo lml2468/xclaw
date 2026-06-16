@@ -3,7 +3,10 @@
   import Avatar from "./Avatar.svelte";
   import octoUrl from "../assets/octo.png";
 
-  let { onedit }: { onedit: () => void } = $props();
+  let { onedit, onskills }: { onedit: () => void; onskills: () => void } = $props();
+
+  let menuOpen = $state(false);
+  function choose(fn: () => void) { menuOpen = false; fn(); }
 </script>
 
 <div class="rail">
@@ -30,9 +33,16 @@
   </div>
 
   <div class="foot">
-    <button class="icon" onclick={onedit} title="Edit bots" aria-label="Edit bots">
+    <button class="icon" class:active={menuOpen} onclick={() => (menuOpen = !menuOpen)} title="Settings" aria-label="Settings" aria-haspopup="menu" aria-expanded={menuOpen}>
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
+    {#if menuOpen}
+      <div class="menu-backdrop" role="presentation" onclick={() => (menuOpen = false)}></div>
+      <div class="menu" role="menu">
+        <button role="menuitem" onclick={() => choose(onedit)}>Edit Bots</button>
+        <button role="menuitem" onclick={() => choose(onskills)}>Manage Skills</button>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -90,11 +100,26 @@
     box-shadow: 0 0 7px color-mix(in srgb, var(--online) 80%, transparent);
   }
 
-  .foot { padding-top: 8px; }
+  .foot { padding-top: 8px; position: relative; }
   .icon {
     width: 38px; height: 38px; border-radius: 4px; border: none; background: transparent;
     color: var(--rail-ink); display: flex; align-items: center; justify-content: center;
     transition: background 0.14s ease, color 0.14s ease;
   }
-  .icon:hover { background: var(--rail-active); color: #fff; }
+  .icon:hover, .icon.active { background: var(--rail-active); color: #fff; }
+
+  /* Settings popover: Edit Bots / Manage Skills. */
+  .menu-backdrop { position: fixed; inset: 0; z-index: 90; }
+  .menu {
+    position: absolute; bottom: calc(100% + 6px); left: 6px; z-index: 100;
+    min-width: 168px; padding: 4px;
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 8px; box-shadow: var(--shadow-pop);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .menu button {
+    text-align: left; padding: 8px 12px; border: none; background: transparent;
+    border-radius: 5px; color: var(--ink); font-size: 13px;
+  }
+  .menu button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-strong); }
 </style>

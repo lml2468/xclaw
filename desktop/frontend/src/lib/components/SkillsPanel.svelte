@@ -1,6 +1,8 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
 
+  let { onclose }: { onclose: () => void } = $props();
+
   type SkillInfo = { name: string; description: string; files: number };
 
   const isPreview = new URLSearchParams(location.search).has("preview");
@@ -119,10 +121,11 @@
   }
 </script>
 
-<div class="root">
-  <header><h2>Manage Skills</h2></header>
+<div class="scrim" onclick={onclose} role="presentation">
+  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Manage skills">
+    <header><h2>Manage Skills</h2><button class="x" onclick={onclose} aria-label="Close">✕</button></header>
 
-  <div class="body">
+    <div class="body">
     <div class="list">
       {#each skills as s (s.name)}
         <button class="row" class:sel={s.name === sel} onclick={() => selectSkill(s.name)}>
@@ -178,13 +181,17 @@
   </div>
 
   {#if error}<div class="err">⚠️ {error}</div>{/if}
+  </div>
 </div>
 
 <style>
-  /* Mirrors ConfigEditor (Edit Bots) so the two windows share one visual language. */
-  .root { height: 100vh; display: flex; flex-direction: column; background: var(--surface); color: var(--ink); font-family: var(--ui); }
+  /* Mirrors ConfigEditor (Edit Bots): same scrim + centered modal + header/✕,
+     so the two open and feel identical. */
+  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
+  .modal { width: min(940px, 94vw); height: min(640px, 90vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; color: var(--ink); font-family: var(--ui); }
   header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
-  header h2 { font-size: 17px; font-weight: 600; }
+  header h2 { font-size: 17px; font-weight: 600; flex: 1; }
+  .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
 
   .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
 

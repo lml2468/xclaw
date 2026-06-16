@@ -10,23 +10,19 @@
   import TrafficLights from "./lib/components/TrafficLights.svelte";
   import SkillsPanel from "./lib/components/SkillsPanel.svelte";
 
-  // The Skills window loads the same SPA with ?view=skills and renders only the
-  // skills manager (its own window opened from the tray).
-  const skillsView = new URLSearchParams(location.search).get("view") === "skills";
-
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
+  let showSkills = $state(new URLSearchParams(location.search).has("skills"));
 
-  // Tray "Edit Bots…" opens the editor (guarded: the Wails runtime is absent in
-  // a plain browser, e.g. the headless UI-audit harness).
+  // Tray "Edit Bots…" / "Manage Skills…" open these as modals over the console
+  // (guarded: the Wails runtime is absent in a plain browser, e.g. the headless
+  // UI-audit harness).
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
+  try { Events.On("xclaw:open-skills", () => (showSkills = true)); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
-{#if skillsView}
-  <SkillsPanel />
-{:else}
 <TrafficLights />
 <div class="shell">
   <Rail onedit={() => (showEditor = true)} />
@@ -54,6 +50,8 @@
 {#if showEditor}
   <ConfigEditor onclose={() => (showEditor = false)} />
 {/if}
+{#if showSkills}
+  <SkillsPanel onclose={() => (showSkills = false)} />
 {/if}
 
 <style>

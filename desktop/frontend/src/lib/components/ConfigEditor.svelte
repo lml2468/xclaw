@@ -14,6 +14,9 @@
   const current = $derived(bots[sel] ?? null);
   // Env as an editable list of pairs (kept in sync with current.env on edit).
   let envRows = $state<{ k: string; v: string }[]>([]);
+  // Bot ids present when this editor opened — the basis for an EXPLICIT removal
+  // list on save (so the daemon never infers deletions from a set-difference).
+  let loadedIds: string[] = [];
 
   $effect(() => {
     // Rebuild env rows when the selected bot changes.
@@ -35,6 +38,7 @@
     }
     try {
       bots = (await XClawService.LoadConfig()) ?? [];
+      loadedIds = bots.map((b) => b.id);
       if (bots.length === 0) addBot();
       sel = 0;
     } catch (e: any) {
@@ -68,7 +72,11 @@
     commitEnv();
     error = ""; saved = false; busy = true;
     try {
-      await XClawService.SaveConfig(bots);
+      // Explicit removals: ids that were loaded but are no longer present.
+      const present = new Set(bots.map((b) => b.id));
+      const removed = loadedIds.filter((id) => !present.has(id));
+      await XClawService.SaveConfig(bots, removed);
+      loadedIds = bots.map((b) => b.id);
       saved = true;
       if (restart) { await XClawService.RestartCore(); store.bots = []; XClawService.BotsList(); onclose(); }
     } catch (e: any) {

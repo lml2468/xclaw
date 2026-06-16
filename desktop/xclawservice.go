@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -29,6 +31,11 @@ type XClawService struct {
 	client       *control.Client
 	configMode   bool
 	shuttingDown bool
+	// epoch is a generation counter for daemon (re)connect cycles. RestartCore
+	// and each reconnect run bump it; an in-flight reconnect loop bails as soon
+	// as it sees a newer epoch, so a manual restart can't be fought (and undone)
+	// by a stale crash-reconnect loop still backing off.
+	epoch uint64
 }
 
 // NewXClawService constructs the bridge (ServiceStartup wires it).
@@ -70,19 +77,32 @@ func (x *XClawService) connect() error {
 	x.mu.Unlock()
 
 	go func() {
-		_ = client.Read(func(env control.Envelope) {
+		err := client.Read(func(env control.Envelope) {
 			if app := application.Get(); app != nil {
 				app.Event.Emit(EventStream, env)
 			}
 		})
-		// Read returned: the socket closed. Over a local UDS this means the
-		// daemon exited — recover unless we're shutting down or already moved on.
+		// Read returned: the stream ended. Recover unless we're shutting down or
+		// another (re)connect already moved on.
 		x.mu.Lock()
 		stale := x.shuttingDown || x.client != client
 		x.mu.Unlock()
-		if !stale {
-			x.reconnect()
+		if stale {
+			return
 		}
+		// An oversized frame (bufio.ErrTooLong) desyncs the stream but does NOT
+		// mean the daemon died — over a local UDS the daemon is still up, so
+		// restarting it wouldn't help and could loop on the same frame. Re-dial
+		// the live daemon instead; only fall back to a full respawn if that fails.
+		if errors.Is(err, bufio.ErrTooLong) {
+			log.Printf("xclaw: oversized control frame (%v); re-dialing without restart", err)
+			time.Sleep(300 * time.Millisecond)
+			if derr := x.connect(); derr == nil {
+				return
+			}
+		}
+		// Clean EOF / closed socket → the daemon exited; respawn + reconnect.
+		x.reconnect()
 	}()
 
 	_, _ = client.Send("health", nil)
@@ -96,17 +116,25 @@ func (x *XClawService) connect() error {
 
 // reconnect respawns the daemon and re-establishes the bus after a crash,
 // backing off between attempts. Bounded so a hard-broken daemon doesn't spin.
+// It claims a fresh epoch on entry and bails the moment a newer one appears
+// (a manual RestartCore, or a later reconnect) so it can't tear down a daemon
+// someone else just started.
 func (x *XClawService) reconnect() {
+	x.mu.Lock()
+	x.epoch++
+	myEpoch := x.epoch
+	x.mu.Unlock()
+
 	for attempt := 0; attempt < 20; attempt++ {
-		x.mu.Lock()
-		done := x.shuttingDown
-		x.mu.Unlock()
-		if done {
+		if !x.epochCurrent(myEpoch) {
 			return
 		}
 		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // 0.5s → capped below
 		if attempt > 6 {
 			time.Sleep(2 * time.Second)
+		}
+		if !x.epochCurrent(myEpoch) {
+			return // superseded while we were backing off — don't restart
 		}
 		if err := x.sup.Restart(); err != nil {
 			continue
@@ -117,6 +145,14 @@ func (x *XClawService) reconnect() {
 		}
 	}
 	log.Printf("xclaw: gave up reconnecting to daemon")
+}
+
+// epochCurrent reports whether e is still the live generation and we're not
+// shutting down.
+func (x *XClawService) epochCurrent(e uint64) bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return !x.shuttingDown && x.epoch == e
 }
 
 // injectSecrets reads each configured bot's tokens from the credential store and
@@ -201,14 +237,19 @@ func (x *XClawService) LoadConfig() ([]configstore.BotConfig, error) {
 }
 
 // SaveConfig writes the bots back (config.json + SOUL/AGENTS + credential store).
-// The caller follows with RestartCore to apply.
-func (x *XClawService) SaveConfig(bots []configstore.BotConfig) error {
-	return configstore.Save(bots)
+// removedIDs is the explicit list of bot ids the editor deleted this session;
+// only those are pruned from disk (never an inferred set-difference). The caller
+// follows with RestartCore to apply.
+func (x *XClawService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
+	return configstore.Save(bots, removedIDs)
 }
 
-// RestartCore restarts the daemon and reconnects (applies config changes).
+// RestartCore restarts the daemon and reconnects (applies config changes). It
+// bumps the epoch first so any in-flight crash-reconnect loop bails instead of
+// racing this restart.
 func (x *XClawService) RestartCore() error {
 	x.mu.Lock()
+	x.epoch++ // supersede any in-flight reconnect
 	if x.client != nil {
 		x.client.Close()
 		x.client = nil

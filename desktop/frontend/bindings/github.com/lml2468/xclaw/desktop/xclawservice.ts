@@ -81,7 +81,9 @@ export function Reset(botID: string, uid: string): $CancellablePromise<void> {
 }
 
 /**
- * RestartCore restarts the daemon and reconnects (applies config changes).
+ * RestartCore restarts the daemon and reconnects (applies config changes). It
+ * bumps the epoch first so any in-flight crash-reconnect loop bails instead of
+ * racing this restart.
  */
 export function RestartCore(): $CancellablePromise<void> {
     return $Call.ByID(2417701434);
@@ -89,10 +91,12 @@ export function RestartCore(): $CancellablePromise<void> {
 
 /**
  * SaveConfig writes the bots back (config.json + SOUL/AGENTS + credential store).
- * The caller follows with RestartCore to apply.
+ * removedIDs is the explicit list of bot ids the editor deleted this session;
+ * only those are pruned from disk (never an inferred set-difference). The caller
+ * follows with RestartCore to apply.
  */
-export function SaveConfig(bots: configstore$0.BotConfig[]): $CancellablePromise<void> {
-    return $Call.ByID(2359737065, bots);
+export function SaveConfig(bots: configstore$0.BotConfig[], removedIDs: string[]): $CancellablePromise<void> {
+    return $Call.ByID(2359737065, bots, removedIDs);
 }
 
 /**

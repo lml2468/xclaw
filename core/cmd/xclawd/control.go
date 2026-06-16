@@ -123,11 +123,22 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err := json.Unmarshal(body, &b); err != nil {
 				return nil, err
 			}
+			if b.UID == "" {
+				return nil, fmt.Errorf("uid required")
+			}
 			t, err := deps.resolve(b.BotID)
 			if err != nil {
 				return nil, err
 			}
-			_ = t.store.ClearResume(b.UID)
+			// Resume state is keyed by the router-derived sessionKey, not the raw
+			// uid — derive it the same way session.send does so reset actually
+			// clears the right entry (a control-bus DM has no space, so this is
+			// the uid today, but stays correct if a space is ever introduced).
+			key, err := router.InboundMessage{ChannelType: router.ChannelDM, FromUID: b.UID}.SessionKey()
+			if err != nil {
+				return nil, err
+			}
+			_ = t.store.ClearResume(key)
 			return control.OKBody{OK: true}, nil
 
 		case "cron.create":

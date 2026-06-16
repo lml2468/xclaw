@@ -116,10 +116,27 @@ func Load() ([]BotConfig, error) {
 	return out, nil
 }
 
-// Save writes the view model back: config.json (top-level defaults preserved,
-// tokens stripped), per-bot SOUL.md/AGENTS.md, tokens to the credential store,
-// and prunes the directories of bots that were removed.
-func Save(bots []BotConfig) error {
+// Save writes the view model back to disk:
+//   - config.json: each bot is MERGED onto its existing entry, so per-bot
+//     overrides the editor doesn't model (rateLimit/context/groupConfigDir/
+//     onBehalfOf and the mentionFreeGroups/knownBotUids/allowedBotUids/
+//     botBlocklist gating lists, plus agent.cron/toolProgress) survive a Save;
+//     editor-owned fields are persisted only when they DIFFER from the
+//     top-level default (so the defaults keep propagating and aren't frozen
+//     into N per-bot copies), and tokens are stripped (they live in the OS
+//     keychain, never config.json);
+//   - per-bot SOUL.md / AGENTS.md and tokens to the credential store;
+//   - pruning ONLY the bots named in removedIDs — an explicit deletion list
+//     from the editor — and only when their on-disk data dir actually exists.
+//     Pruning is NEVER inferred from a set-difference: a stale editor snapshot
+//     (a second session, a hand-edit, a restart-rewrite) would otherwise look
+//     like "every other bot was removed" and irreversibly wipe their data.
+//
+// config.json is written (atomically) BEFORE the per-bot side effects, so a
+// mid-way failure can't leave the index stale while bot files / keychain are
+// already mutated; the side effects are idempotent, so a failed Save converges
+// on retry.
+func Save(bots []BotConfig, removedIDs []string) error {
 	for _, b := range bots {
 		if !validSlug(b.ID) {
 			return fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", b.ID)
@@ -137,28 +154,71 @@ func Save(bots []BotConfig) error {
 		return fmt.Errorf("duplicate bot id %q", dup)
 	}
 
-	// Preserve top-level defaults + unknown keys by editing the existing File.
+	// Start from the existing File so top-level defaults + unknown keys survive.
 	f, err := readFile()
 	if err != nil {
 		return err
 	}
-	oldIDs := map[string]bool{}
-	for _, b := range f.Bots {
-		oldIDs[b.ID] = true
+	existing := make(map[string]config.BotEntry, len(f.Bots))
+	for _, e := range f.Bots {
+		existing[e.ID] = e
+	}
+	var topModel, topGW string
+	var topEnv map[string]string
+	if f.Agent != nil {
+		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
 	}
 
 	entries := make([]config.BotEntry, 0, len(bots))
-	newIDs := map[string]bool{}
 	for _, b := range bots {
-		newIDs[b.ID] = true
-		entry := config.BotEntry{ID: b.ID, APIURL: b.APIURL}
-		agent := &config.AgentConfig{Model: b.Model, GatewayBaseURL: b.GatewayBaseURL}
-		if len(b.Env) > 0 {
-			agent.Env = b.Env
-		}
-		entry.Agent = agent
-		entries = append(entries, entry)
+		// Merge onto the existing entry (zero value for a new bot) so per-bot
+		// overrides the editor doesn't model are preserved.
+		entry := existing[b.ID]
+		entry.ID = b.ID
+		entry.OctoToken = "" // tokens live in the OS keychain, never config.json
+		entry.APIURL = inheritStr(b.APIURL, f.APIURL)
 
+		ag := config.AgentConfig{}
+		if entry.Agent != nil {
+			ag = *entry.Agent // preserve cron / toolProgress / any other agent fields
+		}
+		ag.GatewayToken = "" // keychain only
+		ag.Model = inheritStr(b.Model, topModel)
+		ag.GatewayBaseURL = inheritStr(b.GatewayBaseURL, topGW)
+		if envEqual(b.Env, topEnv) {
+			ag.Env = nil // inherited from the top-level default; don't materialize it
+		} else {
+			ag.Env = b.Env
+		}
+		if agentEmpty(ag) {
+			entry.Agent = nil
+		} else {
+			entry.Agent = &ag
+		}
+		entries = append(entries, entry)
+	}
+	f.Bots = entries
+
+	// Write config.json first (atomically via temp+rename) — the authoritative
+	// index the daemon reads.
+	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := Path() + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, Path()); err != nil {
+		return err
+	}
+
+	// Per-bot side effects (idempotent). On failure, config.json already
+	// reflects the intended set and a retry re-applies these.
+	for _, b := range bots {
 		if err := os.MkdirAll(botDir(b.ID), 0o755); err != nil {
 			return err
 		}
@@ -175,26 +235,23 @@ func Save(bots []BotConfig) error {
 			return fmt.Errorf("store gatewayToken for %s: %w", b.ID, err)
 		}
 	}
-	f.Bots = entries
 
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
-		return err
+	// Prune ONLY explicitly-removed bots, and only when their data dir really
+	// exists. Skip any id still present in the saved set.
+	keep := make(map[string]bool, len(bots))
+	for _, b := range bots {
+		keep[b.ID] = true
 	}
-	raw, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(Path(), append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-
-	// Prune directories of removed bots (mirrors Swift removedSlugs behavior).
-	for id := range oldIDs {
-		if !newIDs[id] && validSlug(id) {
-			_ = os.RemoveAll(botDir(id))
-			_ = secrets.Delete(id, secrets.OctoToken)
-			_ = secrets.Delete(id, secrets.GatewayToken)
+	for _, id := range removedIDs {
+		if keep[id] || !validSlug(id) {
+			continue
 		}
+		if _, err := os.Stat(filepath.Join(botDir(id), "data")); err != nil {
+			continue // no data/ child → not an established bot dir; never RemoveAll
+		}
+		_ = os.RemoveAll(botDir(id))
+		_ = secrets.Delete(id, secrets.OctoToken)
+		_ = secrets.Delete(id, secrets.GatewayToken)
 	}
 	return nil
 }
@@ -239,6 +296,33 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// inheritStr returns "" when v equals the top-level default def, so the per-bot
+// field stays inherited (the default keeps propagating); otherwise it returns v.
+// This is the inverse of Load's firstNonEmpty resolution.
+func inheritStr(v, def string) string {
+	if v == def {
+		return ""
+	}
+	return v
+}
+
+func envEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+func agentEmpty(a config.AgentConfig) bool {
+	return a.Model == "" && a.GatewayBaseURL == "" && a.GatewayToken == "" &&
+		len(a.Env) == 0 && !a.Cron && !a.ToolProgress
 }
 
 func firstDuplicate(bots []BotConfig) string {

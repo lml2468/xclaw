@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -66,16 +67,28 @@ func ResolveBinary() (string, error) {
 	return "", fmt.Errorf("xclawd binary not found (set XCLAWD_BIN, build core/.xclawd-dev, or install xclawd)")
 }
 
-// Supervisor owns one xclawd process.
+// Supervisor owns one xclawd process. All lifecycle methods (Start/Stop/Restart)
+// are serialized by mu so the cmd field is never read/written concurrently —
+// the desktop calls these from both the UI thread (RestartCore) and the
+// daemon-read goroutine (crash reconnect), which would otherwise race on cmd
+// and could spawn two daemons fighting over the socket.
 type Supervisor struct {
 	BinPath    string
 	SocketPath string
 	ConfigPath string // when non-empty, run -config mode
-	cmd        *exec.Cmd
+
+	mu  sync.Mutex
+	cmd *exec.Cmd
 }
 
 // Start spawns xclawd in control-bus mode and waits for the socket to appear.
 func (s *Supervisor) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.startLocked()
+}
+
+func (s *Supervisor) startLocked() error {
 	args := []string{"-control", s.SocketPath, "-no-repl", "-exit-with-parent"}
 	if s.ConfigPath != "" {
 		args = append([]string{"-config", s.ConfigPath}, args...)
@@ -105,6 +118,12 @@ func (s *Supervisor) Start() error {
 // Stop terminates the daemon. -exit-with-parent also covers the case where we
 // die first; here we ask politely, then hard-kill.
 func (s *Supervisor) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopLocked()
+}
+
+func (s *Supervisor) stopLocked() {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return
 	}
@@ -121,9 +140,12 @@ func (s *Supervisor) Stop() {
 }
 
 // Restart stops the daemon and starts a fresh one (used to apply config changes).
+// Held under mu for the whole stop+start so two callers can't interleave.
 func (s *Supervisor) Restart() error {
-	s.Stop()
-	return s.Start()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopLocked()
+	return s.startLocked()
 }
 
 func binName() string {

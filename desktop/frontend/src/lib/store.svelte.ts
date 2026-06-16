@@ -1,8 +1,11 @@
 import { Events } from "@wailsio/runtime";
 import { XClawService } from "../../bindings/github.com/lml2468/xclaw/desktop";
 
-// The uid the desktop console talks to its bot under (a DM peer). The daemon
-// assigns the real sessionKey; we adopt it from the first reply (see below).
+// The uid the desktop console talks to its bot under (a DM peer). Control-bus
+// sends carry no space, so the daemon derives the session key as exactly this
+// uid — i.e. the console session key is deterministic. We key the console
+// session on it directly rather than adopting a key from the reply stream,
+// which a concurrent IM turn could otherwise hijack.
 const CONSOLE_UID = "gui-user";
 
 export type Role = "user" | "assistant" | "tool";
@@ -17,7 +20,7 @@ export interface Message {
 
 export interface Session {
   botId: string;
-  key: string;        // sessionKey, or "pending:<bot>" before adoption
+  key: string;        // sessionKey (the console session is keyed on CONSOLE_UID)
   title: string;
   messages: Message[];
   awaiting: boolean;  // a turn is in flight (show typing indicator)
@@ -40,7 +43,7 @@ let uid = 0;
 const newId = () => `m${++uid}`;
 
 function prettyTitle(key: string): string {
-  if (key.startsWith("pending:")) return "Console";
+  if (key === CONSOLE_UID || key === "console") return "Console";
   const parts = key.split(":");
   if (parts.length > 1) return `${parts[0][0].toUpperCase()}${parts[0].slice(1)} · ${parts[parts.length - 1]}`;
   return key || "Console";
@@ -54,10 +57,6 @@ class Store {
   health = $state("");
   lastError = $state("");
   connected = $state(false);
-
-  // Per-bot adopted console sessionKey, and whether a console send is awaiting it.
-  private consoleKey: Record<string, string> = {};
-  private awaitingAdopt: Record<string, boolean> = {};
 
   constructor() {
     const params = new URLSearchParams(location.search);
@@ -124,7 +123,7 @@ class Store {
   selectBot(id: string) {
     this.selectedBotId = id;
     const sessions = this.botSessions;
-    this.selectedKey = sessions[0]?.key ?? this.consoleKey[id] ?? null;
+    this.selectedKey = sessions[0]?.key ?? null;
   }
 
   selectSession(key: string) {
@@ -134,12 +133,13 @@ class Store {
   send(text: string) {
     const botId = this.selectedBotId;
     if (!botId || !text.trim()) return;
-    const key = this.consoleKey[botId] ?? `pending:${botId}`;
+    // The console session key is deterministic (control-bus DM → key == CONSOLE_UID),
+    // so use it directly — no "adopt the first reply's key" guesswork.
+    const key = CONSOLE_UID;
     const s = this.ensureSession(botId, key);
     s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000, streaming: false });
     s.awaiting = true;
     s.lastActivity = Date.now();
-    if (!this.consoleKey[botId]) this.awaitingAdopt[botId] = true;
     this.selectedKey = key;
     XClawService.Send(botId, CONSOLE_UID, text);
   }
@@ -241,24 +241,14 @@ class Store {
     for (const m of s.messages) if (m.streaming) m.streaming = false;
   }
 
-  // route resolves the session an event belongs to, adopting the console key
-  // from the first reply after a console send.
+  // route resolves the session an event belongs to. The console session is
+  // keyed on CONSOLE_UID; IM-originated turns carry their own sessionKey and get
+  // their own row. No key adoption (which a concurrent IM turn could hijack).
   private route(env: Envelope): Session | null {
     const botId = env.body?.botId || this.defaultBotId();
     const key = env.body?.sessionKey ?? "";
     if (!botId) return null;
-
-    if (this.awaitingAdopt[botId] && !this.consoleKey[botId] && key) {
-      const pending = this.sessions.find((s) => s.botId === botId && s.key === `pending:${botId}`);
-      if (pending) {
-        pending.key = key;
-        pending.title = prettyTitle(key);
-        if (this.selectedKey === `pending:${botId}`) this.selectedKey = key;
-      }
-      this.consoleKey[botId] = key;
-      this.awaitingAdopt[botId] = false;
-    }
-    return this.ensureSession(botId, key || `pending:${botId}`);
+    return this.ensureSession(botId, key || CONSOLE_UID);
   }
 
   private defaultBotId(): string {

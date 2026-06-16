@@ -56,9 +56,9 @@
      window edges, so the dark rail reads as a thin frame around it. */
   .content {
     flex: 1; min-width: 0; display: flex;
-    margin: 8px 8px 8px 6px;
+    margin: 4px 4px 4px 3px;
     border: 1px solid var(--panel-border);
-    border-radius: 11px;
+    border-radius: 9px;
     overflow: hidden;
     box-shadow: var(--elev-2);
   }

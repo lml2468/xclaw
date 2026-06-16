@@ -8,20 +8,24 @@
   import Composer from "./lib/components/Composer.svelte";
   import ConfigEditor from "./lib/components/ConfigEditor.svelte";
   import TrafficLights from "./lib/components/TrafficLights.svelte";
+  import SkillsPanel from "./lib/components/SkillsPanel.svelte";
 
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
+  let showSkills = $state(new URLSearchParams(location.search).has("skills"));
 
-  // Tray "Edit Bots…" opens the editor (guarded: the Wails runtime is absent in
-  // a plain browser, e.g. the headless UI-audit harness).
+  // Tray "Edit Bots…" / "Manage Skills…" open these as modals over the console
+  // (guarded: the Wails runtime is absent in a plain browser, e.g. the headless
+  // UI-audit harness).
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
+  try { Events.On("xclaw:open-skills", () => (showSkills = true)); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
 <TrafficLights />
 <div class="shell">
-  <Rail onedit={() => (showEditor = true)} />
+  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} />
   <div class="content">
     <section class="list"><Conversations /></section>
     <main class="chat">
@@ -45,6 +49,9 @@
 
 {#if showEditor}
   <ConfigEditor onclose={() => (showEditor = false)} />
+{/if}
+{#if showSkills}
+  <SkillsPanel onclose={() => (showSkills = false)} />
 {/if}
 
 <style>

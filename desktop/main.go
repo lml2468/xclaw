@@ -129,6 +129,10 @@ func setupSystemTray() {
 		openConsole()
 		app.Event.Emit("xclaw:open-editor")
 	})
+	menu.Add("Manage Skills…").OnClick(func(*application.Context) {
+		openConsole()
+		app.Event.Emit("xclaw:open-skills")
+	})
 	menu.AddSeparator()
 	menu.Add("Restart Core").OnClick(func(*application.Context) {
 		if bridge != nil {

@@ -16,6 +16,15 @@
   let error = $state("");
   let newName = $state("");
   let newFilePath = $state("");
+  // window.confirm() is a no-op in the Wails webview, so use an in-app dialog.
+  let confirmState = $state<{ msg: string; resolve: (v: boolean) => void } | null>(null);
+  function ask(msg: string): Promise<boolean> {
+    return new Promise((resolve) => (confirmState = { msg, resolve }));
+  }
+  function answer(v: boolean) {
+    confirmState?.resolve(v);
+    confirmState = null;
+  }
 
   // Preview-mode in-memory catalog so the layout can be screenshotted without a daemon.
   const mock: Record<string, Record<string, string>> = {
@@ -59,7 +68,7 @@
   }
 
   async function openFile(rel: string) {
-    if (dirty && !confirm("Discard unsaved changes?")) return;
+    if (dirty && !(await ask("Discard unsaved changes?"))) return;
     activeFile = rel; error = "";
     try {
       content = isPreview ? (mock[sel!]?.[rel] ?? "") : await XClawService.SkillRead(sel!, rel);
@@ -90,7 +99,7 @@
 
   async function deleteFile(rel: string) {
     if (!sel || rel === "SKILL.md") return;
-    if (!confirm(`Delete ${rel}?`)) return;
+    if (!(await ask(`Delete ${rel}?`))) return;
     try {
       if (isPreview) { delete mock[sel][rel]; }
       else await XClawService.SkillDeleteFile(sel, rel);
@@ -112,7 +121,7 @@
   }
 
   async function deleteSkill(name: string) {
-    if (!confirm(`Delete the skill "${name}" and all its files?`)) return;
+    if (!(await ask(`Delete the skill "${name}" and all its files?`))) return;
     try {
       if (isPreview) { delete mock[name]; } else await XClawService.SkillDelete(name);
       if (sel === name) { sel = null; files = []; activeFile = null; content = ""; }
@@ -181,6 +190,18 @@
   </div>
 
   {#if error}<div class="err">⚠️ {error}</div>{/if}
+
+  {#if confirmState}
+    <div class="confirm-scrim" role="presentation">
+      <div class="confirm" role="alertdialog" aria-label="Confirm">
+        <p>{confirmState.msg}</p>
+        <div class="cbtns">
+          <button onclick={() => answer(false)}>Cancel</button>
+          <button class="danger" onclick={() => answer(true)}>Confirm</button>
+        </div>
+      </div>
+    </div>
+  {/if}
   </div>
 </div>
 
@@ -188,7 +209,7 @@
   /* Mirrors ConfigEditor (Edit Bots): same scrim + centered modal + header/✕,
      so the two open and feel identical. */
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(940px, 94vw); height: min(640px, 90vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; color: var(--ink); font-family: var(--ui); }
+  .modal { width: min(940px, 94vw); height: min(640px, 90vh); position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; color: var(--ink); font-family: var(--ui); }
   header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
   header h2 { font-size: 17px; font-weight: 600; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
@@ -235,4 +256,11 @@
   textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 
   .err { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--hairline)); color: var(--danger); padding: 8px 14px; border-radius: 8px; font-size: 12px; box-shadow: var(--shadow-pop); }
+
+  .confirm-scrim { position: absolute; inset: 0; z-index: 10; background: color-mix(in srgb, var(--ink) 30%, transparent); display: grid; place-items: center; }
+  .confirm { width: min(360px, 80%); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 18px; }
+  .confirm p { margin: 0 0 14px; font-size: 13px; color: var(--ink); }
+  .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
+  .cbtns button { padding: 7px 14px; border-radius: 4px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink); font-size: 12px; }
+  .cbtns .danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 </style>

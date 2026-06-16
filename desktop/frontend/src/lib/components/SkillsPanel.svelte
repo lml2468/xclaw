@@ -119,94 +119,113 @@
   }
 </script>
 
-<div class="skills">
-  <aside class="catalog">
-    <header class="ch"><span class="t">Skills</span></header>
-    <div class="rows">
+<div class="root">
+  <header><h2>Manage Skills</h2></header>
+
+  <div class="body">
+    <div class="list">
       {#each skills as s (s.name)}
-        <button class="srow" class:sel={s.name === sel} onclick={() => selectSkill(s.name)}>
+        <button class="row" class:sel={s.name === sel} onclick={() => selectSkill(s.name)}>
           <span class="nm">{s.name}</span>
           <span class="ds">{s.description || "No description"}</span>
-          <span class="fc">{s.files} file{s.files === 1 ? "" : "s"}</span>
         </button>
       {/each}
-      {#if skills.length === 0}<div class="empty">No skills yet.</div>{/if}
+      {#if skills.length === 0}<div class="muted">No skills yet.</div>{/if}
+      <div class="new">
+        <input placeholder="new-skill-name" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
+        <button class="add" onclick={createSkill} disabled={!newName.trim()}>+ New skill</button>
+      </div>
     </div>
-    <div class="add">
-      <input placeholder="new-skill-name" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
-      <button class="mk" onclick={createSkill} disabled={!newName.trim()}>+ New</button>
-    </div>
-  </aside>
 
-  <main class="editor">
     {#if sel}
-      <header class="eh">
-        <span class="t">{sel}</span>
-        <span class="spacer"></span>
-        <button class="del" onclick={() => deleteSkill(sel!)}>Delete skill</button>
-      </header>
-      <div class="body">
-        <div class="filelist">
-          {#each files as f (f)}
-            <div class="frow" class:sel={f === activeFile}>
-              <button class="fname" onclick={() => openFile(f)}>{f}</button>
-              {#if f !== "SKILL.md"}<button class="fx" title="Delete file" onclick={() => deleteFile(f)}>−</button>{/if}
-            </div>
-          {/each}
-          <div class="addfile">
-            <input placeholder="path/in/skill.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
-            <button onclick={addFile} disabled={!newFilePath.trim()}>+ File</button>
-          </div>
+      <div class="detail">
+        <div class="dhead">
+          <span class="dt">{sel}</span>
+          <span class="spacer"></span>
+          <button class="remove" onclick={() => deleteSkill(sel!)}>Remove skill</button>
         </div>
-        <div class="edit">
-          {#if activeFile}
-            <div class="editbar"><span class="fn">{activeFile}</span><span class="spacer"></span>{#if dirty}<span class="dot">●</span>{/if}<button class="save" onclick={saveFile} disabled={!dirty}>Save</button></div>
-            <textarea bind:value={content} oninput={() => (dirty = true)} spellcheck="false"></textarea>
-          {:else}
-            <div class="placeholder">Select a file to edit.</div>
-          {/if}
+        <div class="cols">
+          <div class="files">
+            {#each files as f (f)}
+              <div class="frow" class:sel={f === activeFile}>
+                <button class="fname" onclick={() => openFile(f)}>{f}</button>
+                {#if f !== "SKILL.md"}<button class="del" title="Delete file" onclick={() => deleteFile(f)}>−</button>{/if}
+              </div>
+            {/each}
+            <div class="new">
+              <input placeholder="path/in/skill.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
+              <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ Add file</button>
+            </div>
+          </div>
+          <div class="editor">
+            {#if activeFile}
+              <div class="ebar">
+                <span class="fn">{activeFile}</span>
+                <span class="spacer"></span>
+                {#if dirty}<span class="dirty">●</span>{/if}
+                <button class="primary" onclick={saveFile} disabled={!dirty}>Save</button>
+              </div>
+              <textarea class="code" bind:value={content} oninput={() => (dirty = true)} spellcheck="false"></textarea>
+            {:else}
+              <div class="muted center">Select a file to edit.</div>
+            {/if}
+          </div>
         </div>
       </div>
     {:else}
-      <div class="placeholder big">Select or create a skill.</div>
+      <div class="detail"><div class="muted center">Select or create a skill.</div></div>
     {/if}
-  </main>
+  </div>
 
   {#if error}<div class="err">⚠️ {error}</div>{/if}
 </div>
 
 <style>
-  .skills { display: grid; grid-template-columns: 280px 1fr; height: 100vh; background: var(--chat); color: var(--ink); font-family: var(--ui); }
-  .catalog { display: flex; flex-direction: column; border-right: 1px solid var(--hairline); background: var(--list); min-width: 0; }
-  .ch, .eh { display: flex; align-items: center; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--hairline); background: var(--surface); }
-  .ch .t, .eh .t { font-size: 15px; font-weight: 600; }
+  /* Mirrors ConfigEditor (Edit Bots) so the two windows share one visual language. */
+  .root { height: 100vh; display: flex; flex-direction: column; background: var(--surface); color: var(--ink); font-family: var(--ui); }
+  header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
+  header h2 { font-size: 17px; font-weight: 600; }
+
+  .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
+
+  .list { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
+  .row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: none; background: transparent; border-radius: 4px; color: var(--ink); }
+  .row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .row .nm { font-size: 13px; font-weight: 600; }
+  .row .ds { font-size: 11px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: var(--ink-faint); font-size: 12px; padding: 12px; }
+  .muted.center { display: grid; place-items: center; height: 100%; }
+
+  .new { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 4px; padding: 7px 10px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; }
+  input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); }
+  .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 4px; color: var(--ink-soft); font-size: 12px; }
+  .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong); }
+  .add:disabled { opacity: 0.45; }
+
+  .detail { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .dhead { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+  .dt { font-size: 14px; font-weight: 600; font-family: var(--mono); }
   .spacer { flex: 1; }
-  .rows { flex: 1; overflow-y: auto; padding: 6px; }
-  .srow { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: 9px 11px; border: none; background: transparent; border-radius: 6px; color: var(--ink); }
-  .srow:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
-  .srow.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  .srow .nm { font-size: 13px; font-weight: 600; font-family: var(--mono); }
-  .srow .ds { font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .srow .fc { font-size: 11px; color: var(--ink-faint); }
-  .empty, .placeholder { color: var(--ink-faint); font-size: 13px; padding: 16px; }
-  .placeholder.big { display: grid; place-items: center; height: 100%; }
-  .add, .addfile { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--hairline); }
-  .add input, .addfile input { flex: 1; min-width: 0; background: color-mix(in srgb, var(--ink) 5%, var(--surface)); border: 1px solid var(--hairline); border-radius: 5px; padding: 6px 9px; font-size: 12px; font-family: var(--mono); color: var(--ink); outline: none; }
-  .add .mk, .addfile button, .save { background: var(--accent); color: #fff; border: none; border-radius: 5px; padding: 6px 11px; font-size: 12px; }
-  .add .mk:disabled, .addfile button:disabled, .save:disabled { opacity: 0.45; }
-  .editor { display: flex; flex-direction: column; min-width: 0; }
-  .del { background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--hairline)); color: var(--danger); border-radius: 5px; padding: 5px 11px; font-size: 12px; }
-  .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
-  .filelist { border-right: 1px solid var(--hairline); overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
-  .frow { display: flex; align-items: center; border-radius: 5px; }
-  .frow.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .remove { color: var(--danger); background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--hairline)); border-radius: 4px; padding: 5px 11px; font-size: 12px; }
+
+  .cols { flex: 1; display: grid; grid-template-columns: 210px 1fr; min-height: 0; }
+  .files { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
+  .frow { display: flex; align-items: center; border-radius: 4px; }
+  .frow:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .frow.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .fname { flex: 1; min-width: 0; text-align: left; background: transparent; border: none; color: var(--ink); padding: 7px 9px; font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
-  .fx { background: transparent; border: none; color: var(--ink-faint); padding: 0 9px; font-size: 15px; }
-  .fx:hover { color: var(--danger); }
-  .edit { display: flex; flex-direction: column; min-width: 0; }
-  .editbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--hairline); }
-  .editbar .fn { font-size: 12px; font-family: var(--mono); color: var(--ink-soft); }
-  .editbar .dot { color: var(--accent); font-size: 10px; }
-  textarea { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+  .del { width: 24px; height: 24px; border: none; background: transparent; color: var(--ink-faint); font-size: 15px; }
+  .del:hover { color: var(--danger); }
+
+  .editor { display: flex; flex-direction: column; min-width: 0; }
+  .ebar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); }
+  .ebar .fn { font-size: 12px; font-family: var(--mono); color: var(--ink-soft); }
+  .ebar .dirty { color: var(--accent); font-size: 10px; }
+  .primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; padding: 6px 14px; font-size: 12px; }
+  .primary:disabled { opacity: 0.45; }
+  textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+
   .err { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--hairline)); color: var(--danger); padding: 8px 14px; border-radius: 8px; font-size: 12px; box-shadow: var(--shadow-pop); }
 </style>

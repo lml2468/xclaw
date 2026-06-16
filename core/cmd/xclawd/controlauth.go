@@ -14,19 +14,33 @@ import (
 // no sanctioned agent path — scheduling prompts that fire as the owner
 // (cron.*, a prompt-injection-into-future-turns persistence primitive), pushing
 // secrets (secret.inject), injecting/clearing sessions (session.send,
-// session.reset). The peer-credential gate (MLT-29) already blocks any cross-uid
+// session.reset), and reading stored data across sessions/bots (session.history,
+// cron.list). The peer-credential gate (MLT-29) already blocks any cross-uid
 // process; this token draws the boundary the peer-cred check cannot — the
 // operator's GUI (which holds the token) vs. the spawned agent's CLI, which runs
 // as the same uid as the daemon.
 //
-// Read-only/health commands (health, bots.list, session.history, cron.list) stay
-// open: they leak nothing about other sessions the agent's own bot can't see, and
-// the cross-session event stream is gated separately in Server.Broadcast.
+// session.history and cron.list are privileged because their handlers take an
+// attacker-controllable botId + sessionKey (session.history) / botId (cron.list)
+// with NO scoping check, so a prompt-injected same-uid agent could read any
+// session's stored plaintext history or enumerate the owner's scheduled prompts
+// across any bot — the at-rest twin of the cross-session event stream that is
+// gated in Server.Broadcast. sessionKeys are low-entropy (DM = uid, group =
+// channelId) and an injected agent already sees peer uids / channel ids, so
+// targeting is trivial; leaving these open defeats the cross-session boundary
+// this gate establishes. The GUI is the only sanctioned caller and it
+// authenticates before issuing them (the auth send precedes all other sends on
+// its FIFO connection), so gating does not break it.
+//
+// Open commands (health, bots.list) stay open: low-value daemon/roster metadata
+// the agent's own config already implies, with no cross-session disclosure.
 var privilegedControlCommands = []string{
 	"session.send",
 	"session.reset",
 	"secret.inject",
+	"session.history",
 	"cron.create",
+	"cron.list",
 	"cron.delete",
 }
 

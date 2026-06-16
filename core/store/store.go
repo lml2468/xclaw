@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no cgo, cross-compiles cleanly
@@ -81,17 +82,29 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 
 // Open initializes the database (creating the schema) at path.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;`); err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// dsn carries the connection pragmas in the DSN as _pragma query params so the
+// modernc driver re-applies them on EVERY pooled connection it opens — not just
+// the first. foreign_keys is connection-scoped, so setting it once via Exec left
+// other pooled connections with FK enforcement OFF, which silently skipped the
+// messages ON DELETE CASCADE and orphaned message rows in CleanupExpired
+// (MLT-33). busy_timeout is likewise per-connection; journal_mode=WAL is a
+// persistent database setting but is cheap and idempotent to assert per-connection.
+func dsn(path string) string {
+	sep := "?"
+	if strings.ContainsRune(path, '?') {
+		sep = "&"
+	}
+	return path + sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 }
 
 // SetClock overrides the time source (tests use this for deterministic TTL).

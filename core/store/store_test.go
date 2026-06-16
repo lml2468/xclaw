@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -121,5 +122,70 @@ func TestCleanupExpired(t *testing.T) {
 	// new survives
 	if _, err := s.GetOrCreate("new", "c", 1); err != nil {
 		t.Fatalf("new session should survive: %v", err)
+	}
+}
+
+// TestCleanupExpiredCascadesAcrossPooledConnections is the MLT-33 regression
+// guard. PRAGMA foreign_keys is connection-scoped, and database/sql pools
+// connections, so if FK enforcement isn't set on every pooled connection the
+// ON DELETE CASCADE on messages silently no-ops on whatever connection happens
+// to run the session DELETE — orphaning message rows that then never expire.
+// This forces CleanupExpired onto a *different* pooled connection than the one
+// that wrote the rows, proving the cascade fires regardless of which connection
+// the pool hands out.
+func TestCleanupExpiredCascadesAcrossPooledConnections(t *testing.T) {
+	s := openTemp(t)
+	// Allow the pool to hold more than one connection so we can pin one open
+	// and force the cleanup onto a second, freshly opened connection.
+	s.db.SetMaxOpenConns(3)
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return base })
+
+	if _, err := s.GetOrCreate("old", "c", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendUser("old", "stale", "alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	// Pin a connection out of the pool so the next statement must use another.
+	pinned, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin conn: %v", err)
+	}
+	defer pinned.Close()
+	// Touch the pinned connection so it is genuinely checked out and busy.
+	if err := pinned.PingContext(ctx); err != nil {
+		t.Fatalf("ping pinned: %v", err)
+	}
+
+	s.SetClock(func() time.Time { return base.Add(8 * 24 * time.Hour) })
+	n, err := s.CleanupExpired(DefaultTTL)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 expired session, got %d", n)
+	}
+
+	// The orphan check: query messages directly so a surviving row is caught
+	// even though its parent session is gone.
+	var orphans int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE session_id='old'`).Scan(&orphans); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if orphans != 0 {
+		t.Fatalf("FK cascade did not fire across pooled connections: %d orphaned message rows remain", orphans)
+	}
+}
+
+func TestDSN(t *testing.T) {
+	if got := dsn("/tmp/x.db"); got != "/tmp/x.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)" {
+		t.Fatalf("plain path dsn wrong: %q", got)
+	}
+	if got := dsn("file:/tmp/x.db?cache=shared"); got != "file:/tmp/x.db?cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)" {
+		t.Fatalf("uri path dsn wrong: %q", got)
 	}
 }

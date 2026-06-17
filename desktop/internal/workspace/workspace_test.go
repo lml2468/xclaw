@@ -9,12 +9,21 @@ import (
 	"github.com/lml2468/xclaw/core/sandbox"
 )
 
+// setHome points workspace.Dir() (os.UserHomeDir) at a temp dir on every OS:
+// UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows, so set both.
+func setHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 // sandboxDir builds the on-disk DM sandbox dir for a session under a temp HOME
 // and returns its absolute path (created).
 func sandboxDir(t *testing.T, botID, sessionKey string) string {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := setHome(t)
 	dir := filepath.Join(home, ".xclaw", botID, "workspace",
 		sandbox.SessionDirName(sandbox.SessionCtx{Kind: sandbox.KindDM, SessionKey: sessionKey}))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -34,7 +43,7 @@ func write(t *testing.T, path, content string) {
 }
 
 func TestMissingWorkspaceIsEmptyTree(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t)
 	tree, err := Tree("bot1", "never-ran")
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
@@ -178,7 +187,7 @@ func TestFileRejectsTraversalAndDirs(t *testing.T) {
 }
 
 func TestInvalidBotID(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t)
 	for _, bad := range []string{"..", "a/b", "", "."} {
 		if _, err := Tree(bad, "u1"); err == nil {
 			t.Fatalf("Tree with bot id %q should be rejected", bad)

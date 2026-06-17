@@ -21,15 +21,13 @@ import (
 	"github.com/lml2468/xclaw/core/im/octo"
 	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/sandbox"
 	"github.com/lml2468/xclaw/core/store"
 )
 
 // Reaper cadence for a running bot. reapInterval is how often the sweep runs;
 // routerReapIdle is how long a session's lock / rate-limit buckets must sit
-// untouched before they're evicted (well under the store's 7-day TTL, but far
-// longer than the rate-limit window so an evicted bucket is always fully
-// refilled).
+// untouched before they're evicted (far longer than the rate-limit window so an
+// evicted bucket is always fully refilled).
 const (
 	reapInterval   = time.Hour
 	routerReapIdle = time.Hour
@@ -114,7 +112,7 @@ func (r *botRegistry) list() []control.BotInfo {
 // runConfigMode loads the single-file config, serves the control bus, and runs
 // every configured bot in its own isolated goroutine until SIGINT/SIGTERM (or,
 // when exitWithParent is set, until the launching process dies).
-func runConfigMode(path, controlSock string, exitWithParent bool) {
+func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool) {
 	bots, err := config.Load(path)
 	if err != nil {
 		fatal("config: %v", err)
@@ -140,6 +138,7 @@ func runConfigMode(path, controlSock string, exitWithParent bool) {
 		srv = control.NewServer(nil)
 		reg.srv = srv
 		srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
+		configureBusAuth(srv, authStdin) // arm the capability-token gate before serving
 		ln := mustListenUnix(controlSock)
 		defer ln.Close()
 		defer os.Remove(controlSock)
@@ -173,6 +172,13 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("bot %s: mkdir data: %w", cfg.BotID, err)
 	}
+	// Isolated per-bot CLAUDE_CONFIG_DIR (unless inheriting the operator's
+	// ~/.claude). Created here so the agent's config root exists before it spawns.
+	if cfg.ClaudeConfigDir != "" && !cfg.Agent.InheritUserConfig {
+		if err := os.MkdirAll(cfg.ClaudeConfigDir, 0o700); err != nil {
+			return fmt.Errorf("bot %s: mkdir claude config dir: %w", cfg.BotID, err)
+		}
+	}
 	st, err := store.Open(filepath.Join(cfg.DataDir, "xclaw.db"))
 	if err != nil {
 		return fmt.Errorf("bot %s: store: %w", cfg.BotID, err)
@@ -187,15 +193,10 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		BotBlocklist:      cfg.BotBlocklist,
 	})
 
-	// Periodic reaper: enforce the session/sandbox TTLs and bound the router's
-	// per-session maps over the daemon's lifetime (a one-shot startup sweep would
-	// let everything accumulate). Runs once now, then on a ticker until ctx done.
+	// Periodic reaper: bound the router's per-session lock / rate-limit maps over
+	// the daemon's lifetime (idle entries are evicted; sessions/messages/sandboxes
+	// themselves are NOT expired — they persist). Runs once now, then on a ticker.
 	reap := func() {
-		if n, _ := st.CleanupExpired(store.DefaultTTL); n > 0 {
-			fmt.Fprintf(os.Stderr, "[%s] swept %d expired session(s)\n", cfg.BotID, n)
-		}
-		// Reclaim per-session cwd sandboxes idle past the TTL (memory lives outside, untouched).
-		sandbox.CleanupExpiredCwds(cfg.CwdBase, sandbox.DefaultCwdTTL)
 		rt.Reap(routerReapIdle)
 	}
 	reap()
@@ -256,6 +257,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithCommandInfo(cfg.RateLimit.MaxPerMinute, cfg.Context.MaxContextChars).
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase, cfg.SkillsDir, cfg.GlobalSkillsDir).
 		WithSkillAllow(cfg.Skills).
+		WithWorkflows(cfg.WorkflowsDir, cfg.GlobalWorkflowsDir, cfg.Workflows).
 		WithMediaAuth(connector.MediaAuth())
 	connector.SetGateway(gw)
 

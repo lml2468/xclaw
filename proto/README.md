@@ -13,6 +13,60 @@ side can implement it independently.
     debug (`socat`/`nc`), and battle-tested in Open Island's
     bridge. Upgrade path to gRPC/protobuf-over-UDS if the schema grows.
 
+### Access control
+
+The bus exposes privileged operations (`session.send`, `secret.inject`,
+`cron.*`, history, the broadcast event stream), so it must not be drivable by an
+arbitrary local process. The daemon enforces an **owner-only** boundary on the
+socket:
+
+- **Peer-credential check (authoritative).** Every accepted connection's peer
+  OS-uid is read from the kernel (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on
+  macOS) and must equal the daemon's effective uid; a cross-uid process is
+  dropped at accept. This does not depend on filesystem perms, so it holds even
+  with the socket in a world-writable `/tmp` and on platforms that ignore socket
+  perms (macOS). Fail-closed: a peer-cred read error drops the connection.
+  Windows AF_UNIX exposes no peer credentials → the check is skipped there and
+  the socket relies on filesystem ACLs.
+- **chmod 0600 (defense in depth).** The kernel enforces socket-connect perms on
+  Linux, denying a different user `connect()` before the peer-cred layer runs.
+
+The trust boundary from the peer-cred + chmod layers is "same OS user as the
+daemon." That is necessary but **not sufficient**: the daemon spawns the agent
+CLI as the *same uid*, so a prompt-injected agent (which has a `Bash` tool)
+could hand-craft NDJSON and dial the socket. The peer-cred check cannot tell the
+operator's GUI from the agent's CLI. A second layer closes that gap:
+
+- **Capability token (GUI-only).** At spawn the launcher (the GUI) mints a random
+  token and hands it to the daemon **out-of-band** — over the daemon's stdin, a
+  private pipe the launcher owns — so it never appears in an env var or argv
+  (both world-readable via `/proc/<pid>/`) and the spawned agent, which the daemon
+  launches with its own fresh stdin, never inherits the fd. The daemon holds it in
+  memory only (never logged, never written to `config.json`). A client proves it is
+  the GUI by presenting the token in an `auth` command (constant-time compared);
+  that marks the connection authorized for the **privileged** command set. The
+  token is required: a daemon with no token configured (bare CLI/dev) can
+  authenticate no one, so every privileged command is denied (fail closed).
+
+  - **Privileged (require auth):** `session.send`, `session.reset`,
+    `secret.inject`, `cron.create`, `cron.delete`, and the broadcast **event
+    stream** (it carries every session's live activity — cross-session
+    disclosure). These are operator/GUI→daemon operations with no sanctioned agent
+    path.
+  - **Open (no auth):** `health`, `bots.list`, `session.history`, `cron.list` —
+    read-only/health surface that leaks nothing an agent's own bot can't see.
+
+A body field is **never** an authorization claim (see the cron owner-gate below);
+authorization is the peer-cred uid + the capability token, never client-asserted
+data.
+
+> **Residual risk (tracked separately):** same-uid is a weak boundary — a
+> determined injected agent with `ptrace`/`/proc/<pid>/mem` access (where Yama
+> `ptrace_scope` permits) could still extract the in-memory token. The durable fix
+> is privilege separation: run the agent CLI under a dedicated lower-privileged
+> uid so the peer-cred gate becomes a real boundary and the token is defense in
+> depth. Out of scope here.
+
 ## Envelope
 
 ```jsonc
@@ -29,15 +83,16 @@ multi-bot (config) mode; it is ignored in single-bot mode.
 
 | command | body | response |
 |---|---|---|
+| `auth` | `{token}` | `{ok}` (handshake; marks the connection authorized for privileged commands — see Access control) |
 | `bots.list` | — | `[{id, connected, lastError}]` |
 | `health` | — | `{uptime, driver, bots, connections}` |
 | `session.send` | `{botId?, uid, text}` | `{ok}` (turn streamed via events) |
 | `session.history` | `{botId?, sessionKey, limit}` | `[{role, content, ts}]` |
 | `session.reset` | `{botId?, uid}` | `{ok}` (clears the resume mapping) |
 | `secret.inject` | `{botId?, kind, value}` | `{ok}` (held in memory; never persisted) |
-| `cron.create` | `{botId?, uid, schedule, prompt, recurring?, channelId?, channelType?, fromName?}` | `{id, schedule, recurring, prompt, nextRun, enabled}` |
+| `cron.create` | `{botId?, schedule, prompt, recurring?, channelId?, channelType?, fromName?}` (`uid` accepted but ignored — authz + DM binding use the resolved owner) | `{id, schedule, recurring, prompt, nextRun, enabled}` |
 | `cron.list` | `{botId?}` | `[{id, schedule, recurring, prompt, nextRun, enabled}]` |
-| `cron.delete` | `{botId?, uid, id}` | `{ok}` |
+| `cron.delete` | `{botId?, id}` (`uid` accepted but ignored for authz) | `{ok}` |
 
 `session.send` routes `uid` as a DM inbound. A non-`ok` outcome (router drop or
 turn error) is reported asynchronously as an `error` event, since the response
@@ -59,11 +114,17 @@ over the control bus instead.
   `channelType` 2) targets a group; omitting it (or `channelType` 1) targets the
   DM with `uid`. When the task fires, its `prompt` runs as a synthetic message in
   that session and the reply is delivered there.
-- **Owner-gated:** only the bot owner (`owner_uid` from registration) may
-  `cron.create` / `cron.delete`; `cron.list` is read-only. Cron fires bypass the
-  group @mention gate and the rate limit (operator-scheduled, in-process); they
-  never run untrusted-user-created tasks (the security prefix carries the
-  advisory defense-in-depth layer).
+- **Owner-gated:** `cron.create` / `cron.delete` are gated on the
+  **server-resolved owner uid** (`owner_uid` from registration), never on a body
+  field — the agent reaches cron over an agent-controlled CLI, so a body `uid`
+  is a forgeable claim a prompt injection could set to the owner's. The body
+  `uid` is accepted for proto compatibility but **ignored** for authorization
+  and for DM binding (the resolved owner is used for both); a created task always
+  runs as the owner. If the bot has no resolved owner yet, create/delete fail
+  closed. `cron.list` is read-only. Cron fires bypass the group @mention gate and
+  the rate limit (operator-scheduled, in-process); they never run
+  untrusted-user-created tasks (the security prefix carries the advisory
+  defense-in-depth layer).
 - Caps: ≤ 50 tasks/bot, ≤ 2048-byte prompt. A bot without `agent.cron` returns an
   error for all three commands.
 

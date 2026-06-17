@@ -39,10 +39,10 @@
 
   /* Layout */
   --rail-w: 72px;
-  --list-w: 318px;
+  --list-w: 280px;
   --titlebar: 36px;       /* rail logo clearance below the traffic lights */
   --header-h: 60px;       /* list/chat header (content right of the lights) */
-  --row-h: 72px;
+  --row-h: 52px;
   --avatar: 40px;
   --avatar-sm: 36px;
   --bubble-radius: 4px;

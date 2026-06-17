@@ -110,6 +110,12 @@ type SessionHistoryBody struct {
 	Limit      int    `json:"limit"`
 }
 
+// SessionsListBody requests every persisted session for a bot (proto:
+// sessions.list), newest updated first, for the desktop conversation list.
+type SessionsListBody struct {
+	BotID string `json:"botId,omitempty"`
+}
+
 // SecretInjectBody carries a single secret into the core (proto: secret.inject).
 // The value is held in memory only — never persisted, never logged.
 type SecretInjectBody struct {
@@ -231,4 +237,14 @@ type HistoryMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 	TS      int64  `json:"ts"`
+}
+
+// SessionSummary is one row of the sessions.list response: a persisted session
+// plus a preview from its latest message (empty when it has none).
+type SessionSummary struct {
+	Key         string `json:"key"`
+	ChannelType int    `json:"channelType"`
+	UpdatedAt   int64  `json:"updatedAt"` // Unix seconds
+	Preview     string `json:"preview"`
+	LastRole    string `json:"lastRole"`
 }

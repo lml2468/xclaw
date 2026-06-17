@@ -206,6 +206,48 @@ func (s *Store) RecentMessages(sessionID string, limit int) ([]Message, error) {
 	return out, rows.Err()
 }
 
+// SessionSummary is one row for the desktop conversation list: the session's
+// key plus a preview drawn from its most recent message. Preview/LastRole are
+// empty when the session has no messages yet.
+type SessionSummary struct {
+	Key         string
+	ChannelType int
+	UpdatedAt   int64
+	Preview     string
+	LastRole    Role
+}
+
+// ListSessions returns every persisted session for this bot's store, newest
+// updated first, each with a preview from its latest message. The store is
+// already per-bot (one DB under ~/.xclaw/<id>/), so this lists exactly that
+// bot's sessions. The correlated subquery picks the highest-id (newest) message
+// per session, covered by idx_messages_session_id.
+func (s *Store) ListSessions() ([]SessionSummary, error) {
+	rows, err := s.db.Query(
+		`SELECT s.id, s.channel_type, s.updated_at,
+		        COALESCE(m.content,''), COALESCE(m.role,'')
+		 FROM sessions s
+		 LEFT JOIN messages m ON m.id = (
+		   SELECT id FROM messages WHERE session_id = s.id ORDER BY id DESC LIMIT 1
+		 )
+		 ORDER BY s.updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionSummary
+	for rows.Next() {
+		var ss SessionSummary
+		var role string
+		if err := rows.Scan(&ss.Key, &ss.ChannelType, &ss.UpdatedAt, &ss.Preview, &role); err != nil {
+			return nil, err
+		}
+		ss.LastRole = Role(role)
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}
+
 // --- resume map ---
 
 // SaveResume records (or replaces) the resume id for a session key.

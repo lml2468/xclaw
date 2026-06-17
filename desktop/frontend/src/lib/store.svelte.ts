@@ -51,6 +51,8 @@ export interface Session {
   cachedInputTokens: number;
   costUsd: number;
   lastActivity: number;
+  preview?: string;   // last-message preview for the list (from sessions.list, before messages load)
+  loaded?: boolean;   // true once full history has been fetched, so we don't refetch on every open
 }
 
 export interface Bot {
@@ -81,13 +83,16 @@ class Store {
   health = $state("");
   lastError = $state("");
   connected = $state(false);
+  // True in preview mode (XCLAW_PREVIEW / ?preview): seeded mock data, no daemon,
+  // so we skip the control-bus fetches (SessionsList/History).
+  readonly preview = new URLSearchParams(location.search).has("preview");
 
   constructor() {
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme");
     if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
 
-    if (params.has("preview")) {
+    if (this.preview) {
       this.seedPreview();
       return;
     }
@@ -133,6 +138,22 @@ class Store {
       ],
     };
     this.sessions = [s];
+    // Extra history rows (preview-only, like a real sessions.list) so the denser
+    // list renders several items for layout/screenshot work.
+    const hist: Array<[string, string, string, number]> = [
+      ["dm:alice", "Alice", "Sounds good — I'll push the fix tonight.", 6 * 60_000],
+      ["group:eng", "Eng · #backend", "the migration is green on staging", 42 * 60_000],
+      ["dm:bob", "Bob", "thanks! that unblocked me", 3 * 3600_000],
+      ["dm:carol", "Carol", "can you review the PR when you get a sec?", 26 * 3600_000],
+      ["group:ops", "Ops · #alerts", "resolved: latency back to baseline", 3 * 86400_000],
+    ];
+    for (const [key, title, prev, ago] of hist) {
+      this.sessions.push({
+        botId: "main", key, title, messages: [], awaiting: false, proc: emptyProc(),
+        inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0,
+        lastActivity: Date.now() - ago, preview: prev,
+      });
+    }
     this.selectedBotId = "main";
     this.selectedKey = "console";
   }
@@ -154,12 +175,29 @@ class Store {
 
   selectBot(id: string) {
     this.selectedBotId = id;
+    // Pull this bot's full persisted session list (newest first); the response
+    // folds into sessions[] so history survives restarts.
+    if (!this.preview) XClawService.SessionsList(id);
     const sessions = this.botSessions;
     this.selectedKey = sessions[0]?.key ?? null;
+    if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
 
   selectSession(key: string) {
     this.selectedKey = key;
+    this.loadHistory(key);
+  }
+
+  // loadHistory lazily fetches a session's transcript the first time it's opened
+  // (sessions.list only carries a preview). applyHistory routes to currentSession,
+  // so we fetch right after selecting; the loaded flag prevents refetching.
+  private loadHistory(key: string) {
+    if (this.preview) return;
+    const botId = this.selectedBotId;
+    if (!botId) return;
+    const s = this.sessions.find((x) => x.botId === botId && x.key === key);
+    if (!s || s.loaded || s.key === CONSOLE_UID) return;
+    XClawService.History(botId, key, 0);
   }
 
   send(text: string) {
@@ -198,6 +236,8 @@ class Store {
       } else if (env.type === "bots.list" && Array.isArray(env.body)) {
         this.bots = env.body.map((b: any) => ({ id: b.id, connected: !!b.connected, lastError: b.lastError }));
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
+      } else if (env.type === "sessions.list" && Array.isArray(env.body)) {
+        this.applySessionsList(env.body);
       } else if (env.type === "session.history" && Array.isArray(env.body)) {
         this.applyHistory(env.body);
       }
@@ -308,8 +348,27 @@ class Store {
 
   private applyHistory(rows: any[]) {
     const s = this.currentSession;
-    if (!s || s.messages.length) return;
+    if (!s) return;
+    s.loaded = true; // mark fetched even when empty, so we don't refetch on every open
+    if (s.messages.length) return;
     s.messages = rows.map((r) => ({ id: newId(), role: r.role as Role, text: r.content, ts: r.ts, streaming: false }));
+  }
+
+  // applySessionsList folds the persisted session roster (newest first) into the
+  // store so the list survives restarts. Each summary carries a preview only; the
+  // transcript is lazy-loaded on open (loadHistory). updatedAt is Unix seconds.
+  private applySessionsList(rows: any[]) {
+    const botId = this.defaultBotId();
+    if (!botId) return;
+    for (const r of rows) {
+      if (!r?.key) continue;
+      const s = this.ensureSession(botId, r.key);
+      s.lastActivity = (r.updatedAt ?? 0) * 1000;
+      s.preview = r.preview ?? "";
+    }
+    // If a session is selected but its history hasn't loaded, fetch it now that we
+    // know it exists (covers the first roster arriving after connect).
+    if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
 }
 

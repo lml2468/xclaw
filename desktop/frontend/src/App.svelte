@@ -5,6 +5,7 @@
   import Rail from "./lib/components/Rail.svelte";
   import Conversations from "./lib/components/Conversations.svelte";
   import Transcript from "./lib/components/Transcript.svelte";
+  import StatusBar from "./lib/components/StatusBar.svelte";
   import Composer from "./lib/components/Composer.svelte";
   import ConfigEditor from "./lib/components/ConfigEditor.svelte";
   import TrafficLights from "./lib/components/TrafficLights.svelte";
@@ -40,15 +41,10 @@
           <button class="icon" class:on={showFiles} style="--wails-draggable: no-drag;" title="Workspace files" onclick={() => (showFiles = !showFiles)} aria-label="Toggle workspace" aria-pressed={showFiles}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
           </button>
-          <button class="icon" style="--wails-draggable: no-drag;" title="Clear conversation memory" onclick={() => store.reset()} aria-label="Clear memory">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6"/></svg>
-          </button>
-          <button class="icon" style="--wails-draggable: no-drag;" title="Restart core" onclick={() => store.restartCore()} aria-label="Restart core">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
-          </button>
         {/if}
       </header>
       <Transcript onpick={pick} />
+      <StatusBar />
       <Composer bind:this={composer} />
     </main>
     {#if showFiles && store.currentSession}

@@ -50,11 +50,6 @@
           <div class="typing"><span></span><span></span><span></span></div>
         </div>
       {/if}
-      {#if session && session.outputTokens > 0}
-        <div class="tokens">
-          {session.inputTokens} in · {session.outputTokens} out{#if session.cachedInputTokens > 0} · {session.cachedInputTokens} cached{/if}{#if session.costUsd > 0} · ${session.costUsd.toFixed(4)}{/if}
-        </div>
-      {/if}
     {/if}
   </div>
 </div>
@@ -71,6 +66,4 @@
   .typing span:nth-child(2) { animation-delay: 0.15s; }
   .typing span:nth-child(3) { animation-delay: 0.3s; }
   @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
-
-  .tokens { align-self: center; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; padding-top: 2px; }
 </style>

@@ -30,6 +30,13 @@ import (
 
 const repo = "Mininglamp-OSS/octo-cli"
 
+// Injectable seams for tests. Production uses the real GitHub API over the
+// default HTTP client; tests point these at an httptest server.
+var (
+	httpClient = http.DefaultClient
+	apiBase    = "https://api.github.com"
+)
+
 func binName() string {
 	if runtime.GOOS == "windows" {
 		return "octo-cli.exe"
@@ -122,14 +129,14 @@ type ghRelease struct {
 
 func latestRelease(ctx context.Context) (ghRelease, error) {
 	var r ghRelease
-	url := "https://api.github.com/repos/" + repo + "/releases/latest"
+	url := apiBase + "/repos/" + repo + "/releases/latest"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return r, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "xclaw-desktop")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return r, err
 	}
@@ -247,7 +254,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "xclaw-desktop")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

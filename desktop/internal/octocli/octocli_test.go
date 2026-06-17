@@ -4,7 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -108,5 +112,79 @@ func TestExtractTarGz(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("extracted %q want %q", got, want)
+	}
+}
+
+// runUpgrade points the package's HTTP seams at an httptest server and HOME at a
+// temp dir (so Dir()/BinPath() never touch the real ~/.xclaw), then runs Upgrade.
+func runUpgrade(t *testing.T, h http.HandlerFunc) (string, error) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	oldBase, oldClient := apiBase, httpClient
+	apiBase, httpClient = srv.URL, srv.Client()
+	t.Cleanup(func() { apiBase, httpClient = oldBase, oldClient })
+	t.Setenv("HOME", t.TempDir())
+	return Upgrade(context.Background())
+}
+
+// A release that ships no checksums.txt must abort BEFORE any download — the
+// binary lands on the agent's PATH, so an unverifiable release is never installed.
+func TestUpgradeFailsClosedWithoutChecksums(t *testing.T) {
+	want := assetName("v9.9.9")
+	_, err := runUpgrade(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			base := "http://" + r.Host
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tag_name": "v9.9.9",
+				"assets": []map[string]string{
+					{"name": want, "browser_download_url": base + "/dl/asset"},
+					// deliberately no checksums.txt
+				},
+			})
+			return
+		}
+		t.Errorf("unexpected request to %s — Upgrade must abort before downloading", r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	})
+	if err == nil {
+		t.Fatal("Upgrade must fail closed when the release ships no checksums.txt")
+	}
+	if !strings.Contains(err.Error(), "checksums.txt") {
+		t.Errorf("error should mention checksums.txt, got: %v", err)
+	}
+	if isFile(BinPath()) {
+		t.Error("no binary must be installed when verification is impossible")
+	}
+}
+
+// If checksums.txt exists but can't be fetched, Upgrade must abort (not fall
+// back to installing the unverified, already-downloaded archive).
+func TestUpgradeAbortsWhenChecksumsDownloadFails(t *testing.T) {
+	want := assetName("v9.9.9")
+	_, err := runUpgrade(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+			base := "http://" + r.Host
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tag_name": "v9.9.9",
+				"assets": []map[string]string{
+					{"name": want, "browser_download_url": base + "/dl/asset"},
+					{"name": "checksums.txt", "browser_download_url": base + "/dl/checksums"},
+				},
+			})
+		case r.URL.Path == "/dl/asset":
+			_, _ = w.Write([]byte("archive-bytes")) // asset download succeeds…
+		case r.URL.Path == "/dl/checksums":
+			http.Error(w, "boom", http.StatusInternalServerError) // …but checksums fails
+		default:
+			http.Error(w, "nope", http.StatusNotFound)
+		}
+	})
+	if err == nil {
+		t.Fatal("Upgrade must abort when checksums.txt cannot be downloaded")
+	}
+	if isFile(BinPath()) {
+		t.Error("no binary must be installed when the checksums download fails")
 	}
 }

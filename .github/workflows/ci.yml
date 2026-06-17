@@ -72,17 +72,34 @@ jobs:
           GOARCH: ${{ matrix.target.goarch }}
         run: go build -o /dev/null ./cmd/xclawd
 
-  app:
-    name: Swift app
+  desktop:
+    name: Desktop app
     runs-on: macos-15
-    defaults:
-      run:
-        working-directory: app
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain
-        run: swift --version
-      - name: swift build
-        run: swift build
-      - name: swift test
-        run: swift test
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: frontend build
+        working-directory: desktop/frontend
+        run: |
+          npm ci
+          npm run build
+          npm run check
+
+      - name: go vet
+        working-directory: desktop
+        run: go vet ./...
+
+      - name: go build
+        working-directory: desktop
+        run: go build ./...

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -81,5 +83,62 @@ func TestMessagesChronologicalAndLimited(t *testing.T) {
 	}
 	if msgs[0].Role != RoleAssistant || msgs[1].Role != RoleUser {
 		t.Fatalf("roles wrong: %+v", msgs)
+	}
+}
+
+func TestDSN(t *testing.T) {
+	if got := dsn("/tmp/x.db"); got != "/tmp/x.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)" {
+		t.Fatalf("plain path dsn wrong: %q", got)
+	}
+	if got := dsn("file:/tmp/x.db?cache=shared"); got != "file:/tmp/x.db?cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)" {
+		t.Fatalf("uri path dsn wrong: %q", got)
+	}
+}
+
+// TestPragmasApplyPerPooledConnection proves the DSN pragmas are actually
+// replayed on a freshly-handed-out pooled connection, not merely present in the
+// DSN string (TestDSN's scope). A connection is pinned so the assertions run on
+// a second, distinct connection — closing the "every connection, not just the
+// pool's first" invariant for all three pragmas, not only foreign_keys.
+func TestPragmasApplyPerPooledConnection(t *testing.T) {
+	s := openTemp(t)
+	s.db.SetMaxOpenConns(3)
+	ctx := context.Background()
+
+	pinned, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin conn: %v", err)
+	}
+	defer pinned.Close()
+	if err := pinned.PingContext(ctx); err != nil {
+		t.Fatalf("ping pinned: %v", err)
+	}
+
+	// Pinned is still checked out, so this is a different physical connection.
+	other, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("second conn: %v", err)
+	}
+	defer other.Close()
+
+	var busyTimeout, foreignKeys int
+	var journalMode string
+	if err := other.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("busy_timeout: %v", err)
+	}
+	if err := other.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("foreign_keys: %v", err)
+	}
+	if err := other.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("journal_mode: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000 (per-connection pragma not replayed)", busyTimeout)
+	}
+	if foreignKeys != 1 {
+		t.Errorf("foreign_keys = %d, want 1", foreignKeys)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Errorf("journal_mode = %q, want wal", journalMode)
 	}
 }

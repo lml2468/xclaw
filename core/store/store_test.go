@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func openTemp(t *testing.T) *Store {
@@ -83,6 +84,53 @@ func TestMessagesChronologicalAndLimited(t *testing.T) {
 	}
 	if msgs[0].Role != RoleAssistant || msgs[1].Role != RoleUser {
 		t.Fatalf("roles wrong: %+v", msgs)
+	}
+}
+
+func TestListSessions(t *testing.T) {
+	s := openTemp(t)
+	clk := time.Unix(1000, 0)
+	s.SetClock(func() time.Time { return clk })
+
+	// older session "a", then newer "b" (updated_at advances with the clock).
+	if _, err := s.GetOrCreate("a", "a", 2); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.AppendUser("a", "hi from a", "alice")
+	_ = s.AppendAssistant("a", "a-reply", "bot")
+
+	clk = time.Unix(2000, 0)
+	if _, err := s.GetOrCreate("b", "b", 2); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.AppendUser("b", "hi from b", "bob")
+
+	// "c" has no messages: preview should be empty, still listed.
+	clk = time.Unix(1500, 0)
+	if _, err := s.GetOrCreate("c", "c", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 sessions, got %d (%+v)", len(got), got)
+	}
+	// newest updated_at first: b(2000), c(1500), a(1000)
+	if got[0].Key != "b" || got[1].Key != "c" || got[2].Key != "a" {
+		t.Fatalf("order wrong: %s, %s, %s", got[0].Key, got[1].Key, got[2].Key)
+	}
+	// preview is the latest message
+	if got[0].Preview != "hi from b" || got[0].LastRole != RoleUser {
+		t.Fatalf("b preview wrong: %+v", got[0])
+	}
+	if got[2].Preview != "a-reply" || got[2].LastRole != RoleAssistant {
+		t.Fatalf("a preview should be its newest message: %+v", got[2])
+	}
+	if got[1].Preview != "" {
+		t.Fatalf("c has no messages, preview should be empty: %q", got[1].Preview)
 	}
 }
 

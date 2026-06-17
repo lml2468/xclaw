@@ -218,6 +218,12 @@ func (x *XClawService) History(botID, sessionKey string, limit int) error {
 	return x.send("session.history", control.SessionHistoryBody{BotID: botID, SessionKey: sessionKey, Limit: limit})
 }
 
+// SessionsList requests all persisted sessions for a bot, newest first (response
+// arrives via EventStream as a sessions.list envelope).
+func (x *XClawService) SessionsList(botID string) error {
+	return x.send("sessions.list", control.SessionsListBody{BotID: botID})
+}
+
 // CronCreate schedules a task (owner-gated by the daemon).
 func (x *XClawService) CronCreate(body control.CronCreateBody) error {
 	return x.send("cron.create", body)

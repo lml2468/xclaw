@@ -24,6 +24,8 @@ type (
 	AuthBody            = wire.AuthBody
 	SessionSendBody     = wire.SessionSendBody
 	SessionHistoryBody  = wire.SessionHistoryBody
+	SessionsListBody    = wire.SessionsListBody
+	SessionSummary      = wire.SessionSummary
 	SecretInjectBody    = wire.SecretInjectBody
 	CronCreateBody      = wire.CronCreateBody
 	CronListBody        = wire.CronListBody

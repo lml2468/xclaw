@@ -118,6 +118,21 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			}
 			return historyFromMessages(msgs), nil
 
+		case "sessions.list":
+			var b control.SessionsListBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			sums, err := t.store.ListSessions()
+			if err != nil {
+				return nil, err
+			}
+			return summariesFromSessions(sums), nil
+
 		case "session.reset":
 			var b control.SessionSendBody // reuse {uid}
 			if err := json.Unmarshal(body, &b); err != nil {
@@ -237,6 +252,21 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 	out := make([]control.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp})
+	}
+	return out
+}
+
+// summariesFromSessions projects store session summaries onto the wire type.
+func summariesFromSessions(sums []store.SessionSummary) []control.SessionSummary {
+	out := make([]control.SessionSummary, 0, len(sums))
+	for _, s := range sums {
+		out = append(out, control.SessionSummary{
+			Key:         s.Key,
+			ChannelType: s.ChannelType,
+			UpdatedAt:   s.UpdatedAt,
+			Preview:     s.Preview,
+			LastRole:    string(s.LastRole),
+		})
 	}
 	return out
 }

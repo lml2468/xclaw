@@ -116,6 +116,14 @@ export function Send(botID: string, uid: string, text: string): $CancellableProm
 }
 
 /**
+ * SessionsList requests all persisted sessions for a bot, newest first (response
+ * arrives via EventStream as a sessions.list envelope).
+ */
+export function SessionsList(botID: string): $CancellablePromise<void> {
+    return $Call.ByID(253189275, botID);
+}
+
+/**
  * SkillCreate scaffolds a new skill (starter SKILL.md).
  */
 export function SkillCreate(name: string): $CancellablePromise<void> {

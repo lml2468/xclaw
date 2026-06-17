@@ -9,7 +9,7 @@
       (s) =>
         !q.trim() ||
         s.title.toLowerCase().includes(q.toLowerCase()) ||
-        (s.messages.at(-1)?.text ?? "").toLowerCase().includes(q.toLowerCase()),
+        (s.messages.at(-1)?.text ?? s.preview ?? "").toLowerCase().includes(q.toLowerCase()),
     ),
   );
 
@@ -21,7 +21,8 @@
     if (d < 86400) return `${Math.floor(d / 3600)}h`;
     return `${Math.floor(d / 86400)}d`;
   }
-  const preview = (s: any) => (s.awaiting ? "replying…" : (s.messages.at(-1)?.text ?? "No messages yet"));
+  const preview = (s: any) =>
+    s.awaiting ? "replying…" : (s.messages.at(-1)?.text ?? s.preview ?? "No messages yet");
 </script>
 
 <div class="list-col">
@@ -40,7 +41,7 @@
     <div class="rows">
       {#each sessions as s (s.key)}
         <button class="row" class:sel={s.key === store.selectedKey} onclick={() => store.selectSession(s.key)}>
-          <Avatar name={s.title} size={48} />
+          <Avatar name={s.title} size={36} />
           <div class="mid">
             <div class="r1">
               <span class="name">{s.title}</span>
@@ -83,22 +84,22 @@
   .rows { flex: 1; overflow-y: auto; padding: 2px 8px 8px; }
 
   .row {
-    display: flex; align-items: center; gap: 12px; width: 100%;
-    height: var(--row-h); padding: 0 12px; border: none; background: transparent;
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    height: var(--row-h); padding: 0 10px; border: none; background: transparent;
     border-radius: 4px; text-align: left; color: var(--ink);
   }
   .row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
   .row.sel, .row.sel:hover {
     background: linear-gradient(180deg, color-mix(in srgb, var(--list-sel) 92%, #fff 8%), var(--list-sel));
-    box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+    box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 24%, transparent);
   }
 
-  .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-  .r1 { display: flex; align-items: baseline; gap: 8px; }
-  .name { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .time { font-size: 11px; color: var(--ink-faint); flex: 0 0 auto; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+  .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; }
+  .name { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .time { font-size: 10px; color: var(--ink-faint); flex: 0 0 auto; font-variant-numeric: tabular-nums; font-family: var(--mono); }
   .r2 { display: flex; }
-  .preview { font-size: 13px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .preview { font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .preview.replying { color: var(--accent); }
 
   /* Green selected row → dark text (WeChat). */

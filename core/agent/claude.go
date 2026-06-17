@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -116,6 +117,15 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	// sawTurnDone records whether claude emitted a turn-final `result` line. It
+	// gates how we treat a non-zero process exit below: a turn's terminal signal
+	// is the `result` (is_error), NOT the exit code. claude can stream a complete,
+	// successful reply + result and THEN exit non-zero for an unrelated reason
+	// (post-run hook/telemetry failure, a broken stderr pipe, a node warning
+	// escalating the exit status). The WaitGroup join gives a happens-before edge
+	// from the stdout reader's stores to the cmd.Wait reader's load.
+	var sawTurnDone atomic.Bool
+
 	// emit sends an event unless the turn's context is cancelled. Selecting on
 	// ctx.Done() means an abandoned/cancelled consumer can't wedge a reader on a
 	// full channel (which would leak the goroutine and the claude subprocess).
@@ -153,6 +163,9 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 				continue
 			}
 			for _, ev := range dedup.filter(parseClaudeLine(line)) {
+				if ev.Kind == KindTurnDone {
+					sawTurnDone.Store(true)
+				}
 				emit(ev)
 			}
 		}
@@ -162,10 +175,15 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 		defer close(out)
 		wg.Wait()
 		if err := cmd.Wait(); err != nil {
+			// A non-zero exit AFTER a completed turn is not a turn failure: the
+			// reply + result already streamed, so surface it as recoverable
+			// (informational) and let the assembled reply stand. Only an exit
+			// with NO prior result is terminal — claude died before answering.
 			emit(AgentEvent{
-				Kind: KindError,
-				Err:  fmt.Sprintf("claude exited: %v", err),
-				Raw:  err.Error(),
+				Kind:        KindError,
+				Err:         fmt.Sprintf("claude exited: %v", err),
+				Recoverable: sawTurnDone.Load(),
+				Raw:         err.Error(),
 			})
 		}
 	}()

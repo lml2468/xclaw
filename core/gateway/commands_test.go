@@ -93,6 +93,33 @@ func (d *erroringDriver) Query(ctx context.Context, _ agent.Request) (<-chan age
 	return ch, nil
 }
 
+// recoverableErroringDriver streams a full successful reply but interleaves a
+// RECOVERABLE error (e.g. a stderr node warning, or a non-zero process exit that
+// follows a completed turn). The turn succeeded, so the reply must persist and
+// the resume id must advance — the recoverable error is informational only.
+type recoverableErroringDriver struct {
+	sessionID string
+	reply     string
+}
+
+func (d *recoverableErroringDriver) Name() string { return "recoverable" }
+func (d *recoverableErroringDriver) Capabilities() agent.Capabilities {
+	return agent.Capabilities{Resume: true}
+}
+func (d *recoverableErroringDriver) Query(ctx context.Context, _ agent.Request) (<-chan agent.AgentEvent, error) {
+	ch := make(chan agent.AgentEvent, 8)
+	go func() {
+		defer close(ch)
+		ch <- agent.AgentEvent{Kind: agent.KindSessionStarted, SessionID: d.sessionID}
+		ch <- agent.AgentEvent{Kind: agent.KindTextDelta, Text: d.reply}
+		ch <- agent.AgentEvent{Kind: agent.KindTurnDone}
+		// Arrives AFTER the completed turn (mirrors claude.go marking a post-result
+		// non-zero exit recoverable). Must not abort the turn.
+		ch <- agent.AgentEvent{Kind: agent.KindError, Err: "claude exited: exit status 1", Recoverable: true}
+	}()
+	return ch, nil
+}
+
 // --- parseCommand ---
 
 func TestParseCommand(t *testing.T) {
@@ -411,5 +438,43 @@ func TestTerminalErrorDoesNotPersistPartialOrAdvanceResume(t *testing.T) {
 	got := sink.all()
 	if len(got) != 1 || got[0].text != errorReply || got[0].key != "u1" {
 		t.Fatalf("want one errorReply to u1, got %+v", got)
+	}
+}
+
+// TestRecoverableErrorDoesNotAbortTurn is the mirror of the terminal-error test:
+// a recoverable error (stderr warning / post-completion non-zero exit) must NOT
+// gate a successful turn. The reply persists, the resume id advances, and the
+// user gets the real reply — not the generic errorReply. Guards the
+// `if !ev.Recoverable` discriminator against being widened to "any KindError".
+func TestRecoverableErrorDoesNotAbortTurn(t *testing.T) {
+	st := newTestStore(t)
+	drv := &recoverableErroringDriver{sessionID: "thr-ok", reply: "the real answer"}
+	sink := &recordSink{}
+	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), sink)
+
+	msg := router.InboundMessage{ChannelType: router.ChannelDM, FromUID: "u1", FromName: "alice", Text: "hi"}
+	if _, err := gw.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	// 1. Resume id advanced — the turn completed successfully.
+	if got, _ := st.Resume("u1"); got != "thr-ok" {
+		t.Fatalf("resume should advance on a recoverable error, got %q", got)
+	}
+	// 2. The reply persisted as an assistant turn.
+	msgs, _ := st.RecentMessages("u1", 10)
+	var persisted string
+	for _, m := range msgs {
+		if m.Role == store.RoleAssistant {
+			persisted = m.Content
+		}
+	}
+	if persisted != "the real answer" {
+		t.Fatalf("assistant reply should persist, got %q", persisted)
+	}
+	// 3. User got the real reply, not errorReply.
+	got := sink.all()
+	if len(got) != 1 || got[0].text != "the real answer" || got[0].key != "u1" {
+		t.Fatalf("want the real reply to u1, got %+v", got)
 	}
 }

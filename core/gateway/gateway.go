@@ -452,10 +452,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		case agent.KindTextDelta:
 			reply.WriteString(ev.Text)
 		case agent.KindError:
-			// Terminal (non-recoverable) errors — a result is_error (e.g. max_turns)
-			// or a non-zero agent exit — abort the turn. Recoverable errors (stderr
-			// warnings, api_retry) are informational and don't gate the reply. Keep
-			// the last one for the log; any terminal error is enough to abort.
+			// Terminal (non-recoverable) errors abort the turn: a result is_error
+			// (e.g. max_turns), or a process exit BEFORE any successful result.
+			// Recoverable errors (stderr warnings, api_retry, and a non-zero exit
+			// that follows a completed turn) are informational and don't gate the
+			// reply. Keep the last terminal one for the log; any is enough to abort.
 			if !ev.Recoverable {
 				termErr = ev.Err
 			}

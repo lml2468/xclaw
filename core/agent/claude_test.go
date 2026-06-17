@@ -177,6 +177,47 @@ func TestDedupCompleteBlockFallbackWhenNoPartials(t *testing.T) {
 	}
 }
 
+// assembleThinking is assembleDeltas's sibling for the thinking channel: it
+// returns the KindThinking texts the reader pipeline emits, in order.
+func assembleThinking(lines []string) []string {
+	var dd blockDedup
+	var texts []string
+	for _, l := range lines {
+		for _, ev := range dd.filter(parseClaudeLine(l)) {
+			if ev.Kind == KindThinking {
+				texts = append(texts, ev.Text)
+			}
+		}
+	}
+	return texts
+}
+
+// TestDedupMultiBlockThinkingNoDuplication is the thinking-channel mirror of the
+// text dedup tests: a turn with two thinking blocks, each streaming a partial
+// thinking_delta and then a complete thinking block. The per-block dedup must
+// drop both complete blocks so reasoning text isn't doubled in the transcript.
+func TestDedupMultiBlockThinkingNoDuplication(t *testing.T) {
+	lines := []string{
+		`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","text":"first"}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"thinking"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"second"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","text":"second"}]}}`,
+	}
+	got := assembleThinking(lines)
+	want := []string{"first", "second"}
+	if len(got) != len(want) {
+		t.Fatalf("assembled thinking = %v, want %v (a duplicate means the complete thinking block leaked through)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("at %d: got %q want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestParseNonDeltaStreamEventIgnored(t *testing.T) {
 	// content_block_stop / message_start carry no text and reset nothing.
 	if evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`); len(evs) != 0 {

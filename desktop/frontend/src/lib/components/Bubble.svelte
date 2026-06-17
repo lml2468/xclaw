@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Message } from "../store.svelte";
-  import { renderMarkdown } from "../markdown";
+  import { renderMarkdown, onMarkdownCopyClick } from "../markdown";
   import Avatar from "./Avatar.svelte";
   import Typewriter from "./Typewriter.svelte";
 
@@ -11,18 +11,6 @@
   const html = $derived(!isUser && !isTool && !message.streaming ? renderMarkdown(message.text) : "");
 
   function copy() { navigator.clipboard?.writeText(message.text); }
-
-  // Delegated copy for code blocks rendered via {@html}.
-  function onMdClick(e: MouseEvent) {
-    const btn = (e.target as HTMLElement).closest(".cb-copy");
-    if (!btn) return;
-    const code = btn.closest(".codeblock")?.querySelector("code");
-    if (code) {
-      navigator.clipboard?.writeText(code.textContent ?? "");
-      btn.textContent = "copied";
-      setTimeout(() => (btn.textContent = "copy"), 1200);
-    }
-  }
 </script>
 
 {#if isTool}
@@ -40,7 +28,7 @@
       {:else if message.streaming}
         <Typewriter text={message.text} />
       {:else}
-        <div class="md" onclick={onMdClick} role="presentation">{@html html}</div>
+        <div class="md" onclick={onMarkdownCopyClick} role="presentation">{@html html}</div>
       {/if}
     </div>
   </div>
@@ -91,30 +79,5 @@
   .md :global(a) { color: var(--accent-strong); }
   .md :global(ul), .md :global(ol) { margin: 0 0 7px; padding-left: 20px; }
   .md :global(blockquote) { margin: 0 0 7px; padding-left: 11px; border-left: 3px solid var(--hairline-strong); color: var(--ink-soft); }
-
-  /* Code block — header bar (language + copy) over a tinted mono panel. */
-  .md :global(.codeblock) {
-    margin: 8px 0; border-radius: 4px; overflow: hidden;
-    border: 1px solid var(--hairline);
-    background: var(--code-bg);
-  }
-  .md :global(.cb-head) {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 5px 10px 5px 12px;
-    border-bottom: 1px solid var(--hairline);
-    background: color-mix(in srgb, var(--ink) 4%, transparent);
-  }
-  .md :global(.cb-lang) { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); letter-spacing: 0.3px; }
-  .md :global(.cb-copy) {
-    font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
-    background: transparent; border: none; padding: 5px 9px; border-radius: 3px; cursor: pointer;
-    transition: color 0.14s ease, background 0.14s ease;
-  }
-  .md :global(.cb-copy:hover) { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .md :global(.codeblock pre) { margin: 0; padding: 11px 13px; overflow-x: auto; }
-  .md :global(.codeblock code) { font-family: var(--mono); font-size: 12px; line-height: 1.55; }
-  .md :global(.tok-kw) { color: var(--tok-kw); }
-  .md :global(.tok-str) { color: var(--tok-str); }
-  .md :global(.tok-num) { color: var(--tok-num); }
-  .md :global(.tok-com) { color: var(--ink-faint); font-style: italic; }
+  /* Code-block + syntax-token rules are shared via lib/styles/markdown.css. */
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import "./lib/styles/theme.css";
+  import "./lib/styles/markdown.css";
   import { Events } from "@wailsio/runtime";
   import { store } from "./lib/store.svelte";
   import Rail from "./lib/components/Rail.svelte";
@@ -12,12 +13,23 @@
   import SkillsPanel from "./lib/components/SkillsPanel.svelte";
   import WorkflowsPanel from "./lib/components/WorkflowsPanel.svelte";
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
+  import FilePreview from "./lib/components/FilePreview.svelte";
 
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
   let showSkills = $state(new URLSearchParams(location.search).has("skills"));
   let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
+  // The file open in the wide preview pane (which overlays the chat). Null = chat.
+  let previewPath = $state<string | null>(null);
+
+  // The preview path belongs to one session's workspace; clear it when the
+  // selected bot/session changes, or it would render the old file against the
+  // new session (a not-found error, or the wrong same-named file).
+  $effect(() => {
+    store.selectedBotId; store.selectedKey;
+    previewPath = null;
+  });
 
   // Tray / gear menu open these as modals over the console (guarded: the Wails
   // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
@@ -33,23 +45,33 @@
   <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
   <div class="content">
     <section class="list"><Conversations /></section>
-    <main class="chat">
-      <header class="chat-bar" style="--wails-draggable: drag;">
-        <span class="title">{store.currentSession?.title ?? "XClaw"}</span>
-        <span class="spacer"></span>
-        {#if store.currentBot}
-          <button class="icon" class:on={showFiles} style="--wails-draggable: no-drag;" title="Workspace files" onclick={() => (showFiles = !showFiles)} aria-label="Toggle workspace" aria-pressed={showFiles}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
-          </button>
-        {/if}
-      </header>
-      <Transcript onpick={pick} />
-      <StatusBar />
-      <Composer bind:this={composer} />
-    </main>
+    {#if previewPath && showFiles && store.currentSession}
+      <FilePreview botId={store.selectedBotId} sessionKey={store.selectedKey} path={previewPath} onclose={() => (previewPath = null)} />
+    {:else}
+      <main class="chat">
+        <header class="chat-bar" style="--wails-draggable: drag;">
+          <span class="title">{store.currentSession?.title ?? "XClaw"}</span>
+          <span class="spacer"></span>
+          {#if store.currentBot}
+            <button class="icon" class:on={showFiles} style="--wails-draggable: no-drag;" title="Workspace files" onclick={() => (showFiles = !showFiles)} aria-label="Toggle workspace" aria-pressed={showFiles}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+            </button>
+          {/if}
+        </header>
+        <Transcript onpick={pick} />
+        <StatusBar />
+        <Composer bind:this={composer} />
+      </main>
+    {/if}
     {#if showFiles && store.currentSession}
       <aside class="files">
-        <WorkspacePanel botId={store.selectedBotId} sessionKey={store.selectedKey} onclose={() => (showFiles = false)} />
+        <WorkspacePanel
+          botId={store.selectedBotId}
+          sessionKey={store.selectedKey}
+          activePath={previewPath}
+          onopen={(p) => (previewPath = p)}
+          onclose={() => { showFiles = false; previewPath = null; }}
+        />
       </aside>
     {/if}
   </div>

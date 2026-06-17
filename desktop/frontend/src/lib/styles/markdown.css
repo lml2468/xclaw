@@ -1,0 +1,37 @@
+/* Shared markdown rendering styles for any `.md` container (chat bubbles, the
+ * workspace file preview). Only the code-block + syntax-token rules live here —
+ * they are identical across surfaces. Prose/layout rules (margins, headings,
+ * width) stay component-scoped because they differ per surface.
+ *
+ * Global (not Svelte-scoped) so a single definition covers every `.md` host;
+ * imported once from App.svelte. The markup comes from renderMarkdown() in
+ * lib/markdown.ts, which emits `.codeblock`, `.cb-*`, and `.tok-*`. */
+
+.md .codeblock {
+  margin: 8px 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  background: var(--code-bg);
+}
+.md .cb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px 5px 12px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.md .cb-lang { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); letter-spacing: 0.3px; }
+.md .cb-copy {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  background: transparent; border: none; padding: 5px 9px; border-radius: 3px; cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+.md .cb-copy:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.md .codeblock pre { margin: 0; padding: 11px 13px; overflow-x: auto; }
+.md .codeblock code { font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+.md .tok-kw { color: var(--tok-kw); }
+.md .tok-str { color: var(--tok-str); }
+.md .tok-num { color: var(--tok-num); }
+.md .tok-com { color: var(--ink-faint); font-style: italic; }

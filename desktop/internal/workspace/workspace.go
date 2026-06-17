@@ -15,6 +15,7 @@ package workspace
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,9 +30,14 @@ import (
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or
 // the IPC payload. They are generous for normal use and cheap to raise later.
 const (
-	maxDepth     = 8
-	maxEntries   = 2000
-	maxFileBytes = 1 << 20 // 1 MiB
+	maxDepth   = 8
+	maxEntries = 2000
+	// maxTextBytes caps text files sent as UTF-8 for inline preview. maxBinaryBytes
+	// is the larger cap for base64 content (images, PDFs) — those need the whole
+	// file for a valid data-URL, and routinely exceed 1 MiB. We read up to the
+	// larger cap, then truncate against the per-kind cap once the kind is known.
+	maxTextBytes   = 1 << 20 // 1 MiB
+	maxBinaryBytes = 8 << 20 // 8 MiB
 )
 
 // Dir is ~/.xclaw (the install root), matching configstore.Dir().
@@ -57,11 +63,14 @@ type Node struct {
 
 // FileContent is one file's body for inline preview. Content is UTF-8 text when
 // Encoding is "utf8", or base64-encoded bytes when "base64" (binary/images).
+// Kind is the single source of truth for how the UI should render it, derived
+// here from the mime + encoding so the frontend never re-classifies.
 type FileContent struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	Encoding  string `json:"encoding"` // "utf8" | "base64"
 	Mime      string `json:"mime"`
+	Kind      string `json:"kind"` // "markdown" | "image" | "pdf" | "text" | "binary"
 	Truncated bool   `json:"truncated"`
 	Size      int64  `json:"size"`
 }
@@ -218,27 +227,42 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 		return fc, err
 	}
 	defer f.Close()
-	buf := make([]byte, maxFileBytes+1)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
-		// Read returns io.EOF (n==0) for an empty file — that's fine, not an error.
-		if err.Error() != "EOF" {
-			return fc, err
-		}
+	// Read up to the larger (binary) cap + 1 sentinel byte; we decide the real cap
+	// once isTextual classifies the content below. Size the buffer to the file when
+	// it's smaller than the cap, so a small text file doesn't allocate 8 MiB.
+	// io.ReadFull tolerates short reads (pipes/slow FS) and reports the byte count
+	// via ErrUnexpectedEOF / EOF.
+	bufLen := maxBinaryBytes + 1
+	if sz := fi.Size(); sz >= 0 && sz < int64(bufLen) {
+		bufLen = int(sz) + 1
+	}
+	buf := make([]byte, bufLen)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return fc, err
 	}
 	data := buf[:n]
-	truncated := n > maxFileBytes
+
+	mime := mimeOf(full, data)
+	textual := isTextual(mime, data)
+	// Per-kind cap: text previews at 1 MiB, binary (image/PDF/…) at 8 MiB.
+	limit := maxBinaryBytes
+	if textual {
+		limit = maxTextBytes
+	}
+	truncated := n > limit
 	if truncated {
-		data = data[:maxFileBytes]
+		data = data[:limit]
 	}
 
 	fc = FileContent{
 		Path:      filepath.ToSlash(relPath),
-		Mime:      mimeOf(full, data),
+		Mime:      mime,
+		Kind:      kindOf(mime, textual),
 		Truncated: truncated,
 		Size:      fi.Size(),
 	}
-	if isTextual(fc.Mime, data) {
+	if textual {
 		fc.Encoding = "utf8"
 		fc.Content = string(data)
 	} else {
@@ -261,6 +285,7 @@ var extMime = map[string]string{
 	".sh": "text/x-shellscript", ".sql": "text/x-sql", ".csv": "text/csv",
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 	".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon",
+	".pdf": "application/pdf",
 }
 
 func mimeOf(path string, data []byte) string {
@@ -292,4 +317,25 @@ func isTextual(mime string, data []byte) bool {
 		}
 	}
 	return true
+}
+
+// kindOf is the single source of truth for how the UI renders a file, so the
+// frontend consumes one field instead of re-deriving from mime/encoding. textual
+// is isTextual's result (utf8 vs base64). Order matters: markdown/html and svg
+// satisfy a broader bucket, so check the specific kinds first.
+func kindOf(mime string, textual bool) string {
+	switch {
+	case mime == "text/markdown":
+		return "markdown"
+	case mime == "text/html":
+		return "html"
+	case mime == "application/pdf":
+		return "pdf"
+	case !textual && strings.HasPrefix(mime, "image/"):
+		return "image"
+	case textual:
+		return "text"
+	default:
+		return "binary"
+	}
 }

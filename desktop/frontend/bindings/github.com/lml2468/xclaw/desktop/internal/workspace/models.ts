@@ -8,6 +8,8 @@ import { Create as $Create } from "@wailsio/runtime";
 /**
  * FileContent is one file's body for inline preview. Content is UTF-8 text when
  * Encoding is "utf8", or base64-encoded bytes when "base64" (binary/images).
+ * Kind is the single source of truth for how the UI should render it, derived
+ * here from the mime + encoding so the frontend never re-classifies.
  */
 export class FileContent {
     "path": string;
@@ -18,6 +20,11 @@ export class FileContent {
      */
     "encoding": string;
     "mime": string;
+
+    /**
+     * "markdown" | "image" | "pdf" | "text" | "binary"
+     */
+    "kind": string;
     "truncated": boolean;
     "size": number;
 
@@ -34,6 +41,9 @@ export class FileContent {
         }
         if (!("mime" in $$source)) {
             this["mime"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
         }
         if (!("truncated" in $$source)) {
             this["truncated"] = false;

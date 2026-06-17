@@ -1,15 +1,19 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
-  import type { Node, FileContent } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/workspace/models";
+  import type { Node } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/workspace/models";
 
-  let { botId, sessionKey, onclose }: { botId: string | null; sessionKey: string | null; onclose: () => void } = $props();
+  let { botId, sessionKey, activePath, onopen, onclose }: {
+    botId: string | null;
+    sessionKey: string | null;
+    activePath: string | null;
+    onopen: (path: string) => void;
+    onclose: () => void;
+  } = $props();
 
   const isPreview = new URLSearchParams(location.search).has("preview");
 
   let tree = $state<Node | null>(null);
   let expanded = $state<Set<string>>(new Set());
-  let activePath = $state<string | null>(null);
-  let file = $state<FileContent | null>(null);
   let error = $state("");
   let loading = $state(false);
 
@@ -22,18 +26,13 @@
       ] },
       { name: "notes.md", path: "notes.md", isDir: false, children: null },
       { name: "diagram.png", path: "diagram.png", isDir: false, children: null },
+      { name: "report.pdf", path: "report.pdf", isDir: false, children: null },
     ],
   } as unknown as Node;
-  const mockFiles: Record<string, FileContent> = {
-    "src/main.go": { path: "src/main.go", content: "package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n", encoding: "utf8", mime: "text/x-go", truncated: false, size: 42 } as FileContent,
-    "notes.md": { path: "notes.md", content: "# Notes\n\n- first\n- second\n", encoding: "utf8", mime: "text/markdown", truncated: false, size: 26 } as FileContent,
-  };
 
   // Refetch whenever the selected session changes (covers open + switch).
   $effect(() => {
     const b = botId, k = sessionKey;
-    activePath = null;
-    file = null;
     expanded = new Set();
     loadTree(b, k);
   });
@@ -49,20 +48,6 @@
       tree = null;
     } finally {
       loading = false;
-    }
-  }
-
-  async function openFile(path: string) {
-    if (!botId || !sessionKey) return;
-    activePath = path;
-    file = null;
-    error = "";
-    try {
-      file = isPreview
-        ? (mockFiles[path] ?? ({ path, content: "(no preview)", encoding: "utf8", mime: "text/plain", truncated: false, size: 0 } as FileContent))
-        : await XClawService.WorkspaceFile(botId, sessionKey, path);
-    } catch (e: any) {
-      error = String(e?.message ?? e);
     }
   }
 
@@ -105,22 +90,6 @@
       {/each}
     {/if}
   </div>
-
-  {#if activePath}
-    <div class="preview">
-      <div class="preview-head">
-        <span class="path">{activePath}</span>
-        {#if file?.truncated}<span class="trunc">truncated · {file.size} B</span>{/if}
-      </div>
-      {#if file && file.mime.startsWith("image/")}
-        <div class="img-wrap"><img src={`data:${file.mime};base64,${file.content}`} alt={activePath} /></div>
-      {:else if file}
-        <pre class="code">{file.content}</pre>
-      {:else}
-        <div class="msg">Loading…</div>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 {#snippet row(node: Node, depth: number)}
@@ -136,7 +105,7 @@
       {/each}
     {/if}
   {:else}
-    <button class="node file" class:sel={node.path === activePath} style="padding-left:{8 + depth * 14 + 14}px" onclick={() => openFile(node.path)}>
+    <button class="node file" class:sel={node.path === activePath} style="padding-left:{8 + depth * 14 + 14}px" onclick={() => onopen(node.path)}>
       <span class="name">{node.name}</span>
     </button>
   {/if}
@@ -177,12 +146,4 @@
   .chev.hidden { visibility: hidden; }
   .ico { flex: 0 0 auto; font-size: 11px; opacity: 0.85; }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .preview { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--hairline); background: var(--surface); }
-  .preview-head { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--hairline); font-family: var(--mono, monospace); font-size: 11px; color: var(--ink-soft); }
-  .preview-head .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .preview-head .trunc { margin-left: auto; color: var(--danger); flex: 0 0 auto; }
-  .code { flex: 1 1 0; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto; font-family: var(--mono, monospace); font-size: 12px; line-height: 1.55; color: var(--ink); white-space: pre; tab-size: 2; }
-  .img-wrap { flex: 1 1 0; min-height: 0; overflow: auto; padding: 12px; display: grid; place-items: center; }
-  .img-wrap img { max-width: 100%; height: auto; image-rendering: auto; }
 </style>

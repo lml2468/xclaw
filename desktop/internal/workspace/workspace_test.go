@@ -135,7 +135,7 @@ func TestSymlinkNotFollowed(t *testing.T) {
 func TestFileTextAndTruncation(t *testing.T) {
 	dir := sandboxDir(t, "bot1", "u1")
 	write(t, filepath.Join(dir, "note.txt"), "hello world")
-	big := strings.Repeat("a", maxFileBytes+500)
+	big := strings.Repeat("a", maxTextBytes+500)
 	write(t, filepath.Join(dir, "big.txt"), big)
 
 	fc, err := File("bot1", "u1", "note.txt")
@@ -150,11 +150,70 @@ func TestFileTextAndTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("File big: %v", err)
 	}
-	if !bf.Truncated || len(bf.Content) != maxFileBytes {
-		t.Fatalf("expected truncation to %d bytes, got %d (trunc=%v)", maxFileBytes, len(bf.Content), bf.Truncated)
+	if !bf.Truncated || len(bf.Content) != maxTextBytes {
+		t.Fatalf("expected truncation to %d bytes, got %d (trunc=%v)", maxTextBytes, len(bf.Content), bf.Truncated)
 	}
 	if bf.Size != int64(len(big)) {
 		t.Fatalf("Size should be the real on-disk size %d, got %d", len(big), bf.Size)
+	}
+}
+
+func TestFilePDFMimeBase64(t *testing.T) {
+	dir := sandboxDir(t, "bot1", "u1")
+	// %PDF header → application/pdf by extension; binary → base64.
+	write(t, filepath.Join(dir, "doc.pdf"), "%PDF-1.7\n\x00binary\x00")
+
+	fc, err := File("bot1", "u1", "doc.pdf")
+	if err != nil {
+		t.Fatalf("File pdf: %v", err)
+	}
+	if fc.Mime != "application/pdf" || fc.Encoding != "base64" {
+		t.Fatalf("pdf must be base64 application/pdf, got %+v", fc)
+	}
+	if fc.Kind != "pdf" {
+		t.Fatalf("pdf Kind must be \"pdf\", got %q", fc.Kind)
+	}
+}
+
+func TestFileKindClassification(t *testing.T) {
+	cases := []struct {
+		mime    string
+		textual bool
+		want    string
+	}{
+		{"text/markdown", true, "markdown"},
+		{"application/pdf", false, "pdf"},
+		{"image/png", false, "image"},
+		{"image/svg+xml", true, "text"}, // svg is utf8 → text, not image
+		{"text/x-go", true, "text"},
+		{"application/octet-stream", false, "binary"},
+	}
+	for _, c := range cases {
+		if got := kindOf(c.mime, c.textual); got != c.want {
+			t.Errorf("kindOf(%q, %v) = %q, want %q", c.mime, c.textual, got, c.want)
+		}
+	}
+}
+
+func TestFileBinaryUsesLargerCap(t *testing.T) {
+	dir := sandboxDir(t, "bot1", "u1")
+	// A binary file between the text cap (1 MiB) and binary cap (8 MiB) must NOT be
+	// truncated — base64 previews need the whole file for a valid data-URL. A NUL
+	// byte forces non-textual classification regardless of extension.
+	n := maxTextBytes + 1<<20 // 2 MiB, well under the 8 MiB binary cap
+	body := make([]byte, n)
+	body[0] = 0 // NUL → binary
+	write(t, filepath.Join(dir, "blob.bin"), string(body))
+
+	fc, err := File("bot1", "u1", "blob.bin")
+	if err != nil {
+		t.Fatalf("File bin: %v", err)
+	}
+	if fc.Encoding != "base64" {
+		t.Fatalf("binary must be base64, got %+v", fc.Encoding)
+	}
+	if fc.Truncated {
+		t.Fatalf("a %d-byte binary is under the binary cap and must not be truncated", n)
 	}
 }
 

@@ -174,15 +174,18 @@ echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text
 // #63). The daemon receives its cap token on fd 0 — a private pipe — but the
 // agent CLI it spawns must NEVER inherit that fd. The guarantee rests entirely
 // on claude.go leaving cmd.Stdin nil, so os/exec wires the child's fd 0 to
-// /dev/null. A future change that set cmd.Stdin = os.Stdin (or any inheriting
-// source) would silently leak the token into the agent process; this test
-// catches that regression.
+// /dev/null. The concrete regression this catches is a change that set
+// cmd.Stdin = os.Stdin: the sentinel below flows through os.Stdin, so the leak
+// becomes observable. (A change wiring cmd.Stdin to a *different* token-holding
+// reader — a dup'd fd, a bytes.Reader — wouldn't be caught here; it'd leave this
+// process's fd 0 empty and the test would still pass. We assert the realistic
+// copy-paste regression, not every conceivable inheriting source.)
 //
 // We stand in for the daemon by feeding a sentinel token onto this process's
 // os.Stdin, then spawn the driver and assert the fake agent reads EOF (empty)
 // from its fd 0 — i.e. it saw /dev/null, not the token pipe. (exec uses
 // /dev/null for a nil Stdin regardless of os.Stdin, so the substitution only
-// makes the buggy inheriting-source path detectable rather than a silent pass.)
+// makes the buggy os.Stdin path detectable rather than a silent pass.)
 func TestAgentStdinIsNotTokenPipe(t *testing.T) {
 	const token = "XCLAW-CAP-TOKEN-sentinel-do-not-leak-7f3a9c"
 

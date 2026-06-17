@@ -9,6 +9,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/store"
 )
 
 // recordSink records every OnReply call (in order), so tests can assert both the
@@ -66,6 +67,55 @@ func (d *blockingDriver) Query(ctx context.Context, _ agent.Request) (<-chan age
 	go func() {
 		defer close(ch)
 		<-ctx.Done() // block until the turn ctx is cancelled (timeout) — then end the stream
+	}()
+	return ch, nil
+}
+
+// erroringDriver emits a session id and some partial text, then a terminal
+// (non-recoverable) error followed by turn_done — mirroring a result is_error
+// turn (e.g. max_turns) that still streamed a partial answer.
+type erroringDriver struct {
+	sessionID   string
+	partialText string
+}
+
+func (d *erroringDriver) Name() string                     { return "erroring" }
+func (d *erroringDriver) Capabilities() agent.Capabilities { return agent.Capabilities{Resume: true} }
+func (d *erroringDriver) Query(ctx context.Context, _ agent.Request) (<-chan agent.AgentEvent, error) {
+	ch := make(chan agent.AgentEvent, 8)
+	go func() {
+		defer close(ch)
+		ch <- agent.AgentEvent{Kind: agent.KindSessionStarted, SessionID: d.sessionID}
+		ch <- agent.AgentEvent{Kind: agent.KindTextDelta, Text: d.partialText, Partial: true}
+		ch <- agent.AgentEvent{Kind: agent.KindError, Err: "result error (subtype=error_max_turns): hit max turns"}
+		ch <- agent.AgentEvent{Kind: agent.KindTurnDone}
+	}()
+	return ch, nil
+}
+
+// recoverableErroringDriver streams a full successful reply but interleaves a
+// RECOVERABLE error (e.g. a stderr node warning, or a non-zero process exit that
+// follows a completed turn). The turn succeeded, so the reply must persist and
+// the resume id must advance — the recoverable error is informational only.
+type recoverableErroringDriver struct {
+	sessionID string
+	reply     string
+}
+
+func (d *recoverableErroringDriver) Name() string { return "recoverable" }
+func (d *recoverableErroringDriver) Capabilities() agent.Capabilities {
+	return agent.Capabilities{Resume: true}
+}
+func (d *recoverableErroringDriver) Query(ctx context.Context, _ agent.Request) (<-chan agent.AgentEvent, error) {
+	ch := make(chan agent.AgentEvent, 8)
+	go func() {
+		defer close(ch)
+		ch <- agent.AgentEvent{Kind: agent.KindSessionStarted, SessionID: d.sessionID}
+		ch <- agent.AgentEvent{Kind: agent.KindTextDelta, Text: d.reply}
+		ch <- agent.AgentEvent{Kind: agent.KindTurnDone}
+		// Arrives AFTER the completed turn (mirrors claude.go marking a post-result
+		// non-zero exit recoverable). Must not abort the turn.
+		ch <- agent.AgentEvent{Kind: agent.KindError, Err: "claude exited: exit status 1", Recoverable: true}
 	}()
 	return ch, nil
 }
@@ -350,5 +400,81 @@ func TestDispatchTimeoutReleasesSessionLock(t *testing.T) {
 	}
 	if n := sink.count(timeoutReply); n != 2 {
 		t.Fatalf("want 2 timeout apologies, got %d", n)
+	}
+}
+
+// --- terminal agent error (MLT-32) ---
+
+// TestTerminalErrorDoesNotPersistPartialOrAdvanceResume asserts that a turn
+// ending in a terminal agent error (e.g. max_turns) neither persists the partial
+// reply as the assistant turn nor advances the resume id, and signals the user.
+func TestTerminalErrorDoesNotPersistPartialOrAdvanceResume(t *testing.T) {
+	st := newTestStore(t)
+	drv := &erroringDriver{sessionID: "thr-err", partialText: "partial answer that should not persist"}
+	sink := &recordSink{}
+	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), sink)
+
+	msg := router.InboundMessage{ChannelType: router.ChannelDM, FromUID: "u1", FromName: "alice", Text: "hi"}
+	d, err := gw.Handle(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("terminal-error path must not error the handler: %v", err)
+	}
+	if d != router.Accepted {
+		t.Fatalf("want accepted, got %s", d)
+	}
+
+	// 1. Resume id NOT advanced — next turn must not skip past the errored work.
+	if got, _ := st.Resume("u1"); got != "" {
+		t.Fatalf("resume must not advance on a terminal error, got %q", got)
+	}
+	// 2. Partial reply NOT persisted as an assistant turn (only the user message).
+	msgs, _ := st.RecentMessages("u1", 10)
+	for _, m := range msgs {
+		if m.Role == store.RoleAssistant {
+			t.Fatalf("errored turn must not persist an assistant reply, got %q", m.Content)
+		}
+	}
+	// 3. User is signaled with the error reply, not the partial text.
+	got := sink.all()
+	if len(got) != 1 || got[0].text != errorReply || got[0].key != "u1" {
+		t.Fatalf("want one errorReply to u1, got %+v", got)
+	}
+}
+
+// TestRecoverableErrorDoesNotAbortTurn is the mirror of the terminal-error test:
+// a recoverable error (stderr warning / post-completion non-zero exit) must NOT
+// gate a successful turn. The reply persists, the resume id advances, and the
+// user gets the real reply — not the generic errorReply. Guards the
+// `if !ev.Recoverable` discriminator against being widened to "any KindError".
+func TestRecoverableErrorDoesNotAbortTurn(t *testing.T) {
+	st := newTestStore(t)
+	drv := &recoverableErroringDriver{sessionID: "thr-ok", reply: "the real answer"}
+	sink := &recordSink{}
+	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), sink)
+
+	msg := router.InboundMessage{ChannelType: router.ChannelDM, FromUID: "u1", FromName: "alice", Text: "hi"}
+	if _, err := gw.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	// 1. Resume id advanced — the turn completed successfully.
+	if got, _ := st.Resume("u1"); got != "thr-ok" {
+		t.Fatalf("resume should advance on a recoverable error, got %q", got)
+	}
+	// 2. The reply persisted as an assistant turn.
+	msgs, _ := st.RecentMessages("u1", 10)
+	var persisted string
+	for _, m := range msgs {
+		if m.Role == store.RoleAssistant {
+			persisted = m.Content
+		}
+	}
+	if persisted != "the real answer" {
+		t.Fatalf("assistant reply should persist, got %q", persisted)
+	}
+	// 3. User got the real reply, not errorReply.
+	got := sink.all()
+	if len(got) != 1 || got[0].text != "the real answer" || got[0].key != "u1" {
+		t.Fatalf("want the real reply to u1, got %+v", got)
 	}
 }

@@ -88,9 +88,150 @@ func TestParseThinkingDeltaIsPartial(t *testing.T) {
 	}
 }
 
+// assembleDeltas runs raw stream-json lines through parseClaudeLine + blockDedup
+// (the live driver's reader pipeline) and returns the text the gateway would
+// assemble — i.e. the emitted KindTextDelta texts, in order.
+func assembleDeltas(lines []string) []string {
+	var dd blockDedup
+	var texts []string
+	for _, l := range lines {
+		for _, ev := range dd.filter(parseClaudeLine(l)) {
+			if ev.Kind == KindTextDelta {
+				texts = append(texts, ev.Text)
+			}
+		}
+	}
+	return texts
+}
+
+// TestDedupMultiBlockTurnNoDuplication replays a real text → tool_use → text
+// turn (captured from `claude … --include-partial-messages`): each text block
+// streams a partial delta and then a complete block. The complete blocks must be
+// dropped so the assembled reply is the streamed text exactly once.
+func TestDedupMultiBlockTurnNoDuplication(t *testing.T) {
+	lines := []string{
+		`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"before"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"before"}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"echo hi"}}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_stop","index":1}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"hi"}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"after"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"after"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"after"}`,
+	}
+	got := assembleDeltas(lines)
+	want := []string{"before", "after"}
+	if len(got) != len(want) {
+		t.Fatalf("assembled deltas = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("at %d: got %q want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestDedupCombinedAssistantLineNoDuplication is the precise regression for the
+// one-shot bug: a single assistant line carrying [text, tool_use, text] after
+// both text blocks already streamed partials. The old one-shot bool reset itself
+// after dropping the first complete block, so the second leaked through as a
+// duplicate. Per-block state (no self-reset) drops both.
+func TestDedupCombinedAssistantLineNoDuplication(t *testing.T) {
+	lines := []string{
+		`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"AAA"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"BBB"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"AAA"},{"type":"tool_use","name":"Bash","input":{}},{"type":"text","text":"BBB"}]}}`,
+	}
+	got := assembleDeltas(lines)
+	want := []string{"AAA", "BBB"}
+	if len(got) != len(want) {
+		t.Fatalf("assembled deltas = %v, want %v (a duplicate means the complete block leaked through)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("at %d: got %q want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestDedupCompleteBlockFallbackWhenNoPartials covers partials-disabled: with no
+// streamed deltas, the complete blocks ARE the reply and must pass through.
+func TestDedupCompleteBlockFallbackWhenNoPartials(t *testing.T) {
+	lines := []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"one"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"two"}]}}`,
+	}
+	got := assembleDeltas(lines)
+	want := []string{"one", "two"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("fallback assembled = %v, want %v", got, want)
+	}
+}
+
+// assembleThinking is assembleDeltas's sibling for the thinking channel: it
+// returns the KindThinking texts the reader pipeline emits, in order.
+func assembleThinking(lines []string) []string {
+	var dd blockDedup
+	var texts []string
+	for _, l := range lines {
+		for _, ev := range dd.filter(parseClaudeLine(l)) {
+			if ev.Kind == KindThinking {
+				texts = append(texts, ev.Text)
+			}
+		}
+	}
+	return texts
+}
+
+// TestDedupMultiBlockThinkingNoDuplication is the thinking-channel mirror of the
+// text dedup tests: a turn with two thinking blocks, each streaming a partial
+// thinking_delta and then a complete thinking block. The per-block dedup must
+// drop both complete blocks so reasoning text isn't doubled in the transcript.
+func TestDedupMultiBlockThinkingNoDuplication(t *testing.T) {
+	lines := []string{
+		`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","text":"first"}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"thinking"}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"second"}}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","text":"second"}]}}`,
+	}
+	got := assembleThinking(lines)
+	want := []string{"first", "second"}
+	if len(got) != len(want) {
+		t.Fatalf("assembled thinking = %v, want %v (a duplicate means the complete thinking block leaked through)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("at %d: got %q want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestParseNonDeltaStreamEventIgnored(t *testing.T) {
-	if evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_start","index":0}}`); len(evs) != 0 {
+	// content_block_stop / message_start carry no text and reset nothing.
+	if evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`); len(evs) != 0 {
 		t.Fatalf("non-delta stream_event should be ignored, got %+v", evs)
+	}
+	if evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"message_start"}}`); len(evs) != 0 {
+		t.Fatalf("message_start should be ignored, got %+v", evs)
+	}
+}
+
+func TestParseContentBlockStartIsResetSentinel(t *testing.T) {
+	evs := parseClaudeLine(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}`)
+	if len(evs) != 1 || evs[0].Kind != kindBlockStart {
+		t.Fatalf("content_block_start should yield the dedup-reset sentinel, got %+v", evs)
 	}
 }
 

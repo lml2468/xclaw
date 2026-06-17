@@ -442,30 +442,56 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		defer cancel()
 	}
 
-	events, err := g.driver.Query(turnCtx, agent.Request{
-		Prompt:       prompt,
-		SessionID:    resumeID,
-		Cwd:          cwd,
-		MemoryDir:    memDir,
-		Model:        g.model,
-		SystemAppend: g.buildSystemPrompt(msg, rosterPrefix),
-	})
-	if err != nil {
-		return err
-	}
-
+	sysAppend := g.buildSystemPrompt(msg, rosterPrefix)
 	var reply strings.Builder
 	var newResume string
-	for ev := range events {
-		g.sink.OnEvent(sessionKey, ev)
-		switch ev.Kind {
-		case agent.KindSessionStarted:
-			if ev.SessionID != "" {
-				newResume = ev.SessionID
-			}
-		case agent.KindTextDelta:
-			reply.WriteString(ev.Text)
+	resume := resumeID
+	for attempt := 0; ; attempt++ {
+		events, err := g.driver.Query(turnCtx, agent.Request{
+			Prompt:       prompt,
+			SessionID:    resume,
+			Cwd:          cwd,
+			MemoryDir:    memDir,
+			Model:        g.model,
+			SystemAppend: sysAppend,
+		})
+		if err != nil {
+			return err
 		}
+
+		reply.Reset()
+		newResume = ""
+		resumeBad := false
+		for ev := range events {
+			// A stale resume id (session not found, e.g. after the agent's config
+			// dir changed) dooms this attempt — swallow its events so the failed
+			// run never reaches the sink, then retry fresh below.
+			if ev.ResumeInvalid {
+				resumeBad = true
+				continue
+			}
+			if resumeBad {
+				continue
+			}
+			g.sink.OnEvent(sessionKey, ev)
+			switch ev.Kind {
+			case agent.KindSessionStarted:
+				if ev.SessionID != "" {
+					newResume = ev.SessionID
+				}
+			case agent.KindTextDelta:
+				reply.WriteString(ev.Text)
+			}
+		}
+
+		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
+		if resumeBad && resume != "" && attempt == 0 {
+			fmt.Fprintf(os.Stderr, "[gateway] stale resume id for %s; clearing and retrying fresh\n", sessionKey)
+			_ = g.store.ClearResume(sessionKey)
+			resume = ""
+			continue
+		}
+		break
 	}
 
 	// If the turn was cut short by the dispatch timeout (not the caller's own

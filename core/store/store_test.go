@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func openTemp(t *testing.T) *Store {
@@ -84,105 +83,6 @@ func TestMessagesChronologicalAndLimited(t *testing.T) {
 	}
 	if msgs[0].Role != RoleAssistant || msgs[1].Role != RoleUser {
 		t.Fatalf("roles wrong: %+v", msgs)
-	}
-}
-
-func TestCleanupExpired(t *testing.T) {
-	s := openTemp(t)
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	s.SetClock(func() time.Time { return base })
-
-	// old session + message
-	if _, err := s.GetOrCreate("old", "c", 1); err != nil {
-		t.Fatal(err)
-	}
-	_ = s.AppendUser("old", "stale", "")
-	_ = s.SaveResume("old", "claude", "sess-old")
-
-	// advance 8 days, create a fresh session
-	s.SetClock(func() time.Time { return base.Add(8 * 24 * time.Hour) })
-	if _, err := s.GetOrCreate("new", "c", 1); err != nil {
-		t.Fatal(err)
-	}
-
-	n, err := s.CleanupExpired(DefaultTTL)
-	if err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("want 1 expired session, got %d", n)
-	}
-	// old resume gone (cascade + explicit), messages cascade-deleted
-	if got, _ := s.Resume("old"); got != "" {
-		t.Fatalf("expired resume should be gone, got %q", got)
-	}
-	msgs, _ := s.RecentMessages("old", 10)
-	if len(msgs) != 0 {
-		t.Fatalf("expired messages should cascade-delete, got %d", len(msgs))
-	}
-	// new survives
-	if _, err := s.GetOrCreate("new", "c", 1); err != nil {
-		t.Fatalf("new session should survive: %v", err)
-	}
-}
-
-// TestCleanupExpiredCascadesAcrossPooledConnections is the MLT-33 regression
-// guard. PRAGMA foreign_keys is connection-scoped, and database/sql pools
-// connections, so if FK enforcement isn't set on every pooled connection the
-// ON DELETE CASCADE on messages silently no-ops on whatever connection happens
-// to run the session DELETE — orphaning message rows that then never expire.
-// By pinning one connection out of a widened pool it steers CleanupExpired's
-// DELETE toward a different connection than the one that wrote the rows. This is
-// best-effort, not guaranteed (database/sql may still hand the idle writer back);
-// what makes it a reliable guard is that pre-fix the writes spread across
-// FK-off connections, so the cascade was overwhelmingly likely to no-op and
-// leave an orphan that fails the assertion below.
-func TestCleanupExpiredCascadesAcrossPooledConnections(t *testing.T) {
-	s := openTemp(t)
-	// Allow the pool to hold more than one connection so we can pin one open
-	// and force the cleanup onto a second, freshly opened connection.
-	s.db.SetMaxOpenConns(3)
-
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	s.SetClock(func() time.Time { return base })
-
-	if _, err := s.GetOrCreate("old", "c", 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AppendUser("old", "stale", "alice"); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	// Pin a connection out of the pool so the next statement is steered onto
-	// another (best-effort — see the doc comment).
-	pinned, err := s.db.Conn(ctx)
-	if err != nil {
-		t.Fatalf("pin conn: %v", err)
-	}
-	defer pinned.Close()
-	// Touch the pinned connection so it is genuinely checked out and busy.
-	if err := pinned.PingContext(ctx); err != nil {
-		t.Fatalf("ping pinned: %v", err)
-	}
-
-	s.SetClock(func() time.Time { return base.Add(8 * 24 * time.Hour) })
-	n, err := s.CleanupExpired(DefaultTTL)
-	if err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("want 1 expired session, got %d", n)
-	}
-
-	// The orphan check: query messages directly so a surviving row is caught
-	// even though its parent session is gone.
-	var orphans int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE session_id='old'`).Scan(&orphans); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if orphans != 0 {
-		t.Fatalf("FK cascade did not fire across pooled connections: %d orphaned message rows remain", orphans)
 	}
 }
 

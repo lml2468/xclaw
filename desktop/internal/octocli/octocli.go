@@ -30,6 +30,13 @@ import (
 
 const repo = "Mininglamp-OSS/octo-cli"
 
+// Injectable seams for tests. Production uses the real GitHub API over the
+// default HTTP client; tests point these at an httptest server.
+var (
+	httpClient = http.DefaultClient
+	apiBase    = "https://api.github.com"
+)
+
 func binName() string {
 	if runtime.GOOS == "windows" {
 		return "octo-cli.exe"
@@ -122,14 +129,14 @@ type ghRelease struct {
 
 func latestRelease(ctx context.Context) (ghRelease, error) {
 	var r ghRelease
-	url := "https://api.github.com/repos/" + repo + "/releases/latest"
+	url := apiBase + "/repos/" + repo + "/releases/latest"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return r, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "xclaw-desktop")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return r, err
 	}
@@ -165,7 +172,9 @@ func assetName(tag string) string {
 
 // Upgrade downloads the latest release's binary for this platform, verifies its
 // sha256 against the release checksums.txt, and atomically replaces the
-// installed binary. Returns the version installed.
+// installed binary. Verification is mandatory and fails closed: if the release
+// ships no checksums.txt, or it lacks an entry for our asset, or the hash
+// mismatches, Upgrade aborts without installing. Returns the version installed.
 func Upgrade(ctx context.Context) (string, error) {
 	rel, err := latestRelease(ctx)
 	if err != nil {
@@ -185,20 +194,23 @@ func Upgrade(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no octo-cli asset %q in release %s", want, rel.TagName)
 	}
 
+	// Fail closed: the release MUST ship a checksums.txt and it MUST contain a
+	// matching sha256 for our asset. octo-cli lands on the agent's PATH and is
+	// executed by the spawned agent, so we never install an unverified binary.
+	if sumsURL == "" {
+		return "", fmt.Errorf("octo-cli release %s has no checksums.txt; refusing to install unverified binary", rel.TagName)
+	}
+
 	archive, err := download(ctx, assetURL)
 	if err != nil {
 		return "", err
 	}
-	if sumsURL != "" {
-		sums, err := download(ctx, sumsURL)
-		if err == nil {
-			if exp := checksumFor(sums, want); exp != "" {
-				got := sha256hex(archive)
-				if !strings.EqualFold(exp, got) {
-					return "", fmt.Errorf("octo-cli checksum mismatch for %s", want)
-				}
-			}
-		}
+	sums, err := download(ctx, sumsURL)
+	if err != nil {
+		return "", fmt.Errorf("octo-cli: download checksums.txt: %w", err)
+	}
+	if err := verifyChecksum(sums, archive, want); err != nil {
+		return "", err
 	}
 
 	bin, err := extractBinary(archive, want)
@@ -242,7 +254,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "xclaw-desktop")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +268,20 @@ func download(ctx context.Context, url string) ([]byte, error) {
 func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// verifyChecksum enforces that the GoReleaser checksums.txt contains an entry
+// for filename and that the archive's sha256 matches it. It fails closed: a
+// missing entry is an error, never a silent skip.
+func verifyChecksum(sums, archive []byte, filename string) error {
+	exp := checksumFor(sums, filename)
+	if exp == "" {
+		return fmt.Errorf("octo-cli: no checksum entry for %s in checksums.txt", filename)
+	}
+	if got := sha256hex(archive); !strings.EqualFold(exp, got) {
+		return fmt.Errorf("octo-cli checksum mismatch for %s: want %s got %s", filename, exp, got)
+	}
+	return nil
 }
 
 // checksumFor finds the sha256 for filename in a GoReleaser checksums.txt

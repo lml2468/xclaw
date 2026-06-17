@@ -21,6 +21,12 @@ const ProtocolVersion = 1
 // can't grow memory without bound.
 const MaxFrameBytes = 4 * 1024 * 1024
 
+// CmdAuth is the handshake command type a client sends to present its capability
+// token (AuthBody). The daemon handles it internally — never the command handler
+// — comparing the token in constant time and, on a match, marking the connection
+// authorized for the privileged command set.
+const CmdAuth = "auth"
+
 // Kind discriminates the three envelope categories.
 type Kind string
 
@@ -80,6 +86,15 @@ func Decode(line []byte) (Envelope, error) {
 
 // Commands (client → server)
 
+// AuthBody presents the GUI capability token (proto: auth). The server compares
+// it in constant time against the token it was minted with at spawn; a match
+// marks the connection authorized for the privileged command set. The token is
+// delivered to the GUI out-of-band (a private fd the spawned agent never sees),
+// held in daemon memory only, and is NEVER logged or persisted.
+type AuthBody struct {
+	Token string `json:"token"`
+}
+
 type SessionSendBody struct {
 	// BotID selects which bot to route to (multi-bot config mode). Empty = the
 	// single/default bot.
@@ -103,14 +118,17 @@ type SecretInjectBody struct {
 	Value string `json:"value"`
 }
 
-// CronCreateBody registers a scheduled task (proto: cron.create). Owner-gated:
-// uid must be the bot owner. The created task BINDS to the channel coords given
-// here (where the fired prompt runs and replies). Either channelId (group) or
-// uid (DM) identifies the bound session.
+// CronCreateBody registers a scheduled task (proto: cron.create). Owner-gated on
+// the SERVER-resolved owner uid, not on any field here — the body uid is not an
+// authorization claim (it is forgeable; the agent reaches cron over an
+// agent-controlled CLI). The created task BINDS to the channel coords given
+// here: a channelId (group) targets that channel; omitting it targets the
+// owner's DM. The fired prompt always runs as the owner.
 type CronCreateBody struct {
 	BotID string `json:"botId,omitempty"`
-	// UID is the requesting user (owner-gate) AND the DM peer for DM tasks.
-	UID string `json:"uid"`
+	// UID is accepted for proto compatibility but IGNORED for authorization and
+	// for DM binding (the resolved owner is used for both). Deprecated.
+	UID string `json:"uid,omitempty"`
 	// Schedule is a 5-field cron expr ("0 9 * * 1-5") or one-shot ISO datetime.
 	Schedule string `json:"schedule"`
 	// Prompt is the instruction injected when the task fires (≤ 2048 bytes).
@@ -118,7 +136,7 @@ type CronCreateBody struct {
 	// Recurring, when set, overrides the default (cron→true, one-shot→false).
 	Recurring *bool `json:"recurring,omitempty"`
 	// ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-	// which binds to UID. ChannelType: 1 = DM, 2 = Group.
+	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group.
 	ChannelID   string `json:"channelId,omitempty"`
 	ChannelType int    `json:"channelType,omitempty"`
 	FromName    string `json:"fromName,omitempty"`
@@ -129,11 +147,13 @@ type CronListBody struct {
 	BotID string `json:"botId,omitempty"`
 }
 
-// CronDeleteBody removes a task by id (proto: cron.delete). Owner-gated.
+// CronDeleteBody removes a task by id (proto: cron.delete). Owner-gated on the
+// server-resolved owner uid; the body carries no authorization claim.
 type CronDeleteBody struct {
 	BotID string `json:"botId,omitempty"`
-	UID   string `json:"uid"`
-	ID    string `json:"id"`
+	// UID is accepted for proto compatibility but IGNORED for authorization.
+	UID string `json:"uid,omitempty"`
+	ID  string `json:"id"`
 }
 
 // CronTaskInfo is a task rendered for clients (nextRun as ISO; no internal churn).

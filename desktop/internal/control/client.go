@@ -26,6 +26,8 @@ type (
 	SessionHistoryBody  = wire.SessionHistoryBody
 	SessionsListBody    = wire.SessionsListBody
 	SessionSummary      = wire.SessionSummary
+	UsageStatsBody      = wire.UsageStatsBody
+	UsageStats          = wire.UsageStats
 	SecretInjectBody    = wire.SecretInjectBody
 	CronCreateBody      = wire.CronCreateBody
 	CronListBody        = wire.CronListBody

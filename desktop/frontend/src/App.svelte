@@ -14,11 +14,13 @@
   import WorkflowsPanel from "./lib/components/WorkflowsPanel.svelte";
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
+  import TokenUsage from "./lib/components/TokenUsage.svelte";
 
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
   let showSkills = $state(new URLSearchParams(location.search).has("skills"));
   let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
+  let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
@@ -36,13 +38,14 @@
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
   try { Events.On("xclaw:open-skills", () => (showSkills = true)); } catch {}
   try { Events.On("xclaw:open-workflows", () => (showWorkflows = true)); } catch {}
+  try { Events.On("xclaw:open-usage", () => (showUsage = true)); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
 <TrafficLights />
 <div class="shell">
-  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
+  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} onusage={() => (showUsage = true)} />
   <div class="content">
     <section class="list"><Conversations /></section>
     {#if previewPath && showFiles && store.currentSession}
@@ -85,6 +88,9 @@
 {/if}
 {#if showWorkflows}
   <WorkflowsPanel onclose={() => (showWorkflows = false)} />
+{/if}
+{#if showUsage}
+  <TokenUsage onclose={() => (showUsage = false)} />
 {/if}
 
 <style>

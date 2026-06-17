@@ -59,6 +59,17 @@ export interface Bot {
   id: string;
   connected: boolean;
   lastError?: string;
+  usage?: BotUsage;   // cumulative token totals (from usage.stats; undefined until fetched)
+}
+
+// BotUsage is a bot's cumulative, persisted token consumption (all turns).
+export interface BotUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  costUsd: number;
+  turns: number;
+  updatedAt: number; // Unix seconds, 0 when no usage yet
 }
 
 interface Envelope {
@@ -106,8 +117,8 @@ class Store {
   // screenshots without spawning the daemon (launch with XCLAW_PREVIEW=1).
   private seedPreview() {
     this.bots = [
-      { id: "main", connected: true },
-      { id: "research", connected: false, lastError: "awaiting secret" },
+      { id: "main", connected: true, usage: { inputTokens: 1_284_500, outputTokens: 96_120, cachedTokens: 842_300, costUsd: 4.8123, turns: 318, updatedAt: 0 } },
+      { id: "research", connected: false, lastError: "awaiting secret", usage: { inputTokens: 412_900, outputTokens: 38_540, cachedTokens: 201_770, costUsd: 1.2045, turns: 92, updatedAt: 0 } },
     ];
     this.health = "claude · 2 bots";
     this.connected = true;
@@ -183,6 +194,13 @@ class Store {
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
 
+  // loadUsage fetches cumulative token usage for every bot (folded into
+  // bot.usage as responses arrive). Called when the Token Usage window opens.
+  loadUsage() {
+    if (this.preview) return;
+    for (const b of this.bots) XClawService.UsageStats(b.id);
+  }
+
   selectSession(key: string) {
     this.selectedKey = key;
     this.loadHistory(key);
@@ -238,6 +256,16 @@ class Store {
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
       } else if (env.type === "sessions.list" && Array.isArray(env.body)) {
         this.applySessionsList(env.body);
+      } else if (env.type === "usage.stats" && env.body) {
+        const b = this.bots.find((x) => x.id === env.body.botId);
+        if (b) b.usage = {
+          inputTokens: env.body.inputTokens ?? 0,
+          outputTokens: env.body.outputTokens ?? 0,
+          cachedTokens: env.body.cachedTokens ?? 0,
+          costUsd: env.body.costUsd ?? 0,
+          turns: env.body.turns ?? 0,
+          updatedAt: env.body.updatedAt ?? 0,
+        };
       } else if (env.type === "session.history" && Array.isArray(env.body)) {
         this.applyHistory(env.body);
       }

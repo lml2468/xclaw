@@ -28,6 +28,8 @@ import (
 // gated in Server.Broadcast. sessions.list is privileged for the same reason: it
 // enumerates EVERY persisted session for a bot with a message preview, an even
 // broader cross-session disclosure than a single session.history read.
+// usage.stats is privileged too: it returns the bot's cumulative token/cost
+// totals — operator billing metadata, not something the agent has a path to.
 // sessionKeys are low-entropy (DM = uid, group = channelId) and an injected agent
 // already sees peer uids / channel ids, so targeting is trivial; leaving these
 // open defeats the cross-session boundary this gate establishes. The GUI is the
@@ -42,6 +44,7 @@ var privilegedControlCommands = []string{
 	"secret.inject",
 	"session.history",
 	"sessions.list",
+	"usage.stats",
 	"cron.create",
 	"cron.list",
 	"cron.delete",

@@ -133,6 +133,29 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			}
 			return summariesFromSessions(sums), nil
 
+		case "usage.stats":
+			var b control.UsageStatsBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			u, err := t.store.Usage()
+			if err != nil {
+				return nil, err
+			}
+			return control.UsageStats{
+				BotID:        b.BotID,
+				InputTokens:  u.InputTokens,
+				OutputTokens: u.OutputTokens,
+				CachedTokens: u.CachedTokens,
+				CostUSD:      u.CostUSD,
+				Turns:        u.Turns,
+				UpdatedAt:    u.UpdatedAt,
+			}, nil
+
 		case "session.reset":
 			var b control.SessionSendBody // reuse {uid}
 			if err := json.Unmarshal(body, &b); err != nil {

@@ -177,6 +177,14 @@ export function SkillsList(): $CancellablePromise<skills$0.SkillInfo[]> {
 }
 
 /**
+ * UsageStats requests a bot's cumulative token usage (response arrives via
+ * EventStream as a usage.stats envelope).
+ */
+export function UsageStats(botID: string): $CancellablePromise<void> {
+    return $Call.ByID(440527224, botID);
+}
+
+/**
  * WorkflowCreate scaffolds a new workflow.
  */
 export function WorkflowCreate(name: string): $CancellablePromise<void> {

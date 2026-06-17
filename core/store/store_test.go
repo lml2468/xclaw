@@ -134,6 +134,43 @@ func TestListSessions(t *testing.T) {
 	}
 }
 
+func TestTokenUsageAccumulates(t *testing.T) {
+	s := openTemp(t)
+
+	// No turns yet → zero value.
+	if u, err := s.Usage(); err != nil || u.Turns != 0 || u.InputTokens != 0 {
+		t.Fatalf("fresh usage should be zero: %+v err=%v", u, err)
+	}
+
+	// All-zero deltas are a no-op (don't advance the turn counter).
+	if err := s.AddUsage(0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := s.Usage(); u.Turns != 0 {
+		t.Fatalf("zero usage must not advance turns: %+v", u)
+	}
+
+	if err := s.AddUsage(100, 20, 80, 0.01); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddUsage(50, 10, 40, 0.005); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.Usage()
+	if err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+	if u.InputTokens != 150 || u.OutputTokens != 30 || u.CachedTokens != 120 {
+		t.Fatalf("tokens not accumulated: %+v", u)
+	}
+	if u.Turns != 2 {
+		t.Fatalf("turns = %d, want 2", u.Turns)
+	}
+	if u.CostUSD < 0.0149 || u.CostUSD > 0.0151 {
+		t.Fatalf("cost not accumulated: %v", u.CostUSD)
+	}
+}
+
 func TestDSN(t *testing.T) {
 	if got := dsn("/tmp/x.db"); got != "/tmp/x.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)" {
 		t.Fatalf("plain path dsn wrong: %q", got)

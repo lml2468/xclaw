@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS group_reply_cursors (
   updated_at  INTEGER NOT NULL
 );
 
+-- Cumulative token usage for this bot's store (one DB per bot), accumulated
+-- across every completed turn. Single-row aggregate (id=1); the per-bot total IS
+-- this row, and the desktop sums bots for the grand total. Persists across
+-- restarts, unlike the live session.usage event (which is last-turn only).
+CREATE TABLE IF NOT EXISTS token_usage (
+  id            INTEGER PRIMARY KEY CHECK(id = 1),
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd      REAL    NOT NULL DEFAULT 0,
+  turns         INTEGER NOT NULL DEFAULT 0,
+  updated_at    INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 `
 
@@ -246,6 +260,59 @@ func (s *Store) ListSessions() ([]SessionSummary, error) {
 		out = append(out, ss)
 	}
 	return out, rows.Err()
+}
+
+// --- token usage (cumulative, per-bot store) ---
+
+// TokenUsage is this bot's cumulative token accounting across all turns.
+type TokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	CachedTokens int64
+	CostUSD      float64
+	Turns        int64
+	UpdatedAt    int64
+}
+
+// AddUsage accumulates one completed turn's usage into the running total. A
+// no-op when all deltas are zero (e.g. a turn the agent reported no usage for),
+// so the turn counter only advances on real usage.
+func (s *Store) AddUsage(in, out, cached int, cost float64) error {
+	if in == 0 && out == 0 && cached == 0 && cost == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO token_usage(id, input_tokens, output_tokens, cached_tokens, cost_usd, turns, updated_at)
+		 VALUES(1, ?, ?, ?, ?, 1, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   input_tokens  = input_tokens  + excluded.input_tokens,
+		   output_tokens = output_tokens + excluded.output_tokens,
+		   cached_tokens = cached_tokens + excluded.cached_tokens,
+		   cost_usd      = cost_usd      + excluded.cost_usd,
+		   turns         = turns         + 1,
+		   updated_at    = excluded.updated_at;`,
+		in, out, cached, cost, s.now().Unix())
+	if err != nil {
+		return fmt.Errorf("add usage: %w", err)
+	}
+	return nil
+}
+
+// Usage returns this bot's cumulative token totals (zero value when no turns
+// have been recorded yet).
+func (s *Store) Usage() (TokenUsage, error) {
+	var u TokenUsage
+	err := s.db.QueryRow(
+		`SELECT input_tokens, output_tokens, cached_tokens, cost_usd, turns, updated_at
+		 FROM token_usage WHERE id = 1`).
+		Scan(&u.InputTokens, &u.OutputTokens, &u.CachedTokens, &u.CostUSD, &u.Turns, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return TokenUsage{}, nil
+	}
+	if err != nil {
+		return u, fmt.Errorf("usage: %w", err)
+	}
+	return u, nil
 }
 
 // --- resume map ---

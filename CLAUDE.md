@@ -206,7 +206,7 @@ logic, so swapping the GUI never touches `core/`.
   it folds `xclaw:event` envelopes into bots/sessions/messages and owns the
   rAF typewriter/coalescing. Components in `lib/components/` (Rail · Conversations
   · Transcript · Bubble · Composer · ConfigEditor · SkillsPanel · WorkflowsPanel ·
-  WorkspacePanel · FilePreview · Avatar); tokens in `lib/styles/theme.css`.
+  WorkspacePanel · FilePreview · TokenUsage · Avatar); tokens in `lib/styles/theme.css`.
 - **Workspace sidebar** (`WorkspacePanel`): a chat-header toggle button opens an
   inline (NOT modal — no scrim) right-hand column inside `.content`, showing the
   selected session's sandbox file tree. Selecting a file opens `FilePreview` as a
@@ -222,13 +222,16 @@ logic, so swapping the GUI never touches `core/`.
   (`sandbox.SessionDirName`) and using whichever dir exists. Read-only + sandboxed:
   never follows symlinks, skips `.claude/`, caps depth/entries/file-size (1 MiB for
   text, 8 MiB for base64 images/PDFs).
-- **Edit Bots / Manage Skills / Manage Workflows are sibling modals**
-  (`ConfigEditor` · `SkillsPanel` · `WorkflowsPanel`), all opened over the console
-  from the rail gear menu (and tray) via `xclaw:open-editor` / `-skills` /
-  `-workflows` events — same scrim + centered card + header/✕ chrome (keep them
-  visually consistent). ConfigEditor has the per-bot "Available skills" + "Available
-  workflows" checklists. NOTE: `window.confirm/alert` are no-ops in the Wails
-  webview — use an in-app dialog for any confirmation.
+- **Edit Bots / Manage Skills / Manage Workflows / Token Usage are sibling modals**
+  (`ConfigEditor` · `SkillsPanel` · `WorkflowsPanel` · `TokenUsage`), all opened over
+  the console from the rail gear menu (and tray) via `xclaw:open-editor` / `-skills` /
+  `-workflows` / `-usage` events — same scrim + centered card + header/✕ chrome (keep
+  them visually consistent). ConfigEditor has the per-bot "Available skills" + "Available
+  workflows" checklists. TokenUsage is read-only: per-bot cumulative input/output/cached
+  tokens + cost + turns, plus an all-bots total, from the privileged `usage.stats`
+  control command (backed by core/store's `token_usage` table, accumulated each
+  turn_done in the gateway; persists across restarts). NOTE: `window.confirm/alert` are
+  no-ops in the Wails webview — use an in-app dialog for any confirmation.
 - **Design direction (committed — do not re-pivot)**: clean WeChat/iMessage-grade
   chat UI. Dark bot-rail → conversation list → chat; green accent (`#07c160`),
   green selected rows + outgoing bubbles, square-rounded avatars, **Geist** (Sans

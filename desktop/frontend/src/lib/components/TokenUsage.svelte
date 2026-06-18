@@ -2,17 +2,17 @@
   import { store, type BotUsage } from "../store.svelte";
   import { onMount } from "svelte";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, onedit, onskills }: { onclose: () => void; onedit?: () => void; onskills?: () => void } = $props();
 
   // Range selector. `since` is Unix seconds at a LOCAL-midnight bound (0 = all
   // time), computed from the user's own calendar so "today" matches their tz.
   type RangeKey = "all" | "30d" | "7d" | "yesterday" | "today";
   const RANGES: { key: RangeKey; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "30d", label: "30 days" },
-    { key: "7d", label: "7 days" },
-    { key: "yesterday", label: "Yesterday" },
-    { key: "today", label: "Today" },
+    { key: "all", label: "全部" },
+    { key: "30d", label: "30 天" },
+    { key: "7d", label: "7 天" },
+    { key: "yesterday", label: "昨天" },
+    { key: "today", label: "今天" },
   ];
   let range = $state<RangeKey>("all");
 
@@ -107,30 +107,36 @@
 <div class="scrim" onclick={onclose} role="presentation">
   <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token usage">
     <header>
-      <h2>Token Usage</h2>
-      <div class="seg" role="tablist" aria-label="Date range">
+      <h2>设置</h2>
+      <div class="nav" role="tablist" aria-label="设置分区">
+        <button role="tab" aria-selected="false" onclick={() => { onclose(); onedit?.(); }}>编辑 Bot</button>
+        <button role="tab" aria-selected="false" onclick={() => { onclose(); onskills?.(); }}>技能</button>
+        <button role="tab" aria-selected="true" class="on">用量</button>
+      </div>
+      <span class="hspacer"></span>
+      <div class="seg" role="tablist" aria-label="时间范围">
         {#each RANGES as r (r.key)}
           <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
         {/each}
       </div>
-      <button class="x" onclick={onclose} aria-label="Close">✕</button>
+      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
     </header>
 
     <div class="body">
       {#if bots.length === 0}
-        <div class="empty">No bots configured.</div>
+        <div class="empty">尚未配置 Bot</div>
       {:else if !anyUsage}
-        <div class="empty">No token usage in this range.</div>
+        <div class="empty">该区间暂无用量</div>
       {:else}
         <!-- Grand total card -->
         <div class="total">
-          <span class="tlabel">All bots</span>
+          <span class="tlabel">全部 Bot</span>
           <div class="tstats">
-            <div class="big"><span class="n">{fmt(total.inputTokens)}</span><span class="k">input</span></div>
-            <div class="big"><span class="n">{fmt(total.outputTokens)}</span><span class="k">output</span></div>
-            <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">cache read</span></div>
-            <div class="big"><span class="n">{fmt(total.cacheWriteTokens)}</span><span class="k">cache write</span></div>
-            <div class="big"><span class="n">{cost(total.costUsd)}</span><span class="k">cost</span></div>
+            <div class="big"><span class="n">{fmt(total.inputTokens)}</span><span class="k">输入</span></div>
+            <div class="big"><span class="n">{fmt(total.outputTokens)}</span><span class="k">输出</span></div>
+            <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">缓存读</span></div>
+            <div class="big"><span class="n">{fmt(total.cacheWriteTokens)}</span><span class="k">缓存写</span></div>
+            <div class="big"><span class="n">{cost(total.costUsd)}</span><span class="k">费用</span></div>
           </div>
         </div>
 
@@ -140,12 +146,12 @@
             <thead>
               <tr>
                 <th class="lcol">Bot</th>
-                <th>Input</th>
-                <th>Output</th>
-                <th>Cache R</th>
-                <th>Cache W</th>
-                <th>Cost</th>
-                <th>Turns</th>
+                <th>输入</th>
+                <th>输出</th>
+                <th>缓存读</th>
+                <th>缓存写</th>
+                <th>费用</th>
+                <th>轮次</th>
               </tr>
             </thead>
             <tbody>
@@ -167,7 +173,7 @@
           </table>
         </div>
 
-        <p class="note">Per bot, persisted, bucketed by day. <strong>Cache R</strong> is input served (read) from the prompt cache; <strong>Cache W</strong> is input written into it. Cost is the agent-reported total. Usage recorded before per-day tracking appears only under <strong>All</strong>.</p>
+        <p class="note">每个 Bot 独立持久化、按天分桶。<strong>缓存读</strong>=从提示缓存命中(读取)的输入;<strong>缓存写</strong>=写入缓存的输入。费用为 agent 上报的总额。早于按天统计前的用量只在「全部」区间出现。</p>
       {/if}
     </div>
   </div>
@@ -177,7 +183,12 @@
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; }
   .modal { width: min(800px, 94vw); height: min(560px, 88vh); display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); overflow: hidden; }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
-  header h2 { font-size: 17px; flex: 1; }
+
+  .hspacer { flex: 1; }
+  .nav { display: inline-flex; background: rgba(var(--ink-tint, 0,0,0), 0.05); border-radius: 10px; padding: 3px; }
+  .nav button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+  .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
+  .nav button:not(.on):hover { color: var(--ink); }  header h2 { font-size: 17px; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; cursor: pointer; }
 
   /* Range selector */

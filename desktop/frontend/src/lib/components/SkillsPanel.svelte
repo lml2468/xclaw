@@ -1,7 +1,7 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, onedit, onusage }: { onclose: () => void; onedit?: () => void; onusage?: () => void } = $props();
 
   type SkillInfo = { name: string; description: string; files: number };
 
@@ -132,7 +132,16 @@
 
 <div class="scrim" onclick={onclose} role="presentation">
   <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Manage skills">
-    <header><h2>Manage Skills</h2><button class="x" onclick={onclose} aria-label="Close">✕</button></header>
+    <header>
+      <h2>设置</h2>
+      <div class="nav" role="tablist" aria-label="设置分区">
+        <button role="tab" aria-selected="false" onclick={() => { onclose(); onedit?.(); }}>编辑 Bot</button>
+        <button role="tab" aria-selected="true" class="on">技能</button>
+        <button role="tab" aria-selected="false" onclick={() => { onclose(); onusage?.(); }}>用量</button>
+      </div>
+      <span class="hspacer"></span>
+      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
+    </header>
 
     <div class="body">
     <div class="list">
@@ -142,10 +151,10 @@
           <span class="ds">{s.description || "No description"}</span>
         </button>
       {/each}
-      {#if skills.length === 0}<div class="muted">No skills yet.</div>{/if}
+      {#if skills.length === 0}<div class="muted">暂无技能</div>{/if}
       <div class="new">
-        <input placeholder="new-skill-name" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
-        <button class="add" onclick={createSkill} disabled={!newName.trim()}>+ New skill</button>
+        <input placeholder="新技能名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
+        <button class="add" onclick={createSkill} disabled={!newName.trim()}>+ 新建技能</button>
       </div>
     </div>
 
@@ -154,7 +163,7 @@
         <div class="dhead">
           <span class="dt">{sel}</span>
           <span class="spacer"></span>
-          <button class="remove" onclick={() => deleteSkill(sel!)}>Remove skill</button>
+          <button class="remove" onclick={() => deleteSkill(sel!)}>删除技能</button>
         </div>
         <div class="cols">
           <div class="files">
@@ -165,8 +174,8 @@
               </div>
             {/each}
             <div class="new">
-              <input placeholder="path/in/skill.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
-              <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ Add file</button>
+              <input placeholder="路径/文件.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
+              <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ 添加文件</button>
             </div>
           </div>
           <div class="editor">
@@ -175,17 +184,17 @@
                 <span class="fn">{activeFile}</span>
                 <span class="spacer"></span>
                 {#if dirty}<span class="dirty">●</span>{/if}
-                <button class="primary" onclick={saveFile} disabled={!dirty}>Save</button>
+                <button class="primary" onclick={saveFile} disabled={!dirty}>保存</button>
               </div>
               <textarea class="code" bind:value={content} oninput={() => (dirty = true)} spellcheck="false"></textarea>
             {:else}
-              <div class="muted center">Select a file to edit.</div>
+              <div class="muted center">选择一个文件编辑</div>
             {/if}
           </div>
         </div>
       </div>
     {:else}
-      <div class="detail"><div class="muted center">Select or create a skill.</div></div>
+      <div class="detail"><div class="muted center">选择或新建一个技能</div></div>
     {/if}
   </div>
 
@@ -196,8 +205,8 @@
       <div class="confirm" role="alertdialog" aria-label="Confirm">
         <p>{confirmState.msg}</p>
         <div class="cbtns">
-          <button onclick={() => answer(false)}>Cancel</button>
-          <button class="danger" onclick={() => answer(true)}>Confirm</button>
+          <button onclick={() => answer(false)}>取消</button>
+          <button class="danger" onclick={() => answer(true)}>确认</button>
         </div>
       </div>
     </div>
@@ -210,7 +219,13 @@
      so the two open and feel identical. */
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; }
   .modal { width: min(940px, 94vw); height: min(640px, 90vh); position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); overflow: hidden; color: var(--ink); font-family: var(--ui); }
-  header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border-soft, var(--hairline)); }
+  header h2 { font-size: 17px; font-weight: 600; }
+  .hspacer { flex: 1; }
+  .nav { display: inline-flex; background: rgba(var(--ink-tint, 0,0,0), 0.05); border-radius: 10px; padding: 3px; }
+  .nav button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+  .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
+  .nav button:not(.on):hover { color: var(--ink); }
   header h2 { font-size: 17px; font-weight: 600; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
 

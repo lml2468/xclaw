@@ -139,13 +139,13 @@
   <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
 {/if}
 {#if showSkills}
-  <SkillsPanel onclose={() => (showSkills = false)} />
+  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} />
 {/if}
 {#if showWorkflows}
   <WorkflowsPanel onclose={() => (showWorkflows = false)} />
 {/if}
 {#if showUsage}
-  <TokenUsage onclose={() => (showUsage = false)} />
+  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} />
 {/if}
 
 <style>

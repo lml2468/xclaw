@@ -190,7 +190,9 @@
   .nav button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
   .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
   .nav button:not(.on):hover { color: var(--ink); }  header h2 { font-size: 17px; flex: 1; }
-  .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; cursor: pointer; }
+  .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; cursor: pointer; transition: background .14s ease, color .14s ease; }
+  .x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .nav button:focus-visible, .seg button:focus-visible, .x:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   /* Range selector */
   .seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }

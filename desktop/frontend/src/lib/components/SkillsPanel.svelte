@@ -228,7 +228,11 @@
   .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
   .nav button:not(.on):hover { color: var(--ink); }
   header h2 { font-size: 17px; font-weight: 600; flex: 1; }
-  .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
+  .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; transition: background .14s ease, color .14s ease; }
+  .x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .nav button:focus-visible, .x:focus-visible, .row:focus-visible, .add:focus-visible, .remove:focus-visible, .primary:focus-visible, .fname:focus-visible, .del:focus-visible, .cbtns button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong, var(--accent)); }
+  .remove:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
   .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
 
@@ -267,7 +271,8 @@
   .ebar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); }
   .ebar .fn { font-size: 12px; font-family: var(--mono); color: var(--ink-soft); }
   .ebar .dirty { color: var(--accent); font-size: 10px; }
-  .primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; padding: 6px 14px; font-size: 12px; }
+  .primary { background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); color: #fff; border: none; border-radius: 9px; padding: 7px 15px; font-size: 12px; font-weight: 550; box-shadow: 0 3px 12px color-mix(in srgb, var(--grad-a) 40%, transparent); transition: transform .12s ease, box-shadow .14s ease, opacity .14s ease; }
+  .primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px color-mix(in srgb, var(--grad-a) 50%, transparent); }
   .primary:disabled { opacity: 0.45; }
   textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 

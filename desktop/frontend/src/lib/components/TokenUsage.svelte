@@ -174,8 +174,8 @@
 </div>
 
 <style>
-  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(800px, 94vw); height: min(560px, 88vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; }
+  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; }
+  .modal { width: min(800px, 94vw); height: min(560px, 88vh); display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); overflow: hidden; }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
   header h2 { font-size: 17px; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; cursor: pointer; }

@@ -200,8 +200,8 @@
 </div>
 
 <style>
-  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(860px, 92vw); height: min(620px, 88vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; }
+  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; }
+  .modal { width: min(860px, 92vw); height: min(620px, 88vh); display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); overflow: hidden; }
   header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
   header h2 { font-size: 17px; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
@@ -216,8 +216,8 @@
 
   .form { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
   label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-soft); }
-  input, textarea { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 4px; padding: 7px 10px; color: var(--ink); font-size: 13px; outline: none; }
-  input:focus, textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); }
+  input, textarea { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 11px; color: var(--ink); font-size: 13px; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+  input:focus, textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
   textarea { resize: vertical; font-family: var(--ui); }
   small { color: var(--ink-faint); font-size: 11px; }
 

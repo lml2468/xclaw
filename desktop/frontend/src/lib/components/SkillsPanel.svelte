@@ -208,8 +208,8 @@
 <style>
   /* Mirrors ConfigEditor (Edit Bots): same scrim + centered modal + header/✕,
      so the two open and feel identical. */
-  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(940px, 94vw); height: min(640px, 90vh); position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; color: var(--ink); font-family: var(--ui); }
+  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; }
+  .modal { width: min(940px, 94vw); height: min(640px, 90vh); position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); overflow: hidden; color: var(--ink); font-family: var(--ui); }
   header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
   header h2 { font-size: 17px; font-weight: 600; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
@@ -226,8 +226,8 @@
   .muted.center { display: grid; place-items: center; height: 100%; }
 
   .new { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-  input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 4px; padding: 7px 10px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; }
-  input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); }
+  input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 11px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+  input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
   .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 4px; color: var(--ink-soft); font-size: 12px; }
   .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong); }
   .add:disabled { opacity: 0.45; }

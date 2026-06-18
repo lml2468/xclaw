@@ -143,17 +143,17 @@ func TestTokenUsageAccumulates(t *testing.T) {
 	}
 
 	// All-zero deltas are a no-op (don't advance the turn counter).
-	if err := s.AddUsage(0, 0, 0, 0); err != nil {
+	if err := s.AddUsage(0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if u, _ := s.Usage(); u.Turns != 0 {
 		t.Fatalf("zero usage must not advance turns: %+v", u)
 	}
 
-	if err := s.AddUsage(100, 20, 80, 0.01); err != nil {
+	if err := s.AddUsage(100, 20, 80, 200, 0.01); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddUsage(50, 10, 40, 0.005); err != nil {
+	if err := s.AddUsage(50, 10, 40, 0, 0.005); err != nil {
 		t.Fatal(err)
 	}
 	u, err := s.Usage()
@@ -162,6 +162,9 @@ func TestTokenUsageAccumulates(t *testing.T) {
 	}
 	if u.InputTokens != 150 || u.OutputTokens != 30 || u.CachedTokens != 120 {
 		t.Fatalf("tokens not accumulated: %+v", u)
+	}
+	if u.CacheWriteTokens != 200 {
+		t.Fatalf("cache-write not accumulated: %+v", u)
 	}
 	if u.Turns != 2 {
 		t.Fatalf("turns = %d, want 2", u.Turns)

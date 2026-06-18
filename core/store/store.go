@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS token_usage (
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cached_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd      REAL    NOT NULL DEFAULT 0,
   turns         INTEGER NOT NULL DEFAULT 0,
   updated_at    INTEGER NOT NULL DEFAULT 0
@@ -99,6 +100,14 @@ func Open(path string) (*Store, error) {
 	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
+	}
+	// Idempotent migration: add token_usage.cache_write_tokens to DBs created
+	// before it existed. CREATE TABLE IF NOT EXISTS won't alter an existing table,
+	// so ADD COLUMN here; ignore the "duplicate column name" error on DBs that
+	// already have it.
+	if _, err := db.Exec(`ALTER TABLE token_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return nil, fmt.Errorf("migrate token_usage: %w", err)
 	}
 	return &Store{db: db, now: time.Now}, nil
 }
@@ -266,32 +275,34 @@ func (s *Store) ListSessions() ([]SessionSummary, error) {
 
 // TokenUsage is this bot's cumulative token accounting across all turns.
 type TokenUsage struct {
-	InputTokens  int64
-	OutputTokens int64
-	CachedTokens int64
-	CostUSD      float64
-	Turns        int64
-	UpdatedAt    int64
+	InputTokens      int64
+	OutputTokens     int64
+	CachedTokens     int64 // cache reads (cache_read_input_tokens)
+	CacheWriteTokens int64 // cache writes (cache_creation_input_tokens)
+	CostUSD          float64
+	Turns            int64
+	UpdatedAt        int64
 }
 
 // AddUsage accumulates one completed turn's usage into the running total. A
 // no-op when all deltas are zero (e.g. a turn the agent reported no usage for),
 // so the turn counter only advances on real usage.
-func (s *Store) AddUsage(in, out, cached int, cost float64) error {
-	if in == 0 && out == 0 && cached == 0 && cost == 0 {
+func (s *Store) AddUsage(in, out, cached, cacheWrite int, cost float64) error {
+	if in == 0 && out == 0 && cached == 0 && cacheWrite == 0 && cost == 0 {
 		return nil
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO token_usage(id, input_tokens, output_tokens, cached_tokens, cost_usd, turns, updated_at)
-		 VALUES(1, ?, ?, ?, ?, 1, ?)
+		`INSERT INTO token_usage(id, input_tokens, output_tokens, cached_tokens, cache_write_tokens, cost_usd, turns, updated_at)
+		 VALUES(1, ?, ?, ?, ?, ?, 1, ?)
 		 ON CONFLICT(id) DO UPDATE SET
-		   input_tokens  = input_tokens  + excluded.input_tokens,
-		   output_tokens = output_tokens + excluded.output_tokens,
-		   cached_tokens = cached_tokens + excluded.cached_tokens,
-		   cost_usd      = cost_usd      + excluded.cost_usd,
-		   turns         = turns         + 1,
-		   updated_at    = excluded.updated_at;`,
-		in, out, cached, cost, s.now().Unix())
+		   input_tokens       = input_tokens       + excluded.input_tokens,
+		   output_tokens      = output_tokens      + excluded.output_tokens,
+		   cached_tokens      = cached_tokens      + excluded.cached_tokens,
+		   cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+		   cost_usd           = cost_usd           + excluded.cost_usd,
+		   turns              = turns              + 1,
+		   updated_at         = excluded.updated_at;`,
+		in, out, cached, cacheWrite, cost, s.now().Unix())
 	if err != nil {
 		return fmt.Errorf("add usage: %w", err)
 	}
@@ -303,9 +314,9 @@ func (s *Store) AddUsage(in, out, cached int, cost float64) error {
 func (s *Store) Usage() (TokenUsage, error) {
 	var u TokenUsage
 	err := s.db.QueryRow(
-		`SELECT input_tokens, output_tokens, cached_tokens, cost_usd, turns, updated_at
+		`SELECT input_tokens, output_tokens, cached_tokens, cache_write_tokens, cost_usd, turns, updated_at
 		 FROM token_usage WHERE id = 1`).
-		Scan(&u.InputTokens, &u.OutputTokens, &u.CachedTokens, &u.CostUSD, &u.Turns, &u.UpdatedAt)
+		Scan(&u.InputTokens, &u.OutputTokens, &u.CachedTokens, &u.CacheWriteTokens, &u.CostUSD, &u.Turns, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return TokenUsage{}, nil
 	}

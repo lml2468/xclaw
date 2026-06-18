@@ -66,7 +66,8 @@ export interface Bot {
 export interface BotUsage {
   inputTokens: number;
   outputTokens: number;
-  cachedTokens: number;
+  cachedTokens: number;     // cache reads
+  cacheWriteTokens: number; // cache writes (seeding the prompt cache)
   costUsd: number;
   turns: number;
   updatedAt: number; // Unix seconds, 0 when no usage yet
@@ -117,8 +118,8 @@ class Store {
   // screenshots without spawning the daemon (launch with XCLAW_PREVIEW=1).
   private seedPreview() {
     this.bots = [
-      { id: "main", connected: true, usage: { inputTokens: 1_284_500, outputTokens: 96_120, cachedTokens: 842_300, costUsd: 4.8123, turns: 318, updatedAt: 0 } },
-      { id: "research", connected: false, lastError: "awaiting secret", usage: { inputTokens: 412_900, outputTokens: 38_540, cachedTokens: 201_770, costUsd: 1.2045, turns: 92, updatedAt: 0 } },
+      { id: "main", connected: true, usage: { inputTokens: 1_284_500, outputTokens: 96_120, cachedTokens: 842_300, cacheWriteTokens: 318_400, costUsd: 4.8123, turns: 318, updatedAt: 0 } },
+      { id: "research", connected: false, lastError: "awaiting secret", usage: { inputTokens: 412_900, outputTokens: 38_540, cachedTokens: 201_770, cacheWriteTokens: 64_200, costUsd: 1.2045, turns: 92, updatedAt: 0 } },
     ];
     this.health = "claude · 2 bots";
     this.connected = true;
@@ -262,6 +263,7 @@ class Store {
           inputTokens: env.body.inputTokens ?? 0,
           outputTokens: env.body.outputTokens ?? 0,
           cachedTokens: env.body.cachedTokens ?? 0,
+          cacheWriteTokens: env.body.cacheWriteTokens ?? 0,
           costUsd: env.body.costUsd ?? 0,
           turns: env.body.turns ?? 0,
           updatedAt: env.body.updatedAt ?? 0,

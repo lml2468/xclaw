@@ -11,13 +11,14 @@
 
   // Grand total across all bots (only bots that have reported usage contribute).
   const total = $derived.by(() => {
-    const t = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, turns: 0 };
+    const t = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0, turns: 0 };
     for (const b of bots) {
       const u = b.usage;
       if (!u) continue;
       t.inputTokens += u.inputTokens;
       t.outputTokens += u.outputTokens;
       t.cachedTokens += u.cachedTokens;
+      t.cacheWriteTokens += u.cacheWriteTokens;
       t.costUsd += u.costUsd;
       t.turns += u.turns;
     }
@@ -57,7 +58,8 @@
           <div class="tstats">
             <div class="big"><span class="n">{fmt(total.inputTokens)}</span><span class="k">input</span></div>
             <div class="big"><span class="n">{fmt(total.outputTokens)}</span><span class="k">output</span></div>
-            <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">cached</span></div>
+            <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">cache read</span></div>
+            <div class="big"><span class="n">{fmt(total.cacheWriteTokens)}</span><span class="k">cache write</span></div>
             <div class="big"><span class="n">{cost(total.costUsd)}</span><span class="k">cost</span></div>
           </div>
         </div>
@@ -70,7 +72,8 @@
                 <th class="lcol">Bot</th>
                 <th>Input</th>
                 <th>Output</th>
-                <th>Cached</th>
+                <th>Cache R</th>
+                <th>Cache W</th>
                 <th>Cost</th>
                 <th>Turns</th>
               </tr>
@@ -84,6 +87,7 @@
                   <td class="num">{b.usage ? fmt(b.usage.inputTokens) : "—"}</td>
                   <td class="num">{b.usage ? fmt(b.usage.outputTokens) : "—"}</td>
                   <td class="num">{b.usage ? fmt(b.usage.cachedTokens) : "—"}</td>
+                  <td class="num">{b.usage ? fmt(b.usage.cacheWriteTokens) : "—"}</td>
                   <td class="num">{b.usage ? cost(b.usage.costUsd) : "—"}</td>
                   <td class="num dim">{b.usage ? b.usage.turns : "—"}</td>
                 </tr>
@@ -92,7 +96,7 @@
           </table>
         </div>
 
-        <p class="note">Cumulative across all completed turns, persisted per bot. “Cached” is the input served from the prompt cache.</p>
+        <p class="note">Cumulative across all completed turns, persisted per bot. <strong>Cache R</strong> is input served (read) from the prompt cache; <strong>Cache W</strong> is input written into it. Cost is the agent-reported total.</p>
       {/if}
     </div>
   </div>
@@ -100,7 +104,7 @@
 
 <style>
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(720px, 92vw); height: min(560px, 88vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; }
+  .modal { width: min(800px, 94vw); height: min(560px, 88vh); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; }
   header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
   header h2 { font-size: 17px; flex: 1; }
   .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; cursor: pointer; }
@@ -115,9 +119,9 @@
     display: flex; flex-direction: column; gap: 12px;
   }
   .tlabel { font-size: 12px; font-weight: 600; color: var(--accent-strong, var(--accent)); letter-spacing: 0.4px; text-transform: uppercase; }
-  .tstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
   .big { display: flex; flex-direction: column; gap: 2px; }
-  .big .n { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .big .n { font-family: var(--mono); font-size: 20px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
   .big .k { font-size: 11px; color: var(--ink-soft); }
 
   /* Per-bot table */

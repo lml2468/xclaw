@@ -147,13 +147,14 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				return nil, err
 			}
 			return control.UsageStats{
-				BotID:        b.BotID,
-				InputTokens:  u.InputTokens,
-				OutputTokens: u.OutputTokens,
-				CachedTokens: u.CachedTokens,
-				CostUSD:      u.CostUSD,
-				Turns:        u.Turns,
-				UpdatedAt:    u.UpdatedAt,
+				BotID:            b.BotID,
+				InputTokens:      u.InputTokens,
+				OutputTokens:     u.OutputTokens,
+				CachedTokens:     u.CachedTokens,
+				CacheWriteTokens: u.CacheWriteTokens,
+				CostUSD:          u.CostUSD,
+				Turns:            u.Turns,
+				UpdatedAt:        u.UpdatedAt,
 			}, nil
 
 		case "session.reset":

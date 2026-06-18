@@ -503,7 +503,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 				// Accumulate this turn's token usage into the bot's persistent
 				// total (best-effort: a write failure must not fail the turn).
 				if ev.Usage != nil {
-					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CostUSD); err != nil {
+					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
 						fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
 					}
 				}

@@ -125,13 +125,14 @@ type UsageStatsBody struct {
 // UsageStats is the usage.stats response: a bot's cumulative token totals across
 // every completed turn (persisted, so it survives restarts).
 type UsageStats struct {
-	BotID        string  `json:"botId,omitempty"`
-	InputTokens  int64   `json:"inputTokens"`
-	OutputTokens int64   `json:"outputTokens"`
-	CachedTokens int64   `json:"cachedTokens"`
-	CostUSD      float64 `json:"costUsd"`
-	Turns        int64   `json:"turns"`
-	UpdatedAt    int64   `json:"updatedAt"` // Unix seconds; 0 when no usage yet
+	BotID            string  `json:"botId,omitempty"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	CachedTokens     int64   `json:"cachedTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	CostUSD          float64 `json:"costUsd"`
+	Turns            int64   `json:"turns"`
+	UpdatedAt        int64   `json:"updatedAt"` // Unix seconds; 0 when no usage yet
 }
 
 // SecretInjectBody carries a single secret into the core (proto: secret.inject).

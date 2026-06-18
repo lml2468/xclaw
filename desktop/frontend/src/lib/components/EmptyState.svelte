@@ -1,5 +1,5 @@
 <script lang="ts">
-  import octoUrl from "../assets/octo.png";
+  import XMark from "./XMark.svelte";
 
   let { onpick }: { onpick: (prompt: string) => void } = $props();
 
@@ -11,7 +11,7 @@
 </script>
 
 <div class="empty">
-  <img class="hero" src={octoUrl} alt="XClaw" width="72" height="72" />
+  <div class="hero" aria-hidden="true"><XMark size={40} /></div>
   <h1>Talk to your agent</h1>
   <p class="sub">Ask anything below, or start with one of these.</p>
   <div class="chips">
@@ -29,8 +29,9 @@
   }
   .hero {
     width: 72px; height: 72px; border-radius: 18px;
-    object-fit: cover; display: block;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+    display: grid; place-items: center; color: #fff;
+    background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--grad-a) 40%, transparent), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
   }
   h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.2px; margin: 6px 0 0; }
   .sub { color: var(--ink-soft); margin: 0; font-size: 13px; }

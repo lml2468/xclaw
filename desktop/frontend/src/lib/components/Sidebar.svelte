@@ -5,6 +5,7 @@
   // per-Space gradient blooms behind it.
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
+  import XMark from "./XMark.svelte";
 
   let { onedit, onpalette, collapsed = false }:
     { onedit: () => void; onpalette: () => void; collapsed?: boolean } = $props();
@@ -33,9 +34,7 @@
 
 <aside class="sidebar" class:collapsed>
   <div class="top" style="--wails-draggable: drag;">
-    <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 6c-2 0-4 2-4 5s1 4 2 5M17 6c2 0 4 2 4 5s-1 4-2 5M9.5 7c0 5-1 9-3 12M14.5 7c0 5 1 9 3 12"/></svg>
-    </span>
+    <span class="brand-mark" aria-hidden="true"><XMark size={17} /></span>
     <span class="brand-name">XClaw</span>
     <span class="spacer"></span>
     <button class="iconbtn theme-btn" style="--wails-draggable: no-drag;" title="切换明暗" aria-label="切换明暗" onclick={toggleTheme}>
@@ -103,7 +102,6 @@
   /* Collapsed: drop the brand + theme toggle, leave only the expand control centered. */
   .sidebar.collapsed .top { padding: 0; justify-content: center; }
   .brand-mark { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 8px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); box-shadow: 0 4px 14px color-mix(in srgb, var(--grad-a) 45%, transparent); }
-  .brand-mark svg { width: 18px; height: 18px; }
   .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); }
   .spacer { flex: 1; }
   .iconbtn { width: 30px; height: 30px; border-radius: 8px; border: none; background: transparent; color: var(--ink-soft); display: grid; place-items: center; transition: background .14s ease, color .14s ease, transform .12s ease; }

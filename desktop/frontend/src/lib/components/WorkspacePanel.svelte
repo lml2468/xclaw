@@ -117,7 +117,9 @@
   .bar {
     height: var(--header-h); flex: 0 0 var(--header-h);
     display: flex; align-items: center; gap: 6px; padding: 0 12px 0 16px;
-    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid var(--hairline);
   }
   .title { font-size: 13px; font-weight: 600; color: var(--ink); }
   .spacer { flex: 1; }

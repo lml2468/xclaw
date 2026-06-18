@@ -45,7 +45,8 @@
 
 <style>
   .composer {
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 68%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
     border-top: 1px solid var(--hairline);
     padding: 12px var(--gutter) 14px;
   }

@@ -32,7 +32,8 @@
 
 <style>
   .strip {
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
     border-top: 1px solid var(--hairline);
     padding: 7px var(--gutter) 7px;
   }

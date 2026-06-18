@@ -1,41 +1,43 @@
-/* XClaw design tokens — a clean, professional messaging UI (WeChat / iMessage
-   grade): neutral surfaces, a confident blue accent, square-rounded avatars,
-   dense grid-aligned rows. No texture, no washes — clarity over decoration. */
+/* XClaw design tokens — Arc Browser direction: frosted warmth over a peach
+   canvas, a single coral accent, squircle-soft radii. Token NAMES are kept
+   identical to the original WeChat-grade system so every component reskins
+   without markup changes; only the VALUES move to the Arc palette.
+   (Brand: Arc Browser DS — coral #ff5f5f, peach-cream #fdf3ec, Inter.) */
 
 :root {
-  /* Three regions: dark bot-rail, conversation list, chat area. */
-  --rail: #2c2f36;          /* far-left bot rail (dark in both themes) */
-  --rail-ink: #c9ccd3;      /* rail icon/text */
-  --rail-active: #3a3e47;   /* rail selected chip */
+  /* Three regions: warm bot-rail, conversation list, chat area. */
+  --rail: #2b2630;          /* far-left bot rail (warm charcoal, dark in both themes) */
+  --rail-ink: #c7c2cc;      /* rail icon/text */
+  --rail-active: #39333f;   /* rail selected chip */
 
-  --list: #f5f5f6;          /* conversation list column */
-  --list-sel: #07c160;      /* selected conversation row (WeChat green) */
-  --sel-ink: #08220f;       /* text on the green selected row */
-  --chat: #ededed;          /* chat message area */
+  --list: #fdf3ec;          /* conversation list column — Arc peach cream */
+  --list-sel: #ffd9d4;      /* selected conversation row — soft coral wash */
+  --sel-ink: #6e201b;       /* dark coral-brown text on the wash (AA on #ffd9d4) */
+  --chat: #f7ede5;          /* chat message area — warm, a touch deeper than list */
   --surface: #ffffff;       /* headers, search field, incoming bubble, composer */
 
-  --ink: #1b1c1e;           /* primary text */
-  --ink-soft: #76787d;      /* secondary text (previews, timestamps) */
-  --ink-faint: #a6a8ad;     /* tertiary / placeholders */
+  --ink: #1a1a1f;           /* primary text — Arc Ink Primary */
+  --ink-soft: #54545a;      /* secondary text — Arc Ink Secondary (7.5:1 on white) */
+  --ink-faint: #74737b;     /* tertiary / placeholders — darkened to clear WCAG 4.5 */
 
-  --accent: #07c160;        /* WeChat green — selection, send, active */
-  --accent-strong: #06a854;
-  --out-bubble: #95ec69;    /* outgoing (user) bubble — WeChat green */
-  --out-ink: #06210f;
+  --accent: #ff5f5f;        /* Arc Coral — selection, send, active (fills) */
+  --accent-strong: #d83a3a; /* text-safe coral — links/emphasis (4.5:1 on white) */
+  --out-bubble: #ffc8be;    /* outgoing (user) bubble — soft coral, dark ink for AA */
+  --out-ink: #6e201b;
   --in-bubble: #ffffff;     /* incoming (assistant) bubble */
-  --in-ink: #1b1c1e;
+  --in-ink: #1a1a1f;
   --badge: #fa5151;
-  --online: #07c160;
+  --online: #48bb78;        /* online dot — Arc success green (conventional) */
 
-  --hairline: #e3e3e6;
-  --hairline-strong: #d6d6da;
-  --danger: #e0533f;
+  --hairline: #ece5db;      /* Arc warm hairline */
+  --hairline-strong: #ddd3c6;
+  --danger: #f56565;        /* Arc error */
 
   /* Code syntax tints */
-  --tok-kw: #8a5cf6;
+  --tok-kw: #c026a8;
   --tok-str: #2f8f5b;
   --tok-num: #b07219;
-  --code-bg: #f4f4f5;
+  --code-bg: #faf3ec;
 
   /* Layout */
   --rail-w: 72px;
@@ -45,102 +47,127 @@
   --row-h: 52px;
   --avatar: 40px;
   --avatar-sm: 36px;
-  --bubble-radius: 4px;
+  --bubble-radius: 12px;
   --content-max: 720px;
   --gutter: 28px;
-  --radius: 4px;
+  --radius: 12px;
 
-  --shadow-pop: 0 8px 30px rgba(20, 22, 28, 0.16), 0 2px 8px rgba(20, 22, 28, 0.08);
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0, 0, 0, 0.06);
 
-  /* Depth + accent character (modern dev-tool feel — restrained, not glassy) */
-  --accent-grad: linear-gradient(180deg, #1ad275 0%, #07c160 100%);
+  /* Depth + accent character — Arc: single soft long-throw shadow, sunset CTA. */
+  --accent-grad: linear-gradient(135deg, #ff7e5f 0%, #feb47b 100%);
   --accent-glow: 0 5px 16px color-mix(in srgb, var(--accent) 40%, transparent);
-  --elev-1: 0 1px 2px rgba(20, 22, 28, 0.10), 0 1px 1px rgba(20, 22, 28, 0.05);
-  --elev-2: 0 4px 14px rgba(20, 22, 28, 0.12), 0 1px 3px rgba(20, 22, 28, 0.07);
+  --elev-1: 0 1px 2px rgba(20, 22, 28, 0.08), 0 1px 1px rgba(20, 22, 28, 0.04);
+  --elev-2: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(20, 22, 28, 0.06);
   --bubble-border: var(--hairline);
   --panel-border: rgba(0, 0, 0, 0.06);
-  --rail-grad: linear-gradient(180deg, #34373f 0%, var(--rail) 100%);
+  --rail-grad: linear-gradient(180deg, #39333f 0%, var(--rail) 100%);
 
-  --ui: "Geist Variable", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui, sans-serif;
-  --mono: "Geist Mono Variable", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  /* Arc glass — window backdrop gradient + frosted surfaces for floating panes. */
+  --window-grad:
+    radial-gradient(120% 130% at 8% -10%, #ff9472 0%, transparent 46%),
+    radial-gradient(120% 120% at 100% 110%, #ffc89a 0%, transparent 50%),
+    linear-gradient(150deg, #ff7e5f 0%, #feb47b 100%);
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-soft: rgba(255, 255, 255, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.55);
+
+  --ui: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 :root[data-theme="dark"] {
-  --rail: #0e0f12;
-  --rail-ink: #9a9da6;
-  --rail-active: #20232a;
+  --rail: #131019;
+  --rail-ink: #b7b3c2;
+  --rail-active: #2a2533;
 
-  --list: #1a1b1f;
-  --list-sel: #07c160;
-    --sel-ink: #06270f;
-  --chat: #161719;
-  --surface: #202227;
+  --list: #1b1822;
+  --list-sel: #4a2b27;
+  --sel-ink: #ffd2cb;
+  --chat: #151219;
+  --surface: #211f29;
 
-  --ink: #ececee;
-  --ink-soft: #8e9098;
-  --ink-faint: #62646b;
+  --ink: #f3f0f5;
+  --ink-soft: #b7b3c2;
+  --ink-faint: #8a8694;
 
-  --accent: #07c160;
-  --accent-strong: #2bcb7e;
-  --out-bubble: #1f8a52;
+  --accent: #ff5f5f;
+  --accent-strong: #ff8080;
+  --out-bubble: #bf4a3f;
   --out-ink: #ffffff;
-  --in-bubble: #26282e;
-  --in-ink: #ececee;
+  --in-bubble: #26232f;
+  --in-ink: #f3f0f5;
   --badge: #fa5151;
-  --online: #07c160;
+  --online: #48bb78;
 
-  --hairline: #2c2e34;
-  --hairline-strong: #34373e;
-  --danger: #e0816e;
-    --tok-kw: #a98bff;
-    --tok-str: #7ec699;
-    --tok-num: #d9a441;
-    --code-bg: #1c1e24;
+  --hairline: rgba(255, 255, 255, 0.10);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --danger: #f08a7a;
+  --tok-kw: #d98be0;
+  --tok-str: #8ad6a6;
+  --tok-num: #d9a441;
+  --code-bg: #1c1a22;
 
   --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
   --accent-glow: 0 5px 18px color-mix(in srgb, var(--accent) 55%, transparent);
   --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02);
-  --elev-2: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
-  --bubble-border: rgba(255, 255, 255, 0.06);
-  --panel-border: rgba(255, 255, 255, 0.045);
-  --rail-grad: linear-gradient(180deg, #181a1f 0%, var(--rail) 100%);
+  --elev-2: 0 10px 34px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --bubble-border: rgba(255, 255, 255, 0.08);
+  --panel-border: rgba(255, 255, 255, 0.06);
+  --rail-grad: linear-gradient(180deg, #1d1825 0%, var(--rail) 100%);
+
+  --window-grad:
+    radial-gradient(120% 130% at 8% -10%, rgba(255, 126, 95, 0.18) 0%, transparent 46%),
+    radial-gradient(120% 120% at 100% 110%, rgba(254, 180, 123, 0.14) 0%, transparent 50%),
+    linear-gradient(150deg, #3a2a26 0%, #2e2620 100%);
+  --glass: rgba(28, 26, 36, 0.62);
+  --glass-soft: rgba(20, 19, 27, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.10);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --rail: #0e0f12;
-    --rail-ink: #9a9da6;
-    --rail-active: #20232a;
-    --list: #1a1b1f;
-    --list-sel: #07c160;
-    --sel-ink: #06270f;
-    --chat: #161719;
-    --surface: #202227;
-    --ink: #ececee;
-    --ink-soft: #8e9098;
-    --ink-faint: #62646b;
-    --accent: #07c160;
-    --accent-strong: #2bcb7e;
-    --out-bubble: #1f8a52;
+    --rail: #131019;
+    --rail-ink: #b7b3c2;
+    --rail-active: #2a2533;
+    --list: #1b1822;
+    --list-sel: #4a2b27;
+    --sel-ink: #ffd2cb;
+    --chat: #151219;
+    --surface: #211f29;
+    --ink: #f3f0f5;
+    --ink-soft: #b7b3c2;
+    --ink-faint: #8a8694;
+    --accent: #ff5f5f;
+    --accent-strong: #ff8080;
+    --out-bubble: #bf4a3f;
     --out-ink: #ffffff;
-    --in-bubble: #26282e;
-    --in-ink: #ececee;
+    --in-bubble: #26232f;
+    --in-ink: #f3f0f5;
     --badge: #fa5151;
-    --online: #07c160;
-    --hairline: #2c2e34;
-    --hairline-strong: #34373e;
-    --danger: #e0816e;
-    --tok-kw: #a98bff;
-    --tok-str: #7ec699;
+    --online: #48bb78;
+    --hairline: rgba(255, 255, 255, 0.10);
+    --hairline-strong: rgba(255, 255, 255, 0.16);
+    --danger: #f08a7a;
+    --tok-kw: #d98be0;
+    --tok-str: #8ad6a6;
     --tok-num: #d9a441;
-    --code-bg: #1c1e24;
+    --code-bg: #1c1a22;
     --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
     --accent-glow: 0 5px 18px color-mix(in srgb, var(--accent) 55%, transparent);
     --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02);
-    --elev-2: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
-    --bubble-border: rgba(255, 255, 255, 0.06);
-    --panel-border: rgba(255, 255, 255, 0.045);
-    --rail-grad: linear-gradient(180deg, #181a1f 0%, var(--rail) 100%);
+    --elev-2: 0 10px 34px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --bubble-border: rgba(255, 255, 255, 0.08);
+    --panel-border: rgba(255, 255, 255, 0.06);
+    --rail-grad: linear-gradient(180deg, #1d1825 0%, var(--rail) 100%);
+
+    --window-grad:
+      radial-gradient(120% 130% at 8% -10%, rgba(255, 126, 95, 0.18) 0%, transparent 46%),
+      radial-gradient(120% 120% at 100% 110%, rgba(254, 180, 123, 0.14) 0%, transparent 50%),
+      linear-gradient(150deg, #3a2a26 0%, #2e2620 100%);
+    --glass: rgba(28, 26, 36, 0.62);
+    --glass-soft: rgba(20, 19, 27, 0.42);
+    --glass-border: rgba(255, 255, 255, 0.10);
   }
 }
 

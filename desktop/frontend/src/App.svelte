@@ -94,7 +94,7 @@
 {/if}
 
 <style>
-  .shell { display: flex; height: 100vh; background: var(--rail); }
+  .shell { display: flex; height: 100vh; background: var(--window-grad); }
   /* Custom window controls for the frameless window — top-left over the rail. */
   :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
 
@@ -103,23 +103,25 @@
   .content {
     flex: 1; min-width: 0; display: flex;
     margin: 4px 4px 4px 3px;
-    border: 1px solid var(--panel-border);
-    border-radius: 9px;
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
     overflow: hidden;
     box-shadow: var(--elev-2);
   }
-  .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100%; border-right: 1px solid var(--hairline); overflow: hidden; }
-  .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: radial-gradient(130% 90% at 50% 0%, color-mix(in srgb, var(--surface) 22%, var(--chat)) 0%, var(--chat) 58%); }
+  .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100%; border-right: 1px solid var(--hairline); overflow: hidden; background: var(--glass-soft); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); }
+  .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
   /* Workspace sidebar: third column inside the rounded content card (no own
      radius/overflow — it lives inside .content's clip). Left hairline mirrors
      the list's right hairline; .chat is flex:1 so it shrinks (push/split). */
-  .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+  .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); overflow: hidden; display: flex; flex-direction: column; }
 
   .chat-bar {
     height: var(--header-h); flex: 0 0 var(--header-h);
     display: flex; align-items: center; gap: 6px;
     padding: 0 var(--gutter);
-    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--surface) 68%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid var(--hairline);
   }
   .title { font-size: 15px; font-weight: 600; color: var(--ink); }
   .spacer { flex: 1; }

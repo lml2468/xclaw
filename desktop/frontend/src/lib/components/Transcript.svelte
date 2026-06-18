@@ -55,7 +55,7 @@
 </div>
 
 <style>
-  .scroller { flex: 1; overflow-y: auto; background: var(--chat); }
+  .scroller { flex: 1; overflow-y: auto; background: transparent; }
   .stack { display: flex; flex-direction: column; gap: 14px; padding: 22px var(--gutter, 28px) 12px; max-width: var(--content-max); width: 100%; margin: 0 auto; }
 
   .err { align-self: center; color: var(--danger); font-size: 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: 4px; padding: 7px 12px; }

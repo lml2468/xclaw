@@ -188,12 +188,14 @@
 </section>
 
 <style>
-  .preview { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--chat); }
+  .preview { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
 
   .bar {
     height: var(--header-h); flex: 0 0 var(--header-h);
     display: flex; align-items: center; gap: 10px; padding: 0 12px 0 var(--gutter, 20px);
-    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid var(--hairline);
   }
   .path { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
   .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); flex: 0 0 auto; }

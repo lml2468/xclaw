@@ -58,7 +58,7 @@
 </div>
 
 <style>
-  .list-col { display: flex; flex-direction: column; height: 100%; background: var(--list); }
+  .list-col { display: flex; flex-direction: column; height: 100%; background: transparent; }
 
   .top {
     height: var(--header-h); flex: 0 0 var(--header-h);

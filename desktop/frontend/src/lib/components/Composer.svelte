@@ -33,7 +33,7 @@
       bind:this={ta}
       bind:value={draft}
       rows="1"
-      placeholder="Message the agent…"
+      placeholder="给 agent 发消息…"
       oninput={autogrow}
       onkeydown={onKey}
     ></textarea>
@@ -57,7 +57,7 @@
   textarea {
     flex: 1; border: 1px solid var(--hairline); outline: none; resize: none;
     background: color-mix(in srgb, var(--ink) 6%, transparent);
-    border-radius: 4px; padding: 10px 13px; line-height: 1.45; max-height: 140px;
+    border-radius: var(--radius-control); padding: 10px 13px; line-height: 1.45; max-height: 140px;
     color: var(--ink); font-size: 14px;
     transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   }
@@ -68,7 +68,7 @@
   }
   textarea::placeholder { color: var(--ink-faint); }
   .send {
-    flex: 0 0 34px; width: 34px; height: 34px; border-radius: 4px; border: none;
+    flex: 0 0 34px; width: 34px; height: 34px; border-radius: var(--radius-control); border: none;
     display: grid; place-items: center;
     background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink-faint);
     transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
@@ -76,4 +76,5 @@
   .send.on { background: var(--accent-grad); color: #fff; box-shadow: var(--accent-glow); }
   .send.on:hover { transform: translateY(-1px); box-shadow: 0 7px 20px color-mix(in srgb, var(--accent) 55%, transparent); }
   .send:disabled { cursor: default; }
+  @media (prefers-reduced-motion: reduce) { .send.on:hover { transform: none; } }
 </style>

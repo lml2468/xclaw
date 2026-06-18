@@ -136,16 +136,16 @@
   />
 {/if}
 {#if showEditor}
-  <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
+  <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 {#if showSkills}
-  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} />
+  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 {#if showWorkflows}
-  <WorkflowsPanel onclose={() => (showWorkflows = false)} />
+  <WorkflowsPanel onclose={() => (showWorkflows = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
 {/if}
 {#if showUsage}
-  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} />
+  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 
 <style>

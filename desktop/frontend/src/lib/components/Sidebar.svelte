@@ -12,6 +12,7 @@
 
   let menuOpen = $state(false);
   function choose(fn: () => void) { menuOpen = false; fn(); }
+  function onWinKey(e: KeyboardEvent) { if (e.key === "Escape" && menuOpen) { menuOpen = false; } }
 
   function relTime(ms: number): string {
     if (!ms) return "";
@@ -34,6 +35,8 @@
     try { localStorage.setItem("xclaw:theme", next); } catch (_) {}
   }
 </script>
+
+<svelte:window onkeydown={onWinKey} />
 
 <aside class="sidebar" class:collapsed>
   <div class="top" style="--wails-draggable: drag;">
@@ -95,9 +98,9 @@
       <div class="menu-backdrop" role="presentation" onclick={() => (menuOpen = false)}></div>
       <div class="menu" role="menu">
         <button role="menuitem" onclick={() => choose(onedit)}>编辑 Bot</button>
-        <button role="menuitem" onclick={() => choose(onskills)}>管理技能</button>
-        <button role="menuitem" onclick={() => choose(onworkflows)}>管理工作流</button>
-        <button role="menuitem" onclick={() => choose(onusage)}>Token 用量</button>
+        <button role="menuitem" onclick={() => choose(onskills)}>技能</button>
+        <button role="menuitem" onclick={() => choose(onworkflows)}>工作流</button>
+        <button role="menuitem" onclick={() => choose(onusage)}>用量</button>
       </div>
     {/if}
   </div>
@@ -170,7 +173,13 @@
   .fbtn:hover, .fbtn.active { background: var(--glass-hover, color-mix(in srgb, var(--ink) 6%, transparent)); color: var(--ink); }
   .sidebar.collapsed .fbtn { justify-content: center; }
   .menu-backdrop { position: fixed; inset: 0; z-index: 90; }
-  .menu { position: absolute; bottom: calc(100% + 6px); left: 2px; right: 2px; z-index: 100; padding: 4px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 2px; }
-  .menu button { text-align: left; padding: 8px 12px; border: none; background: transparent; border-radius: 6px; color: var(--ink); font-size: 13px; }
-  .menu button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-strong, var(--accent)); }
+  .menu { position: absolute; bottom: calc(100% + 6px); left: 2px; right: 2px; z-index: 100; padding: 4px; background: var(--glass-active, var(--surface)); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border: 1px solid var(--glass-border); border-radius: 12px; box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 2px; transform-origin: bottom center; animation: menu-in .16s var(--ease-standard, ease); }
+  @keyframes menu-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+  .menu button { text-align: left; padding: 8px 12px; border: none; background: transparent; border-radius: 8px; color: var(--ink); font-size: 13px; transition: background .12s ease, color .12s ease; }
+  .menu button:hover { background: var(--accent-bg-hover); color: var(--accent-strong, var(--accent)); }
+  .menu button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  @media (prefers-reduced-motion: reduce) {
+    .menu { animation: none; }
+    .cmd-bar:hover { transform: none; }
+  }
 </style>

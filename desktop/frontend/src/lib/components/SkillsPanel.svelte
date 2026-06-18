@@ -1,7 +1,8 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import { modal } from "../actions/modal";
 
-  let { onclose, onedit, onusage }: { onclose: () => void; onedit?: () => void; onusage?: () => void } = $props();
+  let { onclose, onedit, onusage, onworkflows }: { onclose: () => void; onedit?: () => void; onusage?: () => void; onworkflows?: () => void } = $props();
 
   type SkillInfo = { name: string; description: string; files: number };
 
@@ -24,6 +25,11 @@
   function answer(v: boolean) {
     confirmState?.resolve(v);
     confirmState = null;
+  }
+  // Guarded nav/close: an in-progress edit prompts before leaving.
+  async function leave(fn?: () => void) {
+    if (dirty && !(await ask("有未保存的改动,确认离开?"))) return;
+    onclose(); fn?.();
   }
 
   // Preview-mode in-memory catalog so the layout can be screenshotted without a daemon.
@@ -68,7 +74,7 @@
   }
 
   async function openFile(rel: string) {
-    if (dirty && !(await ask("Discard unsaved changes?"))) return;
+    if (dirty && !(await ask("放弃未保存的改动?"))) return;
     activeFile = rel; error = "";
     try {
       content = isPreview ? (mock[sel!]?.[rel] ?? "") : await XClawService.SkillRead(sel!, rel);
@@ -99,7 +105,7 @@
 
   async function deleteFile(rel: string) {
     if (!sel || rel === "SKILL.md") return;
-    if (!(await ask(`Delete ${rel}?`))) return;
+    if (!(await ask(`删除文件 ${rel}?`))) return;
     try {
       if (isPreview) { delete mock[sel][rel]; }
       else await XClawService.SkillDeleteFile(sel, rel);
@@ -121,7 +127,7 @@
   }
 
   async function deleteSkill(name: string) {
-    if (!(await ask(`Delete the skill "${name}" and all its files?`))) return;
+    if (!(await ask(`删除技能「${name}」及其所有文件?`))) return;
     try {
       if (isPreview) { delete mock[name]; } else await XClawService.SkillDelete(name);
       if (sel === name) { sel = null; files = []; activeFile = null; content = ""; }
@@ -130,17 +136,18 @@
   }
 </script>
 
-<div class="scrim" onclick={onclose} role="presentation">
-  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Manage skills">
+<div class="scrim" onclick={() => leave()} role="presentation">
+  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="技能">
     <header>
       <h2>设置</h2>
       <div class="nav" role="tablist" aria-label="设置分区">
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onedit?.(); }}>编辑 Bot</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onedit)}>编辑 Bot</button>
         <button role="tab" aria-selected="true" class="on">技能</button>
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onusage?.(); }}>用量</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onusage)}>用量</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onworkflows)}>工作流</button>
       </div>
       <span class="hspacer"></span>
-      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
+      <button class="x" onclick={() => leave()} aria-label="关闭">✕</button>
     </header>
 
     <div class="body">
@@ -237,7 +244,7 @@
   .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
 
   .list { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
-  .row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: none; background: transparent; border-radius: 4px; color: var(--ink); }
+  .row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: none; background: transparent; border-radius: 8px; color: var(--ink); }
   .row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .row .nm { font-size: 13px; font-weight: 600; }
@@ -248,7 +255,7 @@
   .new { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
   input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 11px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
   input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
-  .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 4px; color: var(--ink-soft); font-size: 12px; }
+  .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 8px; color: var(--ink-soft); font-size: 12px; }
   .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong); }
   .add:disabled { opacity: 0.45; }
 
@@ -260,7 +267,7 @@
 
   .cols { flex: 1; display: grid; grid-template-columns: 210px 1fr; min-height: 0; }
   .files { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
-  .frow { display: flex; align-items: center; border-radius: 4px; }
+  .frow { display: flex; align-items: center; border-radius: 8px; }
   .frow:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .frow.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .fname { flex: 1; min-width: 0; text-align: left; background: transparent; border: none; color: var(--ink); padding: 7px 9px; font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
@@ -282,6 +289,6 @@
   .confirm { width: min(360px, 80%); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 18px; }
   .confirm p { margin: 0 0 14px; font-size: 13px; color: var(--ink); }
   .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
-  .cbtns button { padding: 7px 14px; border-radius: 4px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink); font-size: 12px; }
+  .cbtns button { padding: 7px 14px; border-radius: var(--radius-control); border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink); font-size: 12px; }
   .cbtns .danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 </style>

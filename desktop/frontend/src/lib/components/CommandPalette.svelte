@@ -1,7 +1,8 @@
 <script lang="ts">
   // ⌘K command palette — search Spaces (bots) + conversations and jump, or run
   // a command (open settings / skills / workflows / token usage). Wired to the
-  // real store; no mock data.
+  // real store; no mock data. Fully keyboard-driven: ↑/↓ to move, Enter to pick,
+  // Esc to close.
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
 
@@ -9,7 +10,9 @@
     { onclose: () => void; onedit: () => void; onskills: () => void; onworkflows: () => void; onusage: () => void } = $props();
 
   let q = $state("");
+  let active = $state(0);
   let input: HTMLInputElement;
+  let listEl: HTMLDivElement;
 
   $effect(() => { setTimeout(() => input?.focus(), 40); });
 
@@ -18,61 +21,76 @@
   const sessions = $derived(
     store.sessions
       .filter((s) => !ql || s.title.toLowerCase().includes(ql) || (s.preview ?? "").toLowerCase().includes(ql))
-      .slice(0, 6),
+      .slice(0, 8),
   );
   const commands = $derived(
     [
       { label: "编辑 Bot", run: onedit },
-      { label: "管理技能", run: onskills },
-      { label: "管理工作流", run: onworkflows },
-      { label: "Token 用量", run: onusage },
+      { label: "技能", run: onskills },
+      { label: "工作流", run: onworkflows },
+      { label: "用量", run: onusage },
     ].filter((c) => !ql || c.label.toLowerCase().includes(ql)),
   );
+
+  type Item =
+    | { kind: "space"; label: string; sub: string; avatar: string; run: () => void }
+    | { kind: "session"; label: string; sub: string; avatar: string; run: () => void }
+    | { kind: "cmd"; label: string; run: () => void };
+
+  // Flat, index-addressable list across all three sections for keyboard nav.
+  const items = $derived<Item[]>([
+    ...bots.map((b) => ({ kind: "space" as const, label: b.id, sub: b.connected ? "在线" : "离线", avatar: b.id, run: () => gotoBot(b.id) })),
+    ...sessions.map((s) => ({ kind: "session" as const, label: s.title, sub: s.botId, avatar: s.title, run: () => gotoSession(s.botId, s.key) })),
+    ...commands.map((c) => ({ kind: "cmd" as const, label: c.label, run: () => runCmd(c.run) })),
+  ]);
+
+  // Keep the highlight in range and reset to the top whenever the query changes.
+  $effect(() => { ql; active = 0; });
+  $effect(() => { if (active >= items.length) active = Math.max(0, items.length - 1); });
+  $effect(() => {
+    active;
+    listEl?.querySelector<HTMLElement>(".pitem.active")?.scrollIntoView({ block: "nearest" });
+  });
 
   function gotoBot(id: string) { store.selectBot(id); onclose(); }
   function gotoSession(botId: string, key: string) { if (store.selectedBotId !== botId) store.selectBot(botId); store.selectSession(key); onclose(); }
   function runCmd(fn: () => void) { onclose(); fn(); }
-  function onScrimKey(e: KeyboardEvent) { if (e.key === "Escape") onclose(); }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape") { e.preventDefault(); onclose(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) active = (active + 1) % items.length; }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (items.length) active = (active - 1 + items.length) % items.length; }
+    else if (e.key === "Enter") { e.preventDefault(); items[active]?.run(); }
+  }
+  // Section header shown before the first item of each kind.
+  function headFor(i: number): string | null {
+    const k = items[i].kind;
+    if (i > 0 && items[i - 1].kind === k) return null;
+    return k === "space" ? "Spaces" : k === "session" ? "会话" : "命令";
+  }
 </script>
 
-<div class="scrim" onclick={onclose} onkeydown={onScrimKey} role="presentation">
-  <div class="palette" role="dialog" aria-label="命令面板" onclick={(e) => e.stopPropagation()}>
+<div class="scrim" onclick={onclose} role="presentation">
+  <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板" onclick={(e) => e.stopPropagation()}>
     <div class="pinput">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--ink-faint)"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input bind:this={input} bind:value={q} placeholder="搜索会话、切换 Space 或执行命令…" />
+      <input bind:this={input} bind:value={q} onkeydown={onKey} placeholder="搜索会话、切换 Space 或执行命令…" aria-label="搜索" />
       <span class="esc">esc</span>
     </div>
-    <div class="plist">
-      {#if bots.length}
-        <div class="psec">Spaces</div>
-        {#each bots as b (b.id)}
-          <button class="pitem" onclick={() => gotoBot(b.id)}>
-            <Avatar name={b.id} size={24} />
-            <span class="pl">{b.id}</span>
-            <span class="ph">{b.connected ? "在线" : "离线"}</span>
-          </button>
-        {/each}
-      {/if}
-      {#if sessions.length}
-        <div class="psec">会话</div>
-        {#each sessions as s (s.botId + s.key)}
-          <button class="pitem" onclick={() => gotoSession(s.botId, s.key)}>
-            <Avatar name={s.title} size={24} />
-            <span class="pl">{s.title}</span>
-            <span class="ph">{s.botId}</span>
-          </button>
-        {/each}
-      {/if}
-      {#if commands.length}
-        <div class="psec">命令</div>
-        {#each commands as c (c.label)}
-          <button class="pitem" onclick={() => runCmd(c.run)}>
+    <div class="plist" bind:this={listEl}>
+      {#each items as it, i (it.kind + it.label + i)}
+        {#if headFor(i)}<div class="psec">{headFor(i)}</div>{/if}
+        <button class="pitem" class:active={i === active} onclick={it.run} onmousemove={() => (active = i)}>
+          {#if it.kind === "cmd"}
             <span class="cmd-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
-            <span class="pl">{c.label}</span>
-          </button>
-        {/each}
-      {/if}
-      {#if !bots.length && !sessions.length && !commands.length}
+          {:else}
+            <Avatar name={it.avatar} size={24} />
+          {/if}
+          <span class="pl">{it.label}</span>
+          {#if it.kind !== "cmd"}<span class="ph">{it.sub}</span>{/if}
+        </button>
+      {/each}
+      {#if items.length === 0}
         <div class="psec">无匹配结果</div>
       {/if}
     </div>
@@ -90,7 +108,8 @@
   .plist { max-height: 340px; overflow-y: auto; padding: 8px; }
   .psec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); padding: 8px 10px 4px; }
   .pitem { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 9px 10px; border: none; background: transparent; border-radius: 8px; color: var(--ink); transition: background .12s ease; }
-  .pitem:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .pitem:hover, .pitem.active { background: var(--accent-bg-hover); }
+  .pitem.active { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
   .cmd-ico { width: 24px; height: 24px; flex: 0 0 24px; border-radius: 7px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-strong, var(--accent)); }
   .cmd-ico svg { width: 14px; height: 14px; }
   .pl { flex: 1; font-size: 14px; }

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { store, type BotUsage } from "../store.svelte";
   import { onMount } from "svelte";
+  import { modal } from "../actions/modal";
 
-  let { onclose, onedit, onskills }: { onclose: () => void; onedit?: () => void; onskills?: () => void } = $props();
+  let { onclose, onedit, onskills, onworkflows }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onworkflows?: () => void } = $props();
 
   // Range selector. `since` is Unix seconds at a LOCAL-midnight bound (0 = all
   // time), computed from the user's own calendar so "today" matches their tz.
@@ -105,13 +106,14 @@
 </script>
 
 <div class="scrim" onclick={onclose} role="presentation">
-  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token usage">
+  <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量">
     <header>
       <h2>设置</h2>
       <div class="nav" role="tablist" aria-label="设置分区">
         <button role="tab" aria-selected="false" onclick={() => { onclose(); onedit?.(); }}>编辑 Bot</button>
         <button role="tab" aria-selected="false" onclick={() => { onclose(); onskills?.(); }}>技能</button>
         <button role="tab" aria-selected="true" class="on">用量</button>
+        <button role="tab" aria-selected="false" onclick={() => { onclose(); onworkflows?.(); }}>工作流</button>
       </div>
       <span class="hspacer"></span>
       <div class="seg" role="tablist" aria-label="时间范围">
@@ -128,49 +130,51 @@
       {:else if !anyUsage}
         <div class="empty">该区间暂无用量</div>
       {:else}
-        <!-- Grand total card -->
-        <div class="total">
-          <span class="tlabel">全部 Bot</span>
-          <div class="tstats">
-            <div class="big"><span class="n">{fmt(total.inputTokens)}</span><span class="k">输入</span></div>
-            <div class="big"><span class="n">{fmt(total.outputTokens)}</span><span class="k">输出</span></div>
-            <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">缓存读</span></div>
-            <div class="big"><span class="n">{fmt(total.cacheWriteTokens)}</span><span class="k">缓存写</span></div>
-            <div class="big"><span class="n">{cost(total.costUsd)}</span><span class="k">费用</span></div>
+        <div class="wrap">
+          <!-- Grand total card -->
+          <div class="total">
+            <span class="tlabel">全部 Bot</span>
+            <div class="tstats">
+              <div class="big"><span class="n">{fmt(total.inputTokens)}</span><span class="k">输入</span></div>
+              <div class="big"><span class="n">{fmt(total.outputTokens)}</span><span class="k">输出</span></div>
+              <div class="big"><span class="n">{fmt(total.cachedTokens)}</span><span class="k">缓存读</span></div>
+              <div class="big"><span class="n">{fmt(total.cacheWriteTokens)}</span><span class="k">缓存写</span></div>
+              <div class="big"><span class="n">{cost(total.costUsd)}</span><span class="k">费用</span></div>
+            </div>
           </div>
-        </div>
 
-        <!-- Per-bot table -->
-        <div class="tablewrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="lcol">Bot</th>
-                <th>输入</th>
-                <th>输出</th>
-                <th>缓存读</th>
-                <th>缓存写</th>
-                <th>费用</th>
-                <th>轮次</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each bots as b (b.id)}
-                {@const u = usageFor(b)}
+          <!-- Per-bot table -->
+          <div class="tablewrap">
+            <table>
+              <thead>
                 <tr>
-                  <td class="lcol">
-                    <span class="dot" class:on={b.connected}></span>{b.id}
-                  </td>
-                  <td class="num">{fmt(u.inputTokens)}</td>
-                  <td class="num">{fmt(u.outputTokens)}</td>
-                  <td class="num">{fmt(u.cachedTokens)}</td>
-                  <td class="num">{fmt(u.cacheWriteTokens)}</td>
-                  <td class="num">{cost(u.costUsd)}</td>
-                  <td class="num dim">{u.turns}</td>
+                  <th class="lcol">Bot</th>
+                  <th>输入</th>
+                  <th>输出</th>
+                  <th>缓存读</th>
+                  <th>缓存写</th>
+                  <th>费用</th>
+                  <th>轮次</th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {#each bots as b (b.id)}
+                  {@const u = usageFor(b)}
+                  <tr>
+                    <td class="lcol">
+                      <span class="dot" class:on={b.connected}></span><span class="bid">{b.id}</span>
+                    </td>
+                    <td class="num">{fmt(u.inputTokens)}</td>
+                    <td class="num">{fmt(u.outputTokens)}</td>
+                    <td class="num">{fmt(u.cachedTokens)}</td>
+                    <td class="num">{fmt(u.cacheWriteTokens)}</td>
+                    <td class="num cost">{cost(u.costUsd)}</td>
+                    <td class="num dim">{u.turns}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <p class="note">每个 Bot 独立持久化、按天分桶。<strong>缓存读</strong>=从提示缓存命中(读取)的输入;<strong>缓存写</strong>=写入缓存的输入。费用为 agent 上报的总额。早于按天统计前的用量只在「全部」区间出现。</p>
@@ -206,7 +210,8 @@
   .seg button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
 
   .body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
-  .empty { color: var(--ink-faint); font-size: 13px; padding: 32px 8px; text-align: center; line-height: 1.5; }
+  .wrap { width: 100%; max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .empty { color: var(--ink-faint); font-size: 13px; padding: 32px 8px; text-align: center; line-height: 1.5; margin: auto; }
 
   /* Grand-total card */
   .total {
@@ -224,16 +229,18 @@
   .tablewrap { border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: right; padding: 9px 14px; font-size: 13px; }
-  th { font-size: 11px; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.3px; background: color-mix(in srgb, var(--ink) 3%, transparent); border-bottom: 1px solid var(--hairline); }
+  th { font-size: 11px; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.3px; background: color-mix(in srgb, var(--ink) 7%, transparent); border-bottom: 1px solid var(--hairline); }
   tbody tr { border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent); }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: color-mix(in srgb, var(--ink) 3%, transparent); }
   .lcol { text-align: left; }
-  td.lcol { font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  td.lcol { font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px; max-width: 220px; }
+  .bid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .num { font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .num.cost { min-width: 84px; }
   .num.dim { color: var(--ink-faint); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: 0 0 auto; }
   .dot.on { background: var(--accent); }
 
-  .note { font-size: 11px; color: var(--ink-faint); line-height: 1.5; margin: 0; }
+  .note { width: 100%; max-width: 980px; margin: auto auto 0; padding-top: 14px; border-top: 1px solid var(--hairline); font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
 </style>

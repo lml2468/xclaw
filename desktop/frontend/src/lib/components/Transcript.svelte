@@ -33,7 +33,7 @@
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
   <div class="stack">
     {#if store.lastError}
-      <div class="err">{store.lastError}</div>
+      <div class="err" role="alert" aria-live="polite">{store.lastError}</div>
     {/if}
 
     {#if messages.length === 0}
@@ -47,7 +47,7 @@
              shows a working indicator until the final answer lands at turn end. -->
         <div class="row">
           <Avatar octopus size={36} />
-          <div class="typing"><span></span><span></span><span></span></div>
+          <div class="typing" aria-label="对方正在输入"><span></span><span></span><span></span></div>
         </div>
       {/if}
     {/if}
@@ -58,7 +58,7 @@
   .scroller { flex: 1; overflow-y: auto; background: transparent; }
   .stack { display: flex; flex-direction: column; gap: 14px; padding: 22px var(--gutter, 28px) 12px; max-width: var(--content-max); width: 100%; margin: 0 auto; }
 
-  .err { align-self: center; color: var(--danger); font-size: 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: 4px; padding: 7px 12px; }
+  .err { align-self: center; color: var(--danger); font-size: 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: var(--radius-control); padding: 7px 12px; }
 
   .row { display: flex; gap: 10px; align-items: flex-start; }
   .typing { display: inline-flex; gap: 5px; padding: 13px 14px; background: var(--in-bubble); border-radius: var(--bubble-radius); border-top-left-radius: 3px; box-shadow: 0 1px 1.5px rgba(20,22,28,0.08); }

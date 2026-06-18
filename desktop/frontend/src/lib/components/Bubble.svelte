@@ -10,7 +10,14 @@
   const isTool = $derived(message.role === "tool");
   const html = $derived(!isUser && !isTool && !message.streaming ? renderMarkdown(message.text) : "");
 
-  function copy() { navigator.clipboard?.writeText(message.text); }
+  let copied = $state(false);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  function copy() {
+    navigator.clipboard?.writeText(message.text);
+    copied = true;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copied = false), 1200);
+  }
 </script>
 
 {#if isTool}
@@ -23,6 +30,7 @@
       {#if isUser}<Avatar name="You" size={36} />{:else}<Avatar octopus size={36} />{/if}
     </span>
     <div class="bubble" class:user={isUser} oncontextmenu={(e) => { e.preventDefault(); copy(); }} role="article">
+      {#if copied}<span class="copied" aria-live="polite">已复制</span>{/if}
       {#if isUser}
         <span class="plain">{message.text}</span>
       {:else if message.streaming}
@@ -43,6 +51,7 @@
   .av { flex: 0 0 auto; margin-top: 1px; }
 
   .bubble {
+    position: relative;
     max-width: 74%;
     padding: 9px 13px;
     font-size: 14px; line-height: 1.5;
@@ -52,6 +61,14 @@
     border: 1px solid var(--bubble-border);
     box-shadow: var(--elev-1);
   }
+  .copied {
+    position: absolute; top: -10px; right: 8px; z-index: 2;
+    font-size: 10px; font-weight: 600; color: #fff;
+    background: color-mix(in srgb, var(--ink) 82%, transparent);
+    padding: 2px 8px; border-radius: 999px; box-shadow: var(--elev-1);
+    animation: copied-in 0.14s ease both;
+  }
+  @keyframes copied-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
   .bubble.user {
     background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); color: #fff;
     border: none;

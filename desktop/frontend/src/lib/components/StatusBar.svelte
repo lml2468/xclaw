@@ -18,9 +18,9 @@
 </script>
 
 {#if current}
-  <div class="strip">
+  <div class="strip" role="status" aria-live="polite">
     <div class="inner">
-      <span class="pulse" class:tool={current.kind === "tool"}></span>
+      <span class="pulse" class:tool={current.kind === "tool"} aria-label={current.kind === "tool" ? "正在调用工具" : "思考中"}></span>
       {#if current.kind === "tool"}
         <span class="label mono" title={current.text}>{current.text}</span>
       {:else}

@@ -3,14 +3,31 @@
   import { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
+  import Confirm from "./Confirm.svelte";
+  import { modal } from "../actions/modal";
 
-  let { onclose, onskills, onusage }: { onclose: () => void; onskills?: () => void; onusage?: () => void } = $props();
+  let { onclose, onskills, onusage, onworkflows }: { onclose: () => void; onskills?: () => void; onusage?: () => void; onworkflows?: () => void } = $props();
 
   let bots = $state<BotConfig[]>([]);
   let sel = $state(0);
   let error = $state("");
   let saved = $state(false);
   let busy = $state(false);
+  let dirty = $state(false);
+  // Pending navigation held behind the unsaved-changes confirm.
+  let pendingLeave = $state<null | (() => void)>(null);
+
+  // Guarded navigation/close: if the form has unsaved edits, ask first.
+  function leave(fn?: () => void) {
+    const go = () => { onclose(); fn?.(); };
+    if (dirty) { pendingLeave = go; return; }
+    go();
+  }
+  function resolveLeave(ok: boolean) {
+    const go = pendingLeave;
+    pendingLeave = null;
+    if (ok && go) go();
+  }
 
   const current = $derived(bots[sel] ?? null);
   // Env as an editable list of pairs (kept in sync with current.env on edit).
@@ -105,6 +122,7 @@
       await XClawService.SaveConfig(bots, removed);
       loadedIds = bots.map((b) => b.id);
       saved = true;
+      dirty = false;
       if (restart) { await XClawService.RestartCore(); store.bots = []; XClawService.BotsList(); onclose(); }
     } catch (e: any) {
       error = String(e?.message ?? e);
@@ -114,17 +132,18 @@
   }
 </script>
 
-<div class="scrim" onclick={onclose} role="presentation">
-  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Edit bots">
+<div class="scrim" onclick={() => leave()} role="presentation">
+  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="编辑 Bot">
     <header>
       <h2>设置</h2>
       <div class="seg" role="tablist" aria-label="设置分区">
         <button role="tab" aria-selected="true" class="on">编辑 Bot</button>
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onskills?.(); }}>技能</button>
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onusage?.(); }}>用量</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onskills)}>技能</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onusage)}>用量</button>
+        <button role="tab" aria-selected="false" onclick={() => leave(onworkflows)}>工作流</button>
       </div>
       <span class="hspacer"></span>
-      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
+      <button class="x" onclick={() => leave()} aria-label="关闭">✕</button>
     </header>
 
     <div class="body">
@@ -140,7 +159,7 @@
       </div>
 
       {#if current}
-        <div class="form">
+        <div class="form" oninput={() => (dirty = true)} onchange={() => (dirty = true)}>
           <div class="grid2">
             <label>Bot ID <input bind:value={current.id} placeholder="my-bot" /></label>
             <label>模型 <input bind:value={current.model} placeholder="claude-opus-4-8" /></label>
@@ -212,6 +231,10 @@
       <button onclick={() => save(false)} disabled={busy}>保存</button>
       <button class="primary" onclick={() => save(true)} disabled={busy}>保存并重启</button>
     </footer>
+
+    {#if pendingLeave}
+      <Confirm message="有未保存的改动,确认离开?" confirmLabel="离开" onresult={resolveLeave} />
+    {/if}
   </div>
 </div>
 
@@ -260,7 +283,7 @@
   .envrow { display: flex; align-items: center; gap: 6px; }
   .envrow .k { width: 160px; font-family: var(--mono); font-size: 12px; }
   .envrow .v { flex: 1; }
-  .del { width: 26px; height: 26px; border-radius: 3px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink-soft); }
+  .del { width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink-soft); }
   .remove { align-self: flex-start; margin-top: 6px; color: var(--danger); background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--hairline)); border-radius: 4px; padding: 6px 12px; }
 
   footer { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--hairline); }

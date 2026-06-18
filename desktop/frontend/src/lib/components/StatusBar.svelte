@@ -18,9 +18,9 @@
 </script>
 
 {#if current}
-  <div class="strip">
+  <div class="strip" role="status" aria-live="polite">
     <div class="inner">
-      <span class="pulse" class:tool={current.kind === "tool"}></span>
+      <span class="pulse" class:tool={current.kind === "tool"} aria-label={current.kind === "tool" ? "正在调用工具" : "思考中"}></span>
       {#if current.kind === "tool"}
         <span class="label mono" title={current.text}>{current.text}</span>
       {:else}
@@ -32,7 +32,8 @@
 
 <style>
   .strip {
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
     border-top: 1px solid var(--hairline);
     padding: 7px var(--gutter) 7px;
   }

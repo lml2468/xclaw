@@ -79,9 +79,13 @@ type AgentEvent struct {
 type TokenUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
-	// CachedInputTokens is the portion of InputTokens served from the prompt
-	// cache (claude's cache_read_input_tokens). Zero when unreported.
+	// CachedInputTokens is the portion of InputTokens served (read) from the
+	// prompt cache (claude's cache_read_input_tokens) — cheap, cache hits.
 	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	// CacheCreationInputTokens is the input written into the prompt cache this
+	// turn (claude's cache_creation_input_tokens) — cache writes, distinct from
+	// reads (a write seeds the cache; a later read serves from it).
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	// CostUSD is the agent-reported turn cost (claude's total_cost_usd). Zero
 	// when unreported (e.g. subscription auth that omits cost).
 	CostUSD float64 `json:"cost_usd,omitempty"`

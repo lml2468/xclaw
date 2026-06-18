@@ -255,9 +255,10 @@ type claudeBlock struct {
 }
 
 type claudeRawUsage struct {
-	InputTokens          int `json:"input_tokens"`
-	OutputTokens         int `json:"output_tokens"`
-	CacheReadInputTokens int `json:"cache_read_input_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 // parseClaudeLine normalizes one stream-json line into zero or more AgentEvents.
@@ -334,10 +335,11 @@ func parseClaudeLine(line string) []AgentEvent {
 		ev := AgentEvent{Kind: KindTurnDone, Raw: line}
 		if cl.Usage != nil {
 			ev.Usage = &TokenUsage{
-				InputTokens:       cl.Usage.InputTokens,
-				OutputTokens:      cl.Usage.OutputTokens,
-				CachedInputTokens: cl.Usage.CacheReadInputTokens,
-				CostUSD:           cl.TotalCost,
+				InputTokens:              cl.Usage.InputTokens,
+				OutputTokens:             cl.Usage.OutputTokens,
+				CachedInputTokens:        cl.Usage.CacheReadInputTokens,
+				CacheCreationInputTokens: cl.Usage.CacheCreationInputTokens,
+				CostUSD:                  cl.TotalCost,
 			}
 		} else if cl.TotalCost != 0 {
 			ev.Usage = &TokenUsage{CostUSD: cl.TotalCost}

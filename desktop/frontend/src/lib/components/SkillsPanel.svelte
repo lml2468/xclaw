@@ -1,7 +1,9 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import { modal } from "../actions/modal";
+  import SettingsHeader from "./SettingsHeader.svelte";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, onedit, onusage, onworkflows }: { onclose: () => void; onedit?: () => void; onusage?: () => void; onworkflows?: () => void } = $props();
 
   type SkillInfo = { name: string; description: string; files: number };
 
@@ -24,6 +26,11 @@
   function answer(v: boolean) {
     confirmState?.resolve(v);
     confirmState = null;
+  }
+  // Guarded nav/close: an in-progress edit prompts before leaving.
+  async function leave(fn?: () => void) {
+    if (dirty && !(await ask("有未保存的改动,确认离开?"))) return;
+    onclose(); fn?.();
   }
 
   // Preview-mode in-memory catalog so the layout can be screenshotted without a daemon.
@@ -68,7 +75,7 @@
   }
 
   async function openFile(rel: string) {
-    if (dirty && !(await ask("Discard unsaved changes?"))) return;
+    if (dirty && !(await ask("放弃未保存的改动?"))) return;
     activeFile = rel; error = "";
     try {
       content = isPreview ? (mock[sel!]?.[rel] ?? "") : await XClawService.SkillRead(sel!, rel);
@@ -99,7 +106,7 @@
 
   async function deleteFile(rel: string) {
     if (!sel || rel === "SKILL.md") return;
-    if (!(await ask(`Delete ${rel}?`))) return;
+    if (!(await ask(`删除文件 ${rel}?`))) return;
     try {
       if (isPreview) { delete mock[sel][rel]; }
       else await XClawService.SkillDeleteFile(sel, rel);
@@ -121,7 +128,7 @@
   }
 
   async function deleteSkill(name: string) {
-    if (!(await ask(`Delete the skill "${name}" and all its files?`))) return;
+    if (!(await ask(`删除技能「${name}」及其所有文件?`))) return;
     try {
       if (isPreview) { delete mock[name]; } else await XClawService.SkillDelete(name);
       if (sel === name) { sel = null; files = []; activeFile = null; content = ""; }
@@ -130,9 +137,9 @@
   }
 </script>
 
-<div class="scrim" onclick={onclose} role="presentation">
-  <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Manage skills">
-    <header><h2>Manage Skills</h2><button class="x" onclick={onclose} aria-label="Close">✕</button></header>
+<div class="scrim" onclick={() => leave()} role="presentation">
+  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="技能">
+    <SettingsHeader active="skills" onclose={() => leave()} onnav={leave} {onedit} {onusage} {onworkflows} />
 
     <div class="body">
     <div class="list">
@@ -142,10 +149,10 @@
           <span class="ds">{s.description || "No description"}</span>
         </button>
       {/each}
-      {#if skills.length === 0}<div class="muted">No skills yet.</div>{/if}
+      {#if skills.length === 0}<div class="muted">暂无技能</div>{/if}
       <div class="new">
-        <input placeholder="new-skill-name" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
-        <button class="add" onclick={createSkill} disabled={!newName.trim()}>+ New skill</button>
+        <input placeholder="新技能名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createSkill()} />
+        <button class="add" onclick={createSkill} disabled={!newName.trim()}>+ 新建技能</button>
       </div>
     </div>
 
@@ -154,7 +161,7 @@
         <div class="dhead">
           <span class="dt">{sel}</span>
           <span class="spacer"></span>
-          <button class="remove" onclick={() => deleteSkill(sel!)}>Remove skill</button>
+          <button class="remove" onclick={() => deleteSkill(sel!)}>删除技能</button>
         </div>
         <div class="cols">
           <div class="files">
@@ -165,8 +172,8 @@
               </div>
             {/each}
             <div class="new">
-              <input placeholder="path/in/skill.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
-              <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ Add file</button>
+              <input placeholder="路径/文件.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
+              <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ 添加文件</button>
             </div>
           </div>
           <div class="editor">
@@ -175,17 +182,17 @@
                 <span class="fn">{activeFile}</span>
                 <span class="spacer"></span>
                 {#if dirty}<span class="dirty">●</span>{/if}
-                <button class="primary" onclick={saveFile} disabled={!dirty}>Save</button>
+                <button class="primary" onclick={saveFile} disabled={!dirty}>保存</button>
               </div>
               <textarea class="code" bind:value={content} oninput={() => (dirty = true)} spellcheck="false"></textarea>
             {:else}
-              <div class="muted center">Select a file to edit.</div>
+              <div class="muted center">选择一个文件编辑</div>
             {/if}
           </div>
         </div>
       </div>
     {:else}
-      <div class="detail"><div class="muted center">Select or create a skill.</div></div>
+      <div class="detail"><div class="muted center">选择或新建一个技能</div></div>
     {/if}
   </div>
 
@@ -196,8 +203,8 @@
       <div class="confirm" role="alertdialog" aria-label="Confirm">
         <p>{confirmState.msg}</p>
         <div class="cbtns">
-          <button onclick={() => answer(false)}>Cancel</button>
-          <button class="danger" onclick={() => answer(true)}>Confirm</button>
+          <button onclick={() => answer(false)}>取消</button>
+          <button class="danger" onclick={() => answer(true)}>确认</button>
         </div>
       </div>
     </div>
@@ -206,18 +213,17 @@
 </div>
 
 <style>
-  /* Mirrors ConfigEditor (Edit Bots): same scrim + centered modal + header/✕,
-     so the two open and feel identical. */
-  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 28%, transparent); display: grid; place-items: center; }
-  .modal { width: min(940px, 94vw); height: min(640px, 90vh); position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; color: var(--ink); font-family: var(--ui); }
-  header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
-  header h2 { font-size: 17px; font-weight: 600; flex: 1; }
-  .x { background: none; border: none; color: var(--ink-soft); font-size: 15px; }
+  /* Mirrors ConfigEditor: full-window scrim + glass modal + shared SettingsHeader. */
+  .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
+  .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
+  .row:focus-visible, .add:focus-visible, .remove:focus-visible, .primary:focus-visible, .fname:focus-visible, .del:focus-visible, .cbtns button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong, var(--accent)); }
+  .remove:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
   .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
 
   .list { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
-  .row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: none; background: transparent; border-radius: 4px; color: var(--ink); }
+  .row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border: none; background: transparent; border-radius: 8px; color: var(--ink); }
   .row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .row .nm { font-size: 13px; font-weight: 600; }
@@ -226,9 +232,9 @@
   .muted.center { display: grid; place-items: center; height: 100%; }
 
   .new { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-  input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 4px; padding: 7px 10px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; }
-  input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); }
-  .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 4px; color: var(--ink-soft); font-size: 12px; }
+  input { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 11px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+  input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .add { text-align: center; padding: 7px 10px; border: 1px dashed var(--hairline); background: transparent; border-radius: 8px; color: var(--ink-soft); font-size: 12px; }
   .add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong); }
   .add:disabled { opacity: 0.45; }
 
@@ -240,7 +246,7 @@
 
   .cols { flex: 1; display: grid; grid-template-columns: 210px 1fr; min-height: 0; }
   .files { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
-  .frow { display: flex; align-items: center; border-radius: 4px; }
+  .frow { display: flex; align-items: center; border-radius: 8px; }
   .frow:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .frow.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .fname { flex: 1; min-width: 0; text-align: left; background: transparent; border: none; color: var(--ink); padding: 7px 9px; font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
@@ -251,7 +257,8 @@
   .ebar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); }
   .ebar .fn { font-size: 12px; font-family: var(--mono); color: var(--ink-soft); }
   .ebar .dirty { color: var(--accent); font-size: 10px; }
-  .primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; padding: 6px 14px; font-size: 12px; }
+  .primary { background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); color: #fff; border: none; border-radius: 9px; padding: 7px 15px; font-size: 12px; font-weight: 550; box-shadow: 0 3px 12px color-mix(in srgb, var(--grad-a) 40%, transparent); transition: transform .12s ease, box-shadow .14s ease, opacity .14s ease; }
+  .primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px color-mix(in srgb, var(--grad-a) 50%, transparent); }
   .primary:disabled { opacity: 0.45; }
   textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 
@@ -261,6 +268,6 @@
   .confirm { width: min(360px, 80%); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 18px; }
   .confirm p { margin: 0 0 14px; font-size: 13px; color: var(--ink); }
   .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
-  .cbtns button { padding: 7px 14px; border-radius: 4px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink); font-size: 12px; }
+  .cbtns button { padding: 7px 14px; border-radius: var(--radius-control); border: 1px solid var(--hairline); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); color: var(--ink); font-size: 12px; }
   .cbtns .danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 </style>

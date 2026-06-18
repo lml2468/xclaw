@@ -59,6 +59,19 @@ export interface Bot {
   id: string;
   connected: boolean;
   lastError?: string;
+  // Token usage keyed by range bound (`since` Unix seconds; 0 = all time), so
+  // switching ranges in the Token Usage window doesn't clobber other ranges.
+  usage?: Record<number, BotUsage>;
+}
+
+// BotUsage is a bot's token consumption over one range (persisted, per bot).
+export interface BotUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;     // cache reads
+  cacheWriteTokens: number; // cache writes (seeding the prompt cache)
+  costUsd: number;
+  turns: number;
 }
 
 interface Envelope {
@@ -105,9 +118,14 @@ class Store {
   // seedPreview populates a mock roster + transcript for visual iteration and
   // screenshots without spawning the daemon (launch with XCLAW_PREVIEW=1).
   private seedPreview() {
+    // Preview usage: keyed by `since` (0 = all). Smaller numbers for shorter
+    // ranges so the selector visibly changes. Keys filled in below after we know
+    // the range bounds the modal computes.
+    const pv = (i: number, o: number, cr: number, cw: number, c: number, t: number): BotUsage =>
+      ({ inputTokens: i, outputTokens: o, cachedTokens: cr, cacheWriteTokens: cw, costUsd: c, turns: t });
     this.bots = [
-      { id: "main", connected: true },
-      { id: "research", connected: false, lastError: "awaiting secret" },
+      { id: "main", connected: true, usage: { 0: pv(1_284_500, 96_120, 842_300, 318_400, 4.8123, 318) } },
+      { id: "research", connected: false, lastError: "awaiting secret", usage: { 0: pv(412_900, 38_540, 201_770, 64_200, 1.2045, 92) } },
     ];
     this.health = "claude · 2 bots";
     this.connected = true;
@@ -183,6 +201,35 @@ class Store {
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
 
+  // loadUsage fetches token usage for every bot over a range (since = Unix
+  // seconds; 0 = all time). Responses fold into bot.usage[since]. Called by the
+  // Token Usage window on open and whenever the range changes.
+  loadUsage(since: number = 0) {
+    if (this.preview) {
+      this.seedUsageRange(since);
+      return;
+    }
+    for (const b of this.bots) XClawService.UsageStats(b.id, since);
+  }
+
+  // Preview-only: synthesize a range's usage by scaling the all-time (since=0)
+  // figures, so the date-range selector visibly changes in screenshots.
+  private seedUsageRange(since: number) {
+    if (since === 0) return; // all-time already seeded
+    const days = Math.max(1, Math.round((Date.now() / 1000 - since) / 86400));
+    const frac = Math.min(1, days / 365); // pretend ~1yr of history
+    for (const b of this.bots) {
+      const all = b.usage?.[0];
+      if (!all) continue;
+      const s = (n: number) => Math.round(n * frac);
+      b.usage = { ...b.usage, [since]: {
+        inputTokens: s(all.inputTokens), outputTokens: s(all.outputTokens),
+        cachedTokens: s(all.cachedTokens), cacheWriteTokens: s(all.cacheWriteTokens),
+        costUsd: all.costUsd * frac, turns: s(all.turns),
+      } };
+    }
+  }
+
   selectSession(key: string) {
     this.selectedKey = key;
     this.loadHistory(key);
@@ -238,6 +285,20 @@ class Store {
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
       } else if (env.type === "sessions.list" && Array.isArray(env.body)) {
         this.applySessionsList(env.body);
+      } else if (env.type === "usage.stats" && env.body) {
+        const b = this.bots.find((x) => x.id === env.body.botId);
+        if (b) {
+          const since = env.body.since ?? 0;
+          const u: BotUsage = {
+            inputTokens: env.body.inputTokens ?? 0,
+            outputTokens: env.body.outputTokens ?? 0,
+            cachedTokens: env.body.cachedTokens ?? 0,
+            cacheWriteTokens: env.body.cacheWriteTokens ?? 0,
+            costUsd: env.body.costUsd ?? 0,
+            turns: env.body.turns ?? 0,
+          };
+          b.usage = { ...(b.usage ?? {}), [since]: u };
+        }
       } else if (env.type === "session.history" && Array.isArray(env.body)) {
         this.applyHistory(env.body);
       }

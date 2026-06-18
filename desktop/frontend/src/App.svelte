@@ -3,8 +3,8 @@
   import "./lib/styles/markdown.css";
   import { Events } from "@wailsio/runtime";
   import { store } from "./lib/store.svelte";
-  import Rail from "./lib/components/Rail.svelte";
-  import Conversations from "./lib/components/Conversations.svelte";
+  import Sidebar from "./lib/components/Sidebar.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
   import Transcript from "./lib/components/Transcript.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Composer from "./lib/components/Composer.svelte";
@@ -14,12 +14,16 @@
   import WorkflowsPanel from "./lib/components/WorkflowsPanel.svelte";
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
+  import TokenUsage from "./lib/components/TokenUsage.svelte";
 
   let composer: Composer;
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
   let showSkills = $state(new URLSearchParams(location.search).has("skills"));
   let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
+  let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
+  let showPalette = $state(false);
+  let collapsed = $state(false);
   // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
@@ -31,25 +35,71 @@
     previewPath = null;
   });
 
+  // Per-Space theme color (Arc's signature): each bot carries an Arc theme
+  // gradient, chosen deterministically from its id, and the whole window
+  // backdrop blooms from it. Selecting a bot re-themes the window; light and
+  // dark both recompute since --window-grad references --grad-a/--grad-b.
+  const SPACE_THEMES: [string, string][] = [
+    ["#ff7e5f", "#feb47b"], // Sunset — peach → coral
+    ["#7f5af0", "#e84393"], // Twilight — violet → fuchsia
+    ["#16f2b3", "#0db4f7"], // Aurora — mint → cyan
+    ["#ff5f5f", "#ffb07c"], // Coral — brand → amber
+    ["#5f8bff", "#7f5af0"], // Indigo → violet
+  ];
+  function spaceTheme(id: string): [string, string] {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+    return SPACE_THEMES[Math.abs(h) % SPACE_THEMES.length];
+  }
+  $effect(() => {
+    const id = store.selectedBotId;
+    if (!id) return;
+    const [a, b] = spaceTheme(id);
+    const s = document.documentElement.style;
+    s.setProperty("--grad-a", a);
+    s.setProperty("--grad-b", b);
+  });
+
+  // ⌘K / Ctrl-K toggles the command palette (capture phase + both targets so
+  // iframe focus quirks don't swallow it).
+  function onKey(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      showPalette = !showPalette;
+    } else if (e.key === "Escape" && showPalette) {
+      showPalette = false;
+    }
+  }
+  try { window.addEventListener("keydown", onKey, true); document.addEventListener("keydown", onKey, true); } catch {}
+
   // Tray / gear menu open these as modals over the console (guarded: the Wails
   // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
   try { Events.On("xclaw:open-skills", () => (showSkills = true)); } catch {}
   try { Events.On("xclaw:open-workflows", () => (showWorkflows = true)); } catch {}
+  try { Events.On("xclaw:open-usage", () => (showUsage = true)); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
-<TrafficLights />
+{#if !collapsed}
+  <TrafficLights />
+{/if}
 <div class="shell">
-  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
+  <Sidebar
+    onedit={() => (showEditor = true)}
+    onpalette={() => (showPalette = true)}
+    {collapsed}
+  />
   <div class="content">
-    <section class="list"><Conversations /></section>
     {#if previewPath && showFiles && store.currentSession}
       <FilePreview botId={store.selectedBotId} sessionKey={store.selectedKey} path={previewPath} onclose={() => (previewPath = null)} />
     {:else}
       <main class="chat">
         <header class="chat-bar" style="--wails-draggable: drag;">
+          <button class="icon sb-toggle" class:collapsed style="--wails-draggable: no-drag;" title={collapsed ? "展开侧栏" : "收起侧栏"} aria-label={collapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!collapsed} onclick={() => (collapsed = !collapsed)}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 6-6 6 6 6"/></svg>
+          </button>
           <span class="title">{store.currentSession?.title ?? "XClaw"}</span>
           <span class="spacer"></span>
           {#if store.currentBot}
@@ -77,43 +127,48 @@
   </div>
 </div>
 
+{#if showPalette}
+  <CommandPalette
+    onclose={() => (showPalette = false)}
+    onedit={() => (showEditor = true)}
+    onskills={() => (showSkills = true)}
+    onworkflows={() => (showWorkflows = true)}
+    onusage={() => (showUsage = true)}
+  />
+{/if}
 {#if showEditor}
-  <ConfigEditor onclose={() => (showEditor = false)} />
+  <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 {#if showSkills}
-  <SkillsPanel onclose={() => (showSkills = false)} />
+  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 {#if showWorkflows}
-  <WorkflowsPanel onclose={() => (showWorkflows = false)} />
+  <WorkflowsPanel onclose={() => (showWorkflows = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
+{/if}
+{#if showUsage}
+  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
 
 <style>
-  .shell { display: flex; height: 100vh; background: var(--rail); }
-  /* Custom window controls for the frameless window — top-left over the rail. */
-  :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
+  .shell { display: flex; height: 100vh; background: var(--window-grad); }
+  /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
+  :global(.lights) { position: fixed; top: calc((var(--header-h) - 12px) / 2); left: 15px; z-index: 1000; }
 
-  /* Content panel: list + chat float in a rounded, bordered card inset from the
-     window edges, so the dark rail reads as a thin frame around it. */
+  /* The chat fills the right area flush — no card framing. */
   .content {
     flex: 1; min-width: 0; display: flex;
-    margin: 4px 4px 4px 3px;
-    border: 1px solid var(--panel-border);
-    border-radius: 9px;
     overflow: hidden;
-    box-shadow: var(--elev-2);
   }
-  .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100%; border-right: 1px solid var(--hairline); overflow: hidden; }
-  .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: radial-gradient(130% 90% at 50% 0%, color-mix(in srgb, var(--surface) 22%, var(--chat)) 0%, var(--chat) 58%); }
-  /* Workspace sidebar: third column inside the rounded content card (no own
-     radius/overflow — it lives inside .content's clip). Left hairline mirrors
-     the list's right hairline; .chat is flex:1 so it shrinks (push/split). */
-  .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+  .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
+  .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); overflow: hidden; display: flex; flex-direction: column; }
 
   .chat-bar {
     height: var(--header-h); flex: 0 0 var(--header-h);
     display: flex; align-items: center; gap: 6px;
     padding: 0 var(--gutter);
-    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--surface) 68%, transparent);
+    backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid var(--hairline);
   }
   .title { font-size: 15px; font-weight: 600; color: var(--ink); }
   .spacer { flex: 1; }
@@ -125,4 +180,11 @@
   }
   .icon:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--accent); }
   .icon.on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+  /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
+     toward the rail (collapse); flips outward when collapsed (expand). */
+  .sb-toggle { margin-left: -4px; }
+  .sb-toggle svg { transition: transform .2s var(--ease-standard, ease); }
+  .sb-toggle.collapsed svg { transform: rotate(180deg); }
+  .sb-toggle:active { transform: scale(0.9); }
+  @media (prefers-reduced-motion: reduce) { .sb-toggle svg { transition: none; } .sb-toggle:active { transform: none; } }
 </style>

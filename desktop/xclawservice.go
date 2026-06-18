@@ -224,6 +224,13 @@ func (x *XClawService) SessionsList(botID string) error {
 	return x.send("sessions.list", control.SessionsListBody{BotID: botID})
 }
 
+// UsageStats requests a bot's token usage over a range (since = Unix seconds at a
+// local-midnight bound; 0 = all time). The response arrives via EventStream as a
+// usage.stats envelope echoing `since`.
+func (x *XClawService) UsageStats(botID string, since int64) error {
+	return x.send("usage.stats", control.UsageStatsBody{BotID: botID, Since: since})
+}
+
 // CronCreate schedules a task (owner-gated by the daemon).
 func (x *XClawService) CronCreate(body control.CronCreateBody) error {
 	return x.send("cron.create", body)

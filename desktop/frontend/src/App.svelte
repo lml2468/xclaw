@@ -33,6 +33,31 @@
     previewPath = null;
   });
 
+  // Per-Space theme color (Arc's signature): each bot carries an Arc theme
+  // gradient, chosen deterministically from its id, and the whole window
+  // backdrop blooms from it. Selecting a bot re-themes the window; light and
+  // dark both recompute since --window-grad references --grad-a/--grad-b.
+  const SPACE_THEMES: [string, string][] = [
+    ["#ff7e5f", "#feb47b"], // Sunset — peach → coral
+    ["#7f5af0", "#e84393"], // Twilight — violet → fuchsia
+    ["#16f2b3", "#0db4f7"], // Aurora — mint → cyan
+    ["#ff5f5f", "#ffb07c"], // Coral — brand → amber
+    ["#5f8bff", "#7f5af0"], // Indigo → violet
+  ];
+  function spaceTheme(id: string): [string, string] {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+    return SPACE_THEMES[Math.abs(h) % SPACE_THEMES.length];
+  }
+  $effect(() => {
+    const id = store.selectedBotId;
+    if (!id) return;
+    const [a, b] = spaceTheme(id);
+    const s = document.documentElement.style;
+    s.setProperty("--grad-a", a);
+    s.setProperty("--grad-b", b);
+  });
+
   // Tray / gear menu open these as modals over the console (guarded: the Wails
   // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}

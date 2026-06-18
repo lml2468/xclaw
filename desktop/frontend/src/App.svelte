@@ -3,8 +3,8 @@
   import "./lib/styles/markdown.css";
   import { Events } from "@wailsio/runtime";
   import { store } from "./lib/store.svelte";
-  import Rail from "./lib/components/Rail.svelte";
-  import Conversations from "./lib/components/Conversations.svelte";
+  import Sidebar from "./lib/components/Sidebar.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
   import Transcript from "./lib/components/Transcript.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Composer from "./lib/components/Composer.svelte";
@@ -22,6 +22,8 @@
   let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
   let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
+  let showPalette = $state(false);
+  let collapsed = $state(false);
   // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
@@ -58,6 +60,18 @@
     s.setProperty("--grad-b", b);
   });
 
+  // ⌘K / Ctrl-K toggles the command palette (capture phase + both targets so
+  // iframe focus quirks don't swallow it).
+  function onKey(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      showPalette = !showPalette;
+    } else if (e.key === "Escape" && showPalette) {
+      showPalette = false;
+    }
+  }
+  try { window.addEventListener("keydown", onKey, true); document.addEventListener("keydown", onKey, true); } catch {}
+
   // Tray / gear menu open these as modals over the console (guarded: the Wails
   // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
   try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
@@ -70,9 +84,16 @@
 
 <TrafficLights />
 <div class="shell">
-  <Rail onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} onusage={() => (showUsage = true)} />
+  <Sidebar
+    onedit={() => (showEditor = true)}
+    onskills={() => (showSkills = true)}
+    onworkflows={() => (showWorkflows = true)}
+    onusage={() => (showUsage = true)}
+    onpalette={() => (showPalette = true)}
+    {collapsed}
+    ontoggle={() => (collapsed = !collapsed)}
+  />
   <div class="content">
-    <section class="list"><Conversations /></section>
     {#if previewPath && showFiles && store.currentSession}
       <FilePreview botId={store.selectedBotId} sessionKey={store.selectedKey} path={previewPath} onclose={() => (previewPath = null)} />
     {:else}
@@ -105,6 +126,15 @@
   </div>
 </div>
 
+{#if showPalette}
+  <CommandPalette
+    onclose={() => (showPalette = false)}
+    onedit={() => (showEditor = true)}
+    onskills={() => (showSkills = true)}
+    onworkflows={() => (showWorkflows = true)}
+    onusage={() => (showUsage = true)}
+  />
+{/if}
 {#if showEditor}
   <ConfigEditor onclose={() => (showEditor = false)} />
 {/if}
@@ -120,24 +150,20 @@
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--window-grad); }
-  /* Custom window controls for the frameless window — top-left over the rail. */
+  /* Custom window controls for the frameless window — top-left over the sidebar. */
   :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
 
-  /* Content panel: list + chat float in a rounded, bordered card inset from the
-     window edges, so the dark rail reads as a thin frame around it. */
+  /* The chat lives in a bright frosted card; the translucent sidebar (and the
+     window gradient behind it) read as the scenery around it. */
   .content {
     flex: 1; min-width: 0; display: flex;
-    margin: 4px 4px 4px 3px;
+    margin: 4px 4px 4px 0;
     border: 1px solid var(--glass-border);
     border-radius: 16px;
     overflow: hidden;
     box-shadow: var(--elev-2);
   }
-  .list { width: var(--list-w); flex: 0 0 var(--list-w); height: 100%; border-right: 1px solid var(--hairline); overflow: hidden; background: var(--glass-soft); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); }
   .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
-  /* Workspace sidebar: third column inside the rounded content card (no own
-     radius/overflow — it lives inside .content's clip). Left hairline mirrors
-     the list's right hairline; .chat is flex:1 so it shrinks (push/split). */
   .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); overflow: hidden; display: flex; flex-direction: column; }
 
   .chat-bar {

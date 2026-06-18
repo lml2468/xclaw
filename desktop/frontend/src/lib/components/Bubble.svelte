@@ -53,12 +53,14 @@
     box-shadow: var(--elev-1);
   }
   .bubble.user {
-    background: var(--out-bubble); color: var(--out-ink);
-    border: 1px solid color-mix(in srgb, var(--out-bubble) 65%, #000 14%);
+    background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); color: #fff;
+    border: none;
     border-top-left-radius: var(--bubble-radius);
     border-top-right-radius: 3px;
-    box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 22%, transparent), var(--elev-1);
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--grad-a) 38%, transparent), var(--elev-1);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
   }
+  .bubble.user .plain { color: #fff; }
   .plain { white-space: pre-wrap; word-break: break-word; }
 
   .tool {

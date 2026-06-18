@@ -82,16 +82,14 @@
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>
 
-<TrafficLights />
+{#if !collapsed}
+  <TrafficLights />
+{/if}
 <div class="shell">
   <Sidebar
     onedit={() => (showEditor = true)}
-    onskills={() => (showSkills = true)}
-    onworkflows={() => (showWorkflows = true)}
-    onusage={() => (showUsage = true)}
     onpalette={() => (showPalette = true)}
     {collapsed}
-    ontoggle={() => (collapsed = !collapsed)}
   />
   <div class="content">
     {#if previewPath && showFiles && store.currentSession}
@@ -99,6 +97,9 @@
     {:else}
       <main class="chat">
         <header class="chat-bar" style="--wails-draggable: drag;">
+          <button class="icon sb-toggle" class:collapsed style="--wails-draggable: no-drag;" title={collapsed ? "展开侧栏" : "收起侧栏"} aria-label={collapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!collapsed} onclick={() => (collapsed = !collapsed)}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 6-6 6 6 6"/></svg>
+          </button>
           <span class="title">{store.currentSession?.title ?? "XClaw"}</span>
           <span class="spacer"></span>
           {#if store.currentBot}
@@ -150,18 +151,13 @@
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--window-grad); }
-  /* Custom window controls for the frameless window — top-left over the sidebar. */
-  :global(.lights) { position: fixed; top: 14px; left: 15px; z-index: 1000; }
+  /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
+  :global(.lights) { position: fixed; top: calc((var(--header-h) - 12px) / 2); left: 15px; z-index: 1000; }
 
-  /* The chat lives in a bright frosted card; the translucent sidebar (and the
-     window gradient behind it) read as the scenery around it. */
+  /* The chat fills the right area flush — no card framing. */
   .content {
     flex: 1; min-width: 0; display: flex;
-    margin: 4px 4px 4px 0;
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
     overflow: hidden;
-    box-shadow: var(--elev-2);
   }
   .chat { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
   .files { width: 320px; flex: 0 0 320px; height: 100%; border-left: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); overflow: hidden; display: flex; flex-direction: column; }
@@ -184,4 +180,11 @@
   }
   .icon:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--accent); }
   .icon.on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+  /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
+     toward the rail (collapse); flips outward when collapsed (expand). */
+  .sb-toggle { margin-left: -4px; }
+  .sb-toggle svg { transition: transform .2s var(--ease-standard, ease); }
+  .sb-toggle.collapsed svg { transform: rotate(180deg); }
+  .sb-toggle:active { transform: scale(0.9); }
+  @media (prefers-reduced-motion: reduce) { .sb-toggle svg { transition: none; } .sb-toggle:active { transform: none; } }
 </style>

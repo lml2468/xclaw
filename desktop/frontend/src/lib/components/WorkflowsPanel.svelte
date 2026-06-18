@@ -1,6 +1,7 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { modal } from "../actions/modal";
+  import SettingsHeader from "./SettingsHeader.svelte";
 
   let { onclose, onedit, onskills, onusage }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onusage?: () => void } = $props();
 
@@ -90,17 +91,7 @@
 
 <div class="scrim" onclick={() => leave()} role="presentation">
   <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="工作流">
-    <header>
-      <h2>设置</h2>
-      <div class="nav" role="tablist" aria-label="设置分区">
-        <button role="tab" aria-selected="false" onclick={() => leave(onedit)}>编辑 Bot</button>
-        <button role="tab" aria-selected="false" onclick={() => leave(onskills)}>技能</button>
-        <button role="tab" aria-selected="false" onclick={() => leave(onusage)}>用量</button>
-        <button role="tab" aria-selected="true" class="on">工作流</button>
-      </div>
-      <span class="hspacer"></span>
-      <button class="x" onclick={() => leave()} aria-label="关闭">✕</button>
-    </header>
+    <SettingsHeader active="workflows" onclose={() => leave()} onnav={leave} {onedit} {onskills} {onusage} />
 
     <div class="body">
       <div class="list">
@@ -150,20 +141,10 @@
 </div>
 
 <style>
-  /* Mirrors ConfigEditor / SkillsPanel: full-window scrim + glass + header/✕. */
+  /* Mirrors ConfigEditor / SkillsPanel: full-window scrim + glass + shared SettingsHeader. */
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px 14px 92px; -webkit-app-region: drag; border-bottom: 1px solid var(--border-soft, var(--hairline)); }
-  header .nav, header .x, header .nav button { -webkit-app-region: no-drag; }
-  header h2 { font-size: 17px; font-weight: 600; }
-  .hspacer { flex: 1; }
-  .nav { display: inline-flex; background: rgba(var(--ink-tint, 0,0,0), 0.05); border-radius: 10px; padding: 3px; }
-  .nav button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
-  .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
-  .nav button:not(.on):hover { color: var(--ink); }
-  .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; transition: background .14s ease, color .14s ease; }
-  .x:hover { background: var(--ink-bg-hover); color: var(--ink); }
-  .nav button:focus-visible, .x:focus-visible, .row:focus-visible, .add:focus-visible, .remove:focus-visible, .primary:focus-visible, .cbtns button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .row:focus-visible, .add:focus-visible, .remove:focus-visible, .primary:focus-visible, .cbtns button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   .body { flex: 1; display: grid; grid-template-columns: 240px 1fr; overflow: hidden; }
   .list { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }

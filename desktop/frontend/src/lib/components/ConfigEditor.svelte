@@ -4,6 +4,7 @@
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
   import Confirm from "./Confirm.svelte";
+  import SettingsHeader from "./SettingsHeader.svelte";
   import { modal } from "../actions/modal";
 
   let { onclose, onskills, onusage, onworkflows }: { onclose: () => void; onskills?: () => void; onusage?: () => void; onworkflows?: () => void } = $props();
@@ -134,17 +135,7 @@
 
 <div class="scrim" onclick={() => leave()} role="presentation">
   <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="编辑 Bot">
-    <header>
-      <h2>设置</h2>
-      <div class="seg" role="tablist" aria-label="设置分区">
-        <button role="tab" aria-selected="true" class="on">编辑 Bot</button>
-        <button role="tab" aria-selected="false" onclick={() => leave(onskills)}>技能</button>
-        <button role="tab" aria-selected="false" onclick={() => leave(onusage)}>用量</button>
-        <button role="tab" aria-selected="false" onclick={() => leave(onworkflows)}>工作流</button>
-      </div>
-      <span class="hspacer"></span>
-      <button class="x" onclick={() => leave()} aria-label="关闭">✕</button>
-    </header>
+    <SettingsHeader active="editor" onclose={() => leave()} onnav={leave} {onskills} {onusage} {onworkflows} />
 
     <div class="body">
       <div class="bots">
@@ -241,16 +232,6 @@
 <style>
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px 14px 92px; border-bottom: 1px solid var(--border-soft, var(--hairline)); -webkit-app-region: drag; }
-  header .seg, header .nav, header .x { -webkit-app-region: no-drag; }
-  header h2 { font-size: 17px; font-weight: 600; }
-  .hspacer { flex: 1; }
-  .seg { display: inline-flex; background: rgba(var(--ink-tint, 0,0,0), 0.05); border-radius: 10px; padding: 3px; }
-  .seg button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
-  .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
-  .seg button:not(.on):hover { color: var(--ink); }
-  .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; transition: background .14s ease, color .14s ease; }
-  .x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
 
   .body { flex: 1; display: grid; grid-template-columns: 210px 1fr; overflow: hidden; }
   .bots { border-right: 1px solid var(--border-soft, var(--hairline)); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
@@ -296,7 +277,7 @@
   footer .primary:hover { transform: translateY(-1px); box-shadow: 0 8px 22px color-mix(in srgb, var(--grad-a) 52%, transparent); }
 
   /* interaction states + keyboard focus (WCAG 2.4.7) */
-  .botrow:focus-visible, .seg button:focus-visible, .nav button:focus-visible, footer button:focus-visible, .x:focus-visible, .add:focus-visible, .remove:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .botrow:focus-visible, footer button:focus-visible, .add:focus-visible, .remove:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
   .add:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--accent-strong, var(--accent)); }
   .remove:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
   .skrow:focus-within { background: color-mix(in srgb, var(--accent) 8%, transparent); }

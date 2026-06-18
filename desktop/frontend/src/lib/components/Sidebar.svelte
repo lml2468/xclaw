@@ -6,13 +6,8 @@
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
 
-  let { onedit, onskills, onworkflows, onusage, onpalette, collapsed = false, ontoggle }:
-    { onedit: () => void; onskills: () => void; onworkflows: () => void; onusage: () => void;
-      onpalette: () => void; collapsed?: boolean; ontoggle: () => void } = $props();
-
-  let menuOpen = $state(false);
-  function choose(fn: () => void) { menuOpen = false; fn(); }
-  function onWinKey(e: KeyboardEvent) { if (e.key === "Escape" && menuOpen) { menuOpen = false; } }
+  let { onedit, onpalette, collapsed = false }:
+    { onedit: () => void; onpalette: () => void; collapsed?: boolean } = $props();
 
   function relTime(ms: number): string {
     if (!ms) return "";
@@ -36,8 +31,6 @@
   }
 </script>
 
-<svelte:window onkeydown={onWinKey} />
-
 <aside class="sidebar" class:collapsed>
   <div class="top" style="--wails-draggable: drag;">
     <span class="brand-mark" aria-hidden="true">
@@ -45,11 +38,8 @@
     </span>
     <span class="brand-name">XClaw</span>
     <span class="spacer"></span>
-    <button class="iconbtn" style="--wails-draggable: no-drag;" title="切换明暗" aria-label="切换明暗" onclick={toggleTheme}>
+    <button class="iconbtn theme-btn" style="--wails-draggable: no-drag;" title="切换明暗" aria-label="切换明暗" onclick={toggleTheme}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-    </button>
-    <button class="iconbtn" style="--wails-draggable: no-drag;" title="折叠侧栏" aria-label="折叠侧栏" onclick={ontoggle}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
     </button>
   </div>
 
@@ -58,7 +48,7 @@
     <span class="t">搜索 · 命令 · 跳转</span><span class="kbd">⌘K</span>
   </button>
 
-  <div class="lbl">Spaces</div>
+  <div class="lbl">BOTS</div>
   <div class="spaces">
     {#each store.bots as b (b.id)}
       <button class="space" class:sel={b.id === store.selectedBotId}
@@ -90,19 +80,10 @@
   </div>
 
   <div class="foot">
-    <button class="fbtn" class:active={menuOpen} onclick={() => (menuOpen = !menuOpen)} aria-haspopup="menu" aria-expanded={menuOpen}>
+    <button class="fbtn" onclick={onedit} title="设置">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span class="t">设置</span>
     </button>
-    {#if menuOpen}
-      <div class="menu-backdrop" role="presentation" onclick={() => (menuOpen = false)}></div>
-      <div class="menu" role="menu">
-        <button role="menuitem" onclick={() => choose(onedit)}>编辑 Bot</button>
-        <button role="menuitem" onclick={() => choose(onskills)}>技能</button>
-        <button role="menuitem" onclick={() => choose(onworkflows)}>工作流</button>
-        <button role="menuitem" onclick={() => choose(onusage)}>用量</button>
-      </div>
-    {/if}
   </div>
 </aside>
 
@@ -112,26 +93,32 @@
     display: flex; flex-direction: column;
     background: var(--glass-soft);
     backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%);
-    padding: 14px 12px 12px; overflow: hidden;
+    padding: 0 12px 12px; overflow: hidden;
     transition: width var(--motion-base, .32s) var(--ease-standard, ease), flex-basis var(--motion-base, .32s) var(--ease-standard, ease);
   }
-  .sidebar.collapsed { width: 76px; flex-basis: 76px; padding-left: 8px; padding-right: 8px; }
+  /* Collapsed: fully hidden — the chat-header toggle brings it back. */
+  .sidebar.collapsed { width: 0; flex-basis: 0; min-width: 0; padding: 0; overflow: hidden; }
 
-  .top { display: flex; align-items: center; gap: 8px; padding: 4px 4px 12px 64px; }
-  .sidebar.collapsed .top { padding-left: 4px; }
+  .top { height: var(--header-h); flex: 0 0 var(--header-h); display: flex; align-items: center; gap: 8px; padding: 0 4px 0 64px; }
+  /* Collapsed: drop the brand + theme toggle, leave only the expand control centered. */
+  .sidebar.collapsed .top { padding: 0; justify-content: center; }
   .brand-mark { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 8px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); box-shadow: 0 4px 14px color-mix(in srgb, var(--grad-a) 45%, transparent); }
   .brand-mark svg { width: 18px; height: 18px; }
   .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); }
   .spacer { flex: 1; }
-  .iconbtn { width: 30px; height: 30px; border-radius: 8px; border: none; background: transparent; color: var(--ink-soft); display: grid; place-items: center; transition: background .14s ease, color .14s ease; }
+  .iconbtn { width: 30px; height: 30px; border-radius: 8px; border: none; background: transparent; color: var(--ink-soft); display: grid; place-items: center; transition: background .14s ease, color .14s ease, transform .12s ease; }
   .iconbtn svg { width: 17px; height: 17px; }
-  .iconbtn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .iconbtn:hover { background: var(--ink-bg-hover); color: var(--ink); }
+  .iconbtn:active { transform: scale(0.9); }
+  /* Collapsed: just the brand mark, centered (toggle lives in the chat header). */
+  .sidebar.collapsed .theme-btn { display: none; }
   .sidebar.collapsed .brand-name, .sidebar.collapsed .lbl, .sidebar.collapsed .nm,
   .sidebar.collapsed .b, .sidebar.collapsed .cmd-bar .t, .sidebar.collapsed .cmd-bar .kbd,
   .sidebar.collapsed .foot .t { display: none; }
+  @media (prefers-reduced-motion: reduce) { .iconbtn:active { transform: none; } }
 
   .cmd-bar {
-    display: flex; align-items: center; gap: 8px; margin: 0 2px 12px;
+    display: flex; align-items: center; gap: 8px; margin: 10px 2px 12px;
     padding: 10px 12px; border-radius: 12px;
     background: var(--glass-active, var(--surface)); border: 1px solid var(--glass-border);
     color: var(--ink-faint); font-size: 13px; box-shadow: var(--elev-2);
@@ -170,16 +157,9 @@
   .foot { padding: 8px 2px 0; margin-top: 6px; border-top: 1px solid var(--hairline-strong, var(--hairline)); position: relative; }
   .fbtn { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px; border-radius: 8px; border: none; background: transparent; color: var(--ink-soft); font-size: 13px; transition: background .14s ease, color .14s ease; }
   .fbtn svg { width: 17px; height: 17px; flex: 0 0 auto; }
-  .fbtn:hover, .fbtn.active { background: var(--glass-hover, color-mix(in srgb, var(--ink) 6%, transparent)); color: var(--ink); }
-  .sidebar.collapsed .fbtn { justify-content: center; }
-  .menu-backdrop { position: fixed; inset: 0; z-index: 90; }
-  .menu { position: absolute; bottom: calc(100% + 6px); left: 2px; right: 2px; z-index: 100; padding: 4px; background: var(--glass-active, var(--surface)); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border: 1px solid var(--glass-border); border-radius: 12px; box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 2px; transform-origin: bottom center; animation: menu-in .16s var(--ease-standard, ease); }
-  @keyframes menu-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
-  .menu button { text-align: left; padding: 8px 12px; border: none; background: transparent; border-radius: 8px; color: var(--ink); font-size: 13px; transition: background .12s ease, color .12s ease; }
-  .menu button:hover { background: var(--accent-bg-hover); color: var(--accent-strong, var(--accent)); }
-  .menu button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .fbtn:hover { background: var(--glass-hover, color-mix(in srgb, var(--ink) 6%, transparent)); color: var(--ink); }
+  .fbtn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
   @media (prefers-reduced-motion: reduce) {
-    .menu { animation: none; }
     .cmd-bar:hover { transform: none; }
   }
 </style>

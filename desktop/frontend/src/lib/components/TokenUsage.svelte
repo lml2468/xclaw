@@ -2,6 +2,7 @@
   import { store, type BotUsage } from "../store.svelte";
   import { onMount } from "svelte";
   import { modal } from "../actions/modal";
+  import SettingsHeader from "./SettingsHeader.svelte";
 
   let { onclose, onedit, onskills, onworkflows }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onworkflows?: () => void } = $props();
 
@@ -107,22 +108,15 @@
 
 <div class="scrim" onclick={onclose} role="presentation">
   <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量">
-    <header>
-      <h2>设置</h2>
-      <div class="nav" role="tablist" aria-label="设置分区">
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onedit?.(); }}>编辑 Bot</button>
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onskills?.(); }}>技能</button>
-        <button role="tab" aria-selected="true" class="on">用量</button>
-        <button role="tab" aria-selected="false" onclick={() => { onclose(); onworkflows?.(); }}>工作流</button>
-      </div>
-      <span class="hspacer"></span>
-      <div class="seg" role="tablist" aria-label="时间范围">
-        {#each RANGES as r (r.key)}
-          <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
-        {/each}
-      </div>
-      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
-    </header>
+    <SettingsHeader active="usage" {onclose} onnav={(fn) => { onclose(); fn(); }} {onedit} {onskills} {onworkflows}>
+      {#snippet children()}
+        <div class="range" role="tablist" aria-label="时间范围">
+          {#each RANGES as r (r.key)}
+            <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
+          {/each}
+        </div>
+      {/snippet}
+    </SettingsHeader>
 
     <div class="body">
       {#if bots.length === 0}
@@ -186,28 +180,18 @@
 <style>
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px 14px 92px; -webkit-app-region: drag; border-bottom: 1px solid var(--hairline); }
-  header .seg, header .nav, header .x, header .seg button, header .nav button { -webkit-app-region: no-drag; }
 
-  .hspacer { flex: 1; }
-  .nav { display: inline-flex; background: rgba(var(--ink-tint, 0,0,0), 0.05); border-radius: 10px; padding: 3px; }
-  .nav button { padding: 6px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
-  .nav button.on { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1, 0 1px 2px rgba(0,0,0,0.08)); }
-  .nav button:not(.on):hover { color: var(--ink); }  header h2 { font-size: 17px; flex: 1; }
-  .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; cursor: pointer; transition: background .14s ease, color .14s ease; }
-  .x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
-  .nav button:focus-visible, .seg button:focus-visible, .x:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
-
-  /* Range selector */
-  .seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
-  .seg button {
+  /* Time-range selector (lives in the shared header via the children snippet). */
+  .range { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
+  .range button {
     font-size: 12px; padding: 5px 11px; border: none; background: transparent;
     color: var(--ink-soft); cursor: pointer; border-right: 1px solid var(--hairline);
     transition: background 0.12s ease, color 0.12s ease;
   }
-  .seg button:last-child { border-right: none; }
-  .seg button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-  .seg button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
+  .range button:last-child { border-right: none; }
+  .range button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .range button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
+  .range button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   .body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
   .wrap { width: 100%; max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }

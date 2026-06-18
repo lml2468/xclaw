@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Octopus from "./Octopus.svelte";
+  import XMark from "./XMark.svelte";
 
   let {
     name = "",
@@ -27,7 +27,7 @@
   style="width:{size}px;height:{size}px;border-radius:{radius}px;background:{octopus ? 'var(--accent)' : color};font-size:{Math.round(size * 0.42)}px"
 >
   {#if octopus}
-    <span class="oc" style="color:#fff"><Octopus size={Math.round(size * 0.62)} /></span>
+    <span class="oc" style="color:#fff"><XMark size={Math.round(size * 0.56)} /></span>
   {:else}
     {initial}
   {/if}

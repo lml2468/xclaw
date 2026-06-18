@@ -26,6 +26,6 @@
   }
   .lights:hover .dot span { opacity: 1; }
   .dot.min span { font-size: 12px; margin-top: -1px; }
-  .dot.max span { font-size: 11px; transform: rotate(45deg); }
+  .dot.max span { font-size: 13px; }
   .dot:active { filter: brightness(0.85); }
 </style>

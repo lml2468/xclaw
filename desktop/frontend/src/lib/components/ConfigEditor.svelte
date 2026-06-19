@@ -134,7 +134,8 @@
 </script>
 
 <div class="scrim" onclick={() => leave()} role="presentation">
-  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="编辑 Bot">
+  <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
+  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="编辑 Bot" tabindex="-1">
     <SettingsHeader active="editor" onclose={() => leave()} onnav={leave} {onskills} {onusage} {onworkflows} />
 
     <div class="body">

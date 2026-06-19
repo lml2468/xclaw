@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
 // Dir is ~/.xclaw/workflows (the global catalog the daemon reads).
@@ -21,16 +23,18 @@ func Dir() string {
 	return filepath.Join(home, ".xclaw", "workflows")
 }
 
-var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-func validSlug(s string) bool { return s != "" && s != "." && s != ".." && slugRe.MatchString(s) }
-
-// path resolves and validates a workflow's .js file.
+// path resolves and validates a workflow's .js file. The name is a single slug
+// (no separators), and the resulting path is symlink-checked so a symlinked
+// catalog dir can't redirect a write outside ~/.xclaw/workflows.
 func path(name string) (string, error) {
-	if !validSlug(name) {
+	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid workflow name %q — letters, digits, . _ - only", name)
 	}
-	return filepath.Join(Dir(), name+".js"), nil
+	full := filepath.Join(Dir(), name+".js")
+	if err := safepath.AssertNoSymlinkEscape(Dir(), full, true); err != nil {
+		return "", err
+	}
+	return full, nil
 }
 
 // Info summarizes a workflow for the list view.

@@ -2,12 +2,16 @@
 //   - Escape closes (calls opts.onclose)
 //   - marks the node aria-modal and gives it a focus target
 //   - moves focus into the dialog on mount, restores it to the opener on destroy
+//   - traps Tab focus inside the dialog (keyboard users can't tab out into the
+//     inert background)
 //
 // Usage:  <div class="modal" use:modal={{ onclose }}> … </div>
 // window.confirm() is a no-op in the Wails webview, so closing is always routed
 // through the supplied onclose (which may itself run an in-app confirm first).
 
 type ModalOpts = { onclose: () => void };
+
+const FOCUSABLE = 'input, textarea, button, [href], select, [tabindex]:not([tabindex="-1"])';
 
 export function modal(node: HTMLElement, opts: ModalOpts) {
   let current = opts;
@@ -20,14 +24,34 @@ export function modal(node: HTMLElement, opts: ModalOpts) {
     if (e.key === "Escape") {
       e.stopPropagation();
       current.onclose();
+      return;
+    }
+    if (e.key === "Tab") {
+      // Trap focus: cycle within the dialog's focusable controls so Tab/Shift+Tab
+      // can't move focus into the inert background behind the modal.
+      const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (el) => !el.hasAttribute("disabled") && el.offsetParent !== null,
+      );
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
   }
   node.addEventListener("keydown", onKey);
 
   // Focus the first natural control, else the dialog itself.
-  const focusable = node.querySelector<HTMLElement>(
-    'input, textarea, button, [href], select, [tabindex]:not([tabindex="-1"])',
-  );
+  const focusable = node.querySelector<HTMLElement>(FOCUSABLE);
   if (focusable) {
     setTimeout(() => focusable.focus(), 40);
   } else {

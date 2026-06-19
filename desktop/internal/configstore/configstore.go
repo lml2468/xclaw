@@ -10,12 +10,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/desktop/internal/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/secrets"
 )
+
+// saveMu serializes Save so two concurrent saves (e.g. tray + window) can't
+// interleave their non-atomic per-bot side effects and, e.g., race removedIDs
+// against the keep set. config.json itself is written atomically (temp+rename);
+// this guards the surrounding multi-file writes.
+var saveMu sync.Mutex
 
 // BotConfig is the flat view model the editor binds to. Tokens are populated
 // from the credential store on Load and routed back to it on Save.
@@ -158,6 +165,8 @@ func Load() ([]BotConfig, error) {
 // already mutated; the side effects are idempotent, so a failed Save converges
 // on retry.
 func Save(bots []BotConfig, removedIDs []string) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	for _, b := range bots {
 		if !validSlug(b.ID) {
 			return fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", b.ID)
@@ -295,14 +304,13 @@ func writeBotFile(id, name, content string) error {
 		_ = os.Remove(path) // empty → omit the file
 		return nil
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	// 0o600 to match config.json: everything under ~/.xclaw is single-operator
+	// content (SOUL/AGENTS are the bot's identity/behavior prompts), so keep the
+	// permission policy uniform rather than leaving these world-readable.
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-func validSlug(s string) bool {
-	return s != "" && s != "." && s != ".." && slugRe.MatchString(s)
-}
+func validSlug(s string) bool { return safepath.ValidSlug(s) }
 
 func validURL(s string) error {
 	if strings.HasPrefix(s, "https://") {

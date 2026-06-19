@@ -220,9 +220,17 @@ func Upgrade(ctx context.Context) (string, error) {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return "", err
 	}
+	// Snapshot the current binary as .prev before replacing it, so a bad upgrade
+	// (verified checksum but non-functional binary) has a known-good rollback
+	// point. Best-effort: a missing current binary (first install) just skips it.
+	if cur, rerr := os.ReadFile(BinPath()); rerr == nil {
+		_ = os.WriteFile(BinPath()+".prev", cur, 0o755)
+	}
 	if err := installBinary("", bin); err != nil {
 		return "", err
 	}
+	// Only stamp the version AFTER the binary is in place, so a crash between the
+	// two never records a version we didn't actually install.
 	writeVersion(rel.TagName)
 	return rel.TagName, nil
 }

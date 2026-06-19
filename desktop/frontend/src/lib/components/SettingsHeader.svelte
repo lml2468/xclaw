@@ -11,12 +11,23 @@
       onedit?: () => void; onskills?: () => void; onusage?: () => void; onworkflows?: () => void;
       children?: Snippet } = $props();
 
-  const tabs: { key: Key; label: string; fn?: () => void }[] = [
-    { key: "editor", label: "编辑 Bot", fn: onedit },
-    { key: "skills", label: "技能", fn: onskills },
-    { key: "usage", label: "用量", fn: onusage },
-    { key: "workflows", label: "工作流", fn: onworkflows },
+  const tabs: { key: Key; label: string }[] = [
+    { key: "editor", label: "编辑 Bot" },
+    { key: "skills", label: "技能" },
+    { key: "usage", label: "用量" },
+    { key: "workflows", label: "工作流" },
   ];
+
+  // Resolve the nav handler for a tab at click time (not captured at init), so
+  // Svelte doesn't warn about referencing the prop's initial value.
+  function navFor(key: Key): (() => void) | undefined {
+    switch (key) {
+      case "editor": return onedit;
+      case "skills": return onskills;
+      case "usage": return onusage;
+      case "workflows": return onworkflows;
+    }
+  }
 </script>
 
 <header>
@@ -24,7 +35,7 @@
   <div class="seg" role="tablist" aria-label="设置分区">
     {#each tabs as t (t.key)}
       <button role="tab" aria-selected={t.key === active} class:on={t.key === active}
-        onclick={() => { if (t.key !== active && t.fn) onnav(t.fn); }}>{t.label}</button>
+        onclick={() => { const fn = navFor(t.key); if (t.key !== active && fn) onnav(fn); }}>{t.label}</button>
     {/each}
   </div>
   <span class="hspacer"></span>

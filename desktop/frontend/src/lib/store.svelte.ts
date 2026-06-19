@@ -84,7 +84,11 @@ const newId = () => `m${++uid}`;
 function prettyTitle(key: string): string {
   if (key === CONSOLE_UID || key === "console") return "Console";
   const parts = key.split(":");
-  if (parts.length > 1) return `${parts[0][0].toUpperCase()}${parts[0].slice(1)} · ${parts[parts.length - 1]}`;
+  // Guard against an empty first segment (e.g. a ":uid" key): parts[0][0] would
+  // throw and break the whole reducer fold. Fall back gracefully.
+  if (parts.length > 1 && parts[0]) {
+    return `${parts[0][0].toUpperCase()}${parts[0].slice(1)} · ${parts[parts.length - 1]}`;
+  }
   return key || "Console";
 }
 
@@ -283,8 +287,8 @@ class Store {
       } else if (env.type === "bots.list" && Array.isArray(env.body)) {
         this.bots = env.body.map((b: any) => ({ id: b.id, connected: !!b.connected, lastError: b.lastError }));
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
-      } else if (env.type === "sessions.list" && Array.isArray(env.body)) {
-        this.applySessionsList(env.body);
+      } else if (env.type === "sessions.list" && env.body && Array.isArray(env.body.sessions)) {
+        this.applySessionsList(env.body.botId, env.body.sessions);
       } else if (env.type === "usage.stats" && env.body) {
         const b = this.bots.find((x) => x.id === env.body.botId);
         if (b) {
@@ -299,8 +303,8 @@ class Store {
           };
           b.usage = { ...(b.usage ?? {}), [since]: u };
         }
-      } else if (env.type === "session.history" && Array.isArray(env.body)) {
-        this.applyHistory(env.body);
+      } else if (env.type === "session.history" && env.body && Array.isArray(env.body.messages)) {
+        this.applyHistory(env.body.botId, env.body.key, env.body.messages);
       }
       return;
     }
@@ -376,6 +380,14 @@ class Store {
         this.lastError = env.body?.message ?? "error";
         break;
       }
+      case "bridge.status": {
+        // Synthetic event from the Go bridge: the control-bus connection state.
+        // Lets the UI show "reconnecting" instead of silently freezing when the
+        // daemon drops, and clear it when the bus comes back.
+        this.connected = !!env.body?.connected;
+        if (!this.connected && env.body?.detail) this.lastError = env.body.detail;
+        break;
+      }
     }
   }
 
@@ -407,8 +419,14 @@ class Store {
     return s;
   }
 
-  private applyHistory(rows: any[]) {
-    const s = this.currentSession;
+  private applyHistory(botId: string, key: string, rows: any[]) {
+    // Route by the botId+key the RESPONSE carries, not currentSession — the user
+    // may have switched sessions while this fetch was in flight, and folding the
+    // rows into whatever happens to be selected would cross-contaminate sessions
+    // and permanently mark the wrong one loaded (H10).
+    const bid = botId || this.defaultBotId();
+    if (!bid || !key) return;
+    const s = this.sessions.find((x) => x.botId === bid && x.key === key);
     if (!s) return;
     s.loaded = true; // mark fetched even when empty, so we don't refetch on every open
     if (s.messages.length) return;
@@ -418,13 +436,15 @@ class Store {
   // applySessionsList folds the persisted session roster (newest first) into the
   // store so the list survives restarts. Each summary carries a preview only; the
   // transcript is lazy-loaded on open (loadHistory). updatedAt is Unix seconds.
-  private applySessionsList(rows: any[]) {
-    const botId = this.defaultBotId();
-    if (!botId) return;
+  // botId comes from the response so rows are never folded into the wrong bot when
+  // the user switched bots mid-fetch.
+  private applySessionsList(botId: string, rows: any[]) {
+    const bid = botId || this.defaultBotId();
+    if (!bid) return;
     for (const r of rows) {
       if (!r?.key) continue;
-      const existed = this.sessions.some((x) => x.botId === botId && x.key === r.key);
-      const s = this.ensureSession(botId, r.key);
+      const existed = this.sessions.some((x) => x.botId === bid && x.key === r.key);
+      const s = this.ensureSession(bid, r.key);
       // Don't clobber a live session's recency: a turn in flight sets lastActivity
       // to Date.now(); the persisted updatedAt is older, so only seed it for
       // sessions we just created (or take the max), or an active chat would drop

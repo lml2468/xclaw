@@ -107,7 +107,8 @@
 </script>
 
 <div class="scrim" onclick={onclose} role="presentation">
-  <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量">
+  <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
+  <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量" tabindex="-1">
     <SettingsHeader active="usage" {onclose} onnav={(fn) => { onclose(); fn(); }} {onedit} {onskills} {onworkflows}>
       {#snippet children()}
         <div class="range" role="tablist" aria-label="时间范围">

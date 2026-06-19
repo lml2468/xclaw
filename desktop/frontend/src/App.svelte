@@ -16,7 +16,7 @@
   import FilePreview from "./lib/components/FilePreview.svelte";
   import TokenUsage from "./lib/components/TokenUsage.svelte";
 
-  let composer: Composer;
+  let composer = $state<Composer>();
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
   let showSkills = $state(new URLSearchParams(location.search).has("skills"));
   let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
@@ -74,10 +74,18 @@
 
   // Tray / gear menu open these as modals over the console (guarded: the Wails
   // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
-  try { Events.On("xclaw:open-editor", () => (showEditor = true)); } catch {}
-  try { Events.On("xclaw:open-skills", () => (showSkills = true)); } catch {}
-  try { Events.On("xclaw:open-workflows", () => (showWorkflows = true)); } catch {}
-  try { Events.On("xclaw:open-usage", () => (showUsage = true)); } catch {}
+  // openModal enforces mutual exclusivity so a tray event can't stack two
+  // full-screen modals on top of each other.
+  function openModal(which: "editor" | "skills" | "workflows" | "usage") {
+    showEditor = which === "editor";
+    showSkills = which === "skills";
+    showWorkflows = which === "workflows";
+    showUsage = which === "usage";
+  }
+  try { Events.On("xclaw:open-editor", () => openModal("editor")); } catch {}
+  try { Events.On("xclaw:open-skills", () => openModal("skills")); } catch {}
+  try { Events.On("xclaw:open-workflows", () => openModal("workflows")); } catch {}
+  try { Events.On("xclaw:open-usage", () => openModal("usage")); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 </script>

@@ -90,7 +90,8 @@
 </script>
 
 <div class="scrim" onclick={() => leave()} role="presentation">
-  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="工作流">
+  <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
+  <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="工作流" tabindex="-1">
     <SettingsHeader active="workflows" onclose={() => leave()} onnav={leave} {onedit} {onskills} {onusage} />
 
     <div class="body">
@@ -128,7 +129,7 @@
 
     {#if confirmState}
       <div class="confirm-scrim" role="presentation">
-        <div class="confirm" role="alertdialog" aria-label="确认">
+        <div class="confirm" role="alertdialog" aria-label="确认" tabindex="-1">
           <p>{confirmState.msg}</p>
           <div class="cbtns">
             <button onclick={() => answer(false)}>取消</button>

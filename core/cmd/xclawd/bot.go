@@ -358,7 +358,7 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot == nil {
 				return nil, fmt.Errorf("unknown bot %q", botID)
 			}
-			return &botTarget{gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
+			return &botTarget{id: bot.cfg.BotID, gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
 		},
 		broadcast: func(eventType string, body any) {
 			if reg.srv != nil {

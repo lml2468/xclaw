@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -39,7 +40,16 @@ type XClawService struct {
 	// as it sees a newer epoch, so a manual restart can't be fought (and undone)
 	// by a stale crash-reconnect loop still backing off.
 	epoch uint64
+	// oversizedRetries counts consecutive ErrTooLong re-dials so a daemon emitting
+	// a legitimately oversized frame can't trap the bridge in a 300ms re-dial busy
+	// loop — after the cap we fall back to a full reconnect. Reset on a clean read.
+	oversizedRetries int
 }
+
+// maxOversizedRedials bounds consecutive ErrTooLong re-dials before escalating to
+// a full reconnect (H9). The most likely cause of an over-cap frame is the daemon
+// itself producing a large event, which a re-dial won't fix — so don't loop on it.
+const maxOversizedRedials = 3
 
 // NewXClawService constructs the bridge (ServiceStartup wires it).
 func NewXClawService() *XClawService { return &XClawService{} }
@@ -93,24 +103,48 @@ func (x *XClawService) connect() error {
 		if stale {
 			return
 		}
+		// Tell the frontend the bus dropped so the UI can show "reconnecting"
+		// instead of silently freezing on the last state.
+		x.emitConnState(false, "control stream ended")
 		// An oversized frame (bufio.ErrTooLong) desyncs the stream but does NOT
-		// mean the daemon died — over a local UDS the daemon is still up, so
-		// restarting it wouldn't help and could loop on the same frame. Re-dial
-		// the live daemon instead; only fall back to a full respawn if that fails.
+		// mean the daemon died. Re-dialing the LIVE daemon can clear a transient
+		// desync — but the likeliest cause is the daemon emitting a legitimately
+		// over-cap event, which a re-dial won't fix and would busy-loop on. So
+		// bound the re-dials (H9) and route them through the epoch guard (H8) so a
+		// concurrent RestartCore can't be raced; after the cap, fall back to a full
+		// reconnect.
 		if errors.Is(err, bufio.ErrTooLong) {
-			log.Printf("xclaw: oversized control frame (%v); re-dialing without restart", err)
-			time.Sleep(300 * time.Millisecond)
-			if derr := x.connect(); derr == nil {
-				return
+			x.mu.Lock()
+			x.oversizedRetries++
+			n := x.oversizedRetries
+			x.epoch++
+			myEpoch := x.epoch
+			x.mu.Unlock()
+			if n <= maxOversizedRedials {
+				log.Printf("xclaw: oversized control frame (%v); re-dial %d/%d", err, n, maxOversizedRedials)
+				time.Sleep(300 * time.Millisecond)
+				if !x.epochCurrent(myEpoch) {
+					return // a manual restart / newer reconnect superseded us
+				}
+				if derr := x.connect(); derr == nil {
+					return
+				}
+			} else {
+				log.Printf("xclaw: oversized control frame persists after %d re-dials; full reconnect", n)
 			}
 		}
 		// Clean EOF / closed socket → the daemon exited; respawn + reconnect.
 		x.reconnect()
 	}()
 
+	x.mu.Lock()
+	x.oversizedRetries = 0 // a fresh, healthy connection clears the re-dial counter
+	x.mu.Unlock()
+
 	_, _ = client.Send(control.CmdAuth, control.AuthBody{Token: x.sup.Token()})
 	_, _ = client.Send("health", nil)
 	_, _ = client.Send("bots.list", nil)
+	x.emitConnState(true, "") // bus is up — clear any "reconnecting" UI state
 	// Inject secrets off the startup path: reading the OS credential store can
 	// block on a SecurityAgent prompt (a differently-signed binary isn't yet in
 	// the item ACL), and that must never freeze the bridge boot or the UI.
@@ -133,9 +167,9 @@ func (x *XClawService) reconnect() {
 		if !x.epochCurrent(myEpoch) {
 			return
 		}
-		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // 0.5s → capped below
+		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // linear: 0.5s, 1s, 1.5s…
 		if attempt > 6 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(2 * time.Second) // add a flat 2s tail on later attempts
 		}
 		if !x.epochCurrent(myEpoch) {
 			return // superseded while we were backing off — don't restart
@@ -157,6 +191,23 @@ func (x *XClawService) epochCurrent(e uint64) bool {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	return !x.shuttingDown && x.epoch == e
+}
+
+// emitConnState pushes a synthetic bridge.status event to the frontend so the UI
+// can reflect the bus connection state (connected / reconnecting) instead of
+// silently freezing on its last state when the daemon drops (H9 observability).
+func (x *XClawService) emitConnState(connected bool, detail string) {
+	app := application.Get()
+	if app == nil {
+		return
+	}
+	body, _ := json.Marshal(map[string]any{"connected": connected, "detail": detail})
+	app.Event.Emit(EventStream, control.Envelope{
+		V:    1,
+		Kind: control.KindEvent,
+		Type: "bridge.status",
+		Body: body,
+	})
 }
 
 // injectSecrets reads each configured bot's tokens from the credential store and

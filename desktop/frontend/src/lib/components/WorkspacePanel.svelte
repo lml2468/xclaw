@@ -68,23 +68,30 @@
 
 <div class="panel">
   <header class="bar">
-    <span class="title">Workspace</span>
+    <span class="title">工作区</span>
     <span class="spacer"></span>
-    <button class="icon" title="Refresh" aria-label="Refresh" onclick={() => loadTree(botId, sessionKey)}>
+    <button class="icon" class:spin={loading} title="刷新" aria-label="刷新" onclick={() => loadTree(botId, sessionKey)}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
     </button>
-    <button class="icon" title="Close" aria-label="Close workspace" onclick={onclose}>
+    <button class="icon" title="关闭" aria-label="关闭工作区" onclick={onclose}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
   </header>
 
   <div class="tree">
     {#if error}
-      <div class="msg err">{error}</div>
+      <div class="msg err" role="alert">
+        <span>加载失败:{error}</span>
+        <button class="retry" onclick={() => loadTree(botId, sessionKey)}>重试</button>
+      </div>
     {:else if loading && !tree}
-      <div class="msg">Loading…</div>
+      <div class="skel" aria-hidden="true">
+        {#each [0, 1, 2, 3, 4] as i (i)}
+          <div class="skel-row" style="width:{[78, 60, 70, 52, 66][i]}%"></div>
+        {/each}
+      </div>
     {:else if !hasFiles}
-      <div class="msg">No files yet. The agent's workspace appears here once it writes something.</div>
+      <div class="msg">还没有文件。Agent 写入工作区后会显示在这里。</div>
     {:else}
       {#each kids(tree) as child (child.path)}
         {@render row(child, 0)}
@@ -95,9 +102,11 @@
 
 {#snippet row(node: Node, depth: number)}
   {#if node.isDir}
-    <button class="node dir" style="padding-left:{8 + depth * 14}px" onclick={() => toggle(node.path)}>
-      <span class="chev" class:open={expanded.has(node.path)} class:hidden={node.children == null}>▸</span>
-      <span class="ico">📁</span>
+    <button class="node dir" style="padding-left:{8 + depth * 14}px" onclick={() => toggle(node.path)} aria-expanded={expanded.has(node.path)}>
+      <span class="chev" class:open={expanded.has(node.path)} class:hidden={node.children == null}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      </span>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
       <span class="name">{node.name}</span>
     </button>
     {#if expanded.has(node.path) && node.children}
@@ -107,6 +116,7 @@
     {/if}
   {:else}
     <button class="node file" class:sel={node.path === activePath} style="padding-left:{8 + depth * 14 + 14}px" onclick={() => onopen(node.path)}>
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg></span>
       <span class="name">{node.name}</span>
     </button>
   {/if}
@@ -130,10 +140,20 @@
     transition: background 0.14s ease, color 0.14s ease;
   }
   .icon:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--accent); }
+  .icon.spin svg { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .tree { flex: 1 1 0; min-height: 0; overflow: auto; padding: 6px 0; }
   .msg { color: var(--ink-soft); font-size: 12px; padding: 14px 16px; line-height: 1.5; }
-  .msg.err { color: var(--danger); }
+  .msg.err { color: var(--danger); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+  .retry { font-size: 12px; padding: 5px 12px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--hairline)); background: transparent; color: var(--danger); cursor: pointer; transition: background 0.14s ease; }
+  .retry:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .retry:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+  /* Loading skeleton — shimmering placeholder rows until the tree lands. */
+  .skel { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+  .skel-row { height: 12px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 6%, transparent) 25%, color-mix(in srgb, var(--ink) 11%, transparent) 37%, color-mix(in srgb, var(--ink) 6%, transparent) 63%); background-size: 280% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+  @keyframes shimmer { 0% { background-position: 180% 0; } 100% { background-position: -120% 0; } }
 
   .node {
     display: flex; align-items: center; gap: 6px; width: 100%;
@@ -143,10 +163,18 @@
     transition: background 0.1s ease;
   }
   .node:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .node:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
   .node.file.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
-  .chev { width: 10px; color: var(--ink-faint); transition: transform 0.12s ease; flex: 0 0 10px; font-size: 10px; }
+  .chev { width: 12px; height: 12px; color: var(--ink-faint); transition: transform 0.12s ease; flex: 0 0 12px; display: grid; place-items: center; }
+  .chev svg { width: 12px; height: 12px; }
   .chev.open { transform: rotate(90deg); }
   .chev.hidden { visibility: hidden; }
-  .ico { flex: 0 0 auto; font-size: 11px; opacity: 0.85; }
+  .ico { flex: 0 0 auto; width: 15px; height: 15px; color: var(--ink-faint); display: grid; place-items: center; }
+  .ico svg { width: 15px; height: 15px; }
+  .node.file.sel .ico { color: var(--accent-strong, var(--accent)); }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) {
+    .skel-row { animation: none; }
+    .icon.spin svg { animation-duration: 1.6s; }
+  }
 </style>

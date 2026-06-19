@@ -124,39 +124,43 @@
 <section class="preview">
   <header class="bar">
     <span class="path" title={path}>{name}</span>
-    {#if file}<span class="meta">{fmtSize(file.size)}{#if file.truncated} · truncated{/if}</span>{/if}
+    {#if file}<span class="meta">{fmtSize(file.size)}{#if file.truncated} · 已截断{/if}</span>{/if}
     <span class="spacer"></span>
 
     {#if isMarkdown || isHtml}
       <div class="seg">
-        <button class:on={mdMode === "rendered"} onclick={() => (mdMode = "rendered")}>Rendered</button>
-        <button class:on={mdMode === "raw"} onclick={() => (mdMode = "raw")}>Raw</button>
+        <button class:on={mdMode === "rendered"} onclick={() => (mdMode = "rendered")}>渲染</button>
+        <button class:on={mdMode === "raw"} onclick={() => (mdMode = "raw")}>源码</button>
       </div>
     {/if}
     {#if isImage}
       <div class="seg">
-        <button class:on={imgFit} onclick={() => (imgFit = true)}>Fit</button>
-        <button class:on={!imgFit} onclick={() => (imgFit = false)}>Actual</button>
+        <button class:on={imgFit} onclick={() => (imgFit = true)}>适应</button>
+        <button class:on={!imgFit} onclick={() => (imgFit = false)}>原始</button>
       </div>
     {/if}
     {#if canCopy}
-      <button class="icon txt" onclick={copyAll}>{copied ? "copied" : "copy"}</button>
+      <button class="icon txt" onclick={copyAll}>{copied ? "已复制" : "复制"}</button>
     {/if}
-    <button class="icon" title="Close (Esc)" aria-label="Close preview" onclick={onclose}>
+    <button class="icon" title="关闭 (Esc)" aria-label="关闭预览" onclick={onclose}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
   </header>
 
   <div class="body">
     {#if error}
-      <div class="msg err">{error}</div>
+      <div class="msg err" role="alert">加载失败:{error}</div>
     {:else if !file}
-      <div class="msg">Loading…</div>
+      <div class="skel" aria-hidden="true">
+        {#each [0, 1, 2, 3, 4, 5] as i (i)}
+          <div class="skel-row" style="width:{[64, 88, 72, 80, 56, 76][i]}%"></div>
+        {/each}
+      </div>
     {:else if isImage}
       <div class="img-wrap"><img class:fit={imgFit} src={`data:${file.mime};base64,${file.content}`} alt={path} /></div>
     {:else if isPdf}
       {#if file.truncated}
-        <div class="msg">PDF too large to preview inline ({fmtSize(file.size)}).</div>
+        <div class="msg">PDF 太大,无法内联预览({fmtSize(file.size)})。</div>
       {:else if pdfUrl}
         <iframe class="pdf" title={path} src={pdfUrl}></iframe>
       {/if}
@@ -176,7 +180,7 @@
         <pre class="code raw"><code>{@html rawHtml}</code></pre>
       {/if}
     {:else if isBinary}
-      <div class="msg">Binary file — {fmtSize(file.size)}. No preview available.</div>
+      <div class="msg">二进制文件 — {fmtSize(file.size)},无法预览。</div>
     {:else}
       <!-- code / text: line-number gutter + highlighted source -->
       <div class="code-wrap">
@@ -221,6 +225,12 @@
   .body { flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; }
   .msg { color: var(--ink-soft); font-size: 13px; padding: 22px var(--gutter, 20px); line-height: 1.5; }
   .msg.err { color: var(--danger); }
+
+  /* Loading skeleton — shimmering lines until the file content lands. */
+  .skel { flex: 1 1 0; display: flex; flex-direction: column; gap: 14px; padding: 24px var(--gutter, 28px); align-content: flex-start; }
+  .skel-row { height: 13px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 6%, transparent) 25%, color-mix(in srgb, var(--ink) 11%, transparent) 37%, color-mix(in srgb, var(--ink) 6%, transparent) 63%); background-size: 280% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+  @keyframes shimmer { 0% { background-position: 180% 0; } 100% { background-position: -120% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel-row { animation: none; } }
 
   /* Code / text: shared-scroll gutter + source. */
   .code-wrap { flex: 1 1 0; min-height: 0; display: flex; overflow: auto; background: var(--code-bg); }

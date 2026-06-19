@@ -7,7 +7,7 @@
 //	xclawd -control /tmp/xclaw.sock    # serve the control bus (for the GUI app)
 //
 // With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
-// so the Swift macOS app (or any client) can send commands and receive the live
+// so the desktop app (or any client) can send commands and receive the live
 // event stream. The REPL and the control bus can run together.
 //
 // Each inbound becomes a DM; the gateway routes it (per-session lock, rate
@@ -21,8 +21,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lml2468/xclaw/core/agent"
@@ -69,10 +71,12 @@ func main() {
 
 	started := time.Now()
 
-	// Run context: cancellable so an in-flight control-bus turn (session.send)
-	// and the IM connector shut down on exit instead of running detached.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Run context: cancelled on SIGINT/SIGTERM so an in-flight control-bus turn
+	// (session.send) and the IM connector shut down cleanly and the deferred
+	// cleanup (socket removal, store close) actually runs — previously a bare
+	// context meant Ctrl-C killed the process with defers unexecuted (H7).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Lone secret store for the single-bot flag path: seeded from the flag/env
 	// token, updatable via secret.inject over the control bus. The driver reads
@@ -122,15 +126,7 @@ func main() {
 	if srv != nil {
 		srv.SetHandler(makeCommandHandler(ctx, gw, st, drv, sec, srv, started))
 		configureBusAuth(srv, *authStdin) // arm the capability-token gate before serving
-		ln := mustListenUnix(*controlSock)
-		defer ln.Close()
-		defer os.Remove(*controlSock)
-		go func() {
-			if err := srv.Serve(ln); err != nil {
-				fmt.Fprintf(os.Stderr, "control serve: %v\n", err)
-			}
-		}()
-		fmt.Printf("control bus listening on %s\n", *controlSock)
+		defer serveControlBus(srv, *controlSock)()
 	}
 
 	if connector != nil {
@@ -147,14 +143,18 @@ func main() {
 	fmt.Printf("db=%s  session=dm:%s\n", *dbPath, *fromUID)
 
 	if *noREPL || connector != nil {
+		// Exit when the parent dies (GUI use) by cancelling ctx, so the same
+		// deferred cleanup runs as on a signal — not os.Exit, which skips defers (L32).
 		if *exitParent {
 			watchParentExit(func() {
 				fmt.Fprintln(os.Stderr, "parent exited; shutting down")
-				os.Exit(0)
+				stop()
 			})
 		}
 		fmt.Println("running (control bus / IM connector); press Ctrl-C to exit")
-		select {} // block forever
+		<-ctx.Done() // block until a signal or parent-exit cancels the context
+		fmt.Fprintln(os.Stderr, "shutting down")
+		return
 	}
 
 	fmt.Println("type a message and press enter; /reset clears the session; Ctrl-D to exit")

@@ -314,10 +314,12 @@ func TestRateLimitedRepliesOncePerWindow(t *testing.T) {
 	if d, _ := gw.Handle(context.Background(), mk()); d != router.Accepted {
 		t.Fatalf("turn1 want accepted, got %s", d)
 	}
-	// Turns 2..N: rate-limited.
+	// Turns 2..N: rate-limited. The first rejection of the window surfaces as
+	// RateLimited (notify), the rest as RateLimitedSilent (deduped) — both are
+	// rejections; only the reply count below must be 1.
 	for i := 0; i < 3; i++ {
-		if d, _ := gw.Handle(context.Background(), mk()); d != router.RateLimited {
-			t.Fatalf("turn%d want rate_limited, got %s", i+2, d)
+		if d, _ := gw.Handle(context.Background(), mk()); d != router.RateLimited && d != router.RateLimitedSilent {
+			t.Fatalf("turn%d want a rate-limited decision, got %s", i+2, d)
 		}
 	}
 	// Exactly ONE "请稍后再试" reply across the burst (deduped per window).

@@ -6,6 +6,8 @@ package secrets
 
 import (
 	"errors"
+	"fmt"
+	"os"
 
 	"github.com/zalando/go-keyring"
 )
@@ -24,10 +26,17 @@ const (
 
 func account(botID string, kind Kind) string { return botID + "/" + string(kind) }
 
-// Get returns the stored token, or "" if none is set.
+// Get returns the stored token, or "" if none is set. A "not found" result and a
+// real keyring failure both yield "" (callers treat that as "no token to
+// inject"), but a real failure (keychain access denied, service unavailable) is
+// logged so it isn't silently indistinguishable from "unset" — that case is the
+// common confusion after a re-signed binary prompts and is denied (L).
 func Get(botID string, kind Kind) string {
 	v, err := keyring.Get(service, account(botID, kind))
 	if err != nil {
+		if !errors.Is(err, keyring.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "[secrets] keyring get failed for %s/%s: %v\n", botID, kind, err)
+		}
 		return ""
 	}
 	return v

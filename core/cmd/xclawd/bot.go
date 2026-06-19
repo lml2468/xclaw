@@ -139,15 +139,7 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 		reg.srv = srv
 		srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
 		configureBusAuth(srv, authStdin) // arm the capability-token gate before serving
-		ln := mustListenUnix(controlSock)
-		defer ln.Close()
-		defer os.Remove(controlSock)
-		go func() {
-			if err := srv.Serve(ln); err != nil {
-				fmt.Fprintf(os.Stderr, "control serve: %v\n", err)
-			}
-		}()
-		fmt.Printf("control bus listening on %s\n", controlSock)
+		defer serveControlBus(srv, controlSock)()
 	}
 
 	fmt.Printf("xclawd — config mode: %d bot(s)\n", len(bots))
@@ -157,12 +149,40 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 		wg.Add(1)
 		go func(cfg config.Resolved) {
 			defer wg.Done()
+			// Panic isolation: a panic in one bot's driver/connector must not crash
+			// the whole daemon and take down every other bot — the promise is a
+			// fully-isolated per-bot stack. Recover, mark the bot failed (so it shows
+			// up in bots.list with the error instead of silently vanishing), and let
+			// the others keep running.
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "[%s] panic: %v\n", cfg.BotID, r)
+					registerFailedBot(reg, cfg, fmt.Sprintf("panic: %v", r))
+				}
+			}()
 			if err := runBot(ctx, cfg, reg, srv); err != nil && ctx.Err() == nil {
 				fmt.Fprintf(os.Stderr, "[%s] exited: %v\n", cfg.BotID, err)
+				// A startup failure (store open, mkdir, …) returns before the bot
+				// registers itself. Register a failed-status stub so the GUI/bots.list
+				// shows it as down-with-error rather than missing entirely.
+				registerFailedBot(reg, cfg, err.Error())
 			}
 		}(cfg)
 	}
 	wg.Wait()
+}
+
+// registerFailedBot records a bot that failed to start (or panicked) so it
+// appears in bots.list with a down status + error, instead of silently missing.
+// If the bot already registered itself, its existing runtime is marked failed.
+func registerFailedBot(reg *botRegistry, cfg config.Resolved, errMsg string) {
+	if b := reg.get(cfg.BotID); b != nil {
+		b.setStatus(false, errMsg)
+		return
+	}
+	b := &botRuntime{cfg: cfg, secrets: &secretStore{}}
+	b.setStatus(false, errMsg)
+	reg.add(b)
 }
 
 // runBot assembles and runs one bot's complete, isolated stack. When srv is set,
@@ -338,7 +358,7 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot == nil {
 				return nil, fmt.Errorf("unknown bot %q", botID)
 			}
-			return &botTarget{gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
+			return &botTarget{id: bot.cfg.BotID, gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
 		},
 		broadcast: func(eventType string, body any) {
 			if reg.srv != nil {

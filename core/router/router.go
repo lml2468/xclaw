@@ -150,6 +150,12 @@ func (c Config) withDefaults() Config {
 // globalRateMultiplier: the global bucket is N× the per-session size.
 const globalRateMultiplier = 10
 
+// rateLimitWindow is the refill window for every bucket. Reap relies on
+// idle > rateLimitWindow so a reaped bucket is necessarily full again (evicting
+// it can't reset a flooder's partially-drained budget). It is the single source
+// of truth — both newBucket calls and Reap's clamp reference it.
+const rateLimitWindow = time.Minute
+
 // Router serializes per-session work and enforces rate limits.
 type Router struct {
 	cfg Config
@@ -235,7 +241,8 @@ const (
 	DroppedNotMentioned          // group message without a mention
 	DroppedTooLong               // exceeds MaxContentByte
 	DroppedBot                   // silent drop: blocklisted DM or bot-loop guard (G14)
-	RateLimited
+	RateLimited                  // rejected; first rejection of this window → notify the user
+	RateLimitedSilent            // rejected but already notified this window → stay silent
 )
 
 func (d Decision) String() string {
@@ -252,6 +259,8 @@ func (d Decision) String() string {
 		return "bot"
 	case RateLimited:
 		return "rate_limited"
+	case RateLimitedSilent:
+		return "rate_limited_silent"
 	default:
 		return "unknown"
 	}
@@ -310,9 +319,16 @@ func (r *Router) RouteAndHandle(ctx context.Context, msg InboundMessage, handler
 		return DroppedTooLong, nil
 	}
 
-	// Rate limiting (cron fires bypass it — operator-scheduled).
-	if !msg.CronFire && !r.allow(key, msg.FromUID) {
-		return RateLimited, nil
+	// Rate limiting (cron fires bypass it — operator-scheduled). The notify
+	// decision is computed atomically with the rejection so the caller can
+	// debounce the reply without re-locking (M1).
+	if !msg.CronFire {
+		if allowed, notify := r.allow(key, msg.FromUID); !allowed {
+			if notify {
+				return RateLimited, nil
+			}
+			return RateLimitedSilent, nil
+		}
 	}
 
 	// Serialize within the session.
@@ -357,6 +373,13 @@ func (r *Router) release(e *lockEntry) {
 // must exceed the rate-limit window (a bucket idle that long is necessarily full
 // again). Returns the number of locks and buckets evicted.
 func (r *Router) Reap(idle time.Duration) (locks, buckets int) {
+	// Enforce the idle > rate-limit-window invariant rather than trusting the
+	// caller: a bucket idle that long is necessarily full again, so evicting and
+	// recreating it can't reset a flooder's partially-drained budget. Clamp up so
+	// a too-small idle can never become a rate-limit bypass.
+	if idle <= rateLimitWindow {
+		idle = rateLimitWindow + time.Second
+	}
 	now := r.now()
 
 	r.locksMu.Lock()
@@ -386,29 +409,43 @@ func (r *Router) Reap(idle time.Duration) (locks, buckets int) {
 }
 
 // allow checks all three buckets; only consumes a token from each if ALL pass
-// (peek-then-commit), mirroring cc-channel's checkAllRateLimits.
-func (r *Router) allow(sessionKey, uid string) bool {
+// (peek-then-commit), mirroring cc-channel's checkAllRateLimits. When a turn is
+// rejected it ALSO decides — in the same critical section — whether this is the
+// first rejection of the current window (notify=true) so the caller can debounce
+// the "请稍后再试" reply without a second lock acquisition (M1: a second lock would
+// let the buckets refill between the reject and the notify check, racing the
+// blocker classification). Returns (allowed, notify); notify is meaningful only
+// when allowed is false.
+func (r *Router) allow(sessionKey, uid string) (allowed, notify bool) {
 	r.rlMu.Lock()
 	defer r.rlMu.Unlock()
 	now := r.now()
 
 	maxPer := r.cfg.MaxPerMinute
 	if r.global == nil {
-		r.global = newBucket(maxPer*globalRateMultiplier, time.Minute)
+		r.global = newBucket(maxPer*globalRateMultiplier, rateLimitWindow)
 	}
 	ub := r.perUser[uid]
 	if ub == nil {
-		ub = newBucket(maxPer, time.Minute)
+		ub = newBucket(maxPer, rateLimitWindow)
 		r.perUser[uid] = ub
 	}
 	sb := r.perSess[sessionKey]
 	if sb == nil {
-		sb = newBucket(maxPer, time.Minute)
+		sb = newBucket(maxPer, rateLimitWindow)
 		r.perSess[sessionKey] = sb
 	}
 
-	if !r.global.peek(now) || !ub.peek(now) || !sb.peek(now) {
-		return false
+	// Identify the blocking bucket in precedence order (global → user → session),
+	// peeking each exactly once. On a block, mark that bucket notified and report
+	// whether this was the first rejection of its window — all under rlMu.
+	switch {
+	case !r.global.peek(now):
+		return false, markNotified(r.global)
+	case !ub.peek(now):
+		return false, markNotified(ub)
+	case !sb.peek(now):
+		return false, markNotified(sb)
 	}
 	r.global.take(now)
 	ub.take(now)
@@ -419,37 +456,7 @@ func (r *Router) allow(sessionKey, uid string) bool {
 	r.global.notified = false
 	ub.notified = false
 	sb.notified = false
-	return true
-}
-
-// ShouldNotifyRateLimit reports whether a "请稍后再试" reply should be sent for a
-// message the rate limiter just rejected, debouncing it to once per refill
-// window. It marks the blocking bucket as notified (without consuming a token),
-// mirroring cc-channel's per-bucket `notified` flag: the first rejection in a
-// window returns true; subsequent rejections from the same blocker return false
-// until a turn passes (allow clears the flag).
-//
-// Call this ONLY after allow has returned false for (sessionKey, uid); the
-// buckets it inspects are the same ones allow created.
-func (r *Router) ShouldNotifyRateLimit(sessionKey, uid string) bool {
-	r.rlMu.Lock()
-	defer r.rlMu.Unlock()
-	now := r.now()
-
-	// Identify the blocking bucket in the same precedence as allow's peek chain
-	// (global → user → session). A bucket missing here means it was never
-	// created, which can't happen on the post-rejection path, but guard anyway.
-	switch {
-	case r.global != nil && !r.global.peek(now):
-		return markNotified(r.global)
-	case r.perUser[uid] != nil && !r.perUser[uid].peek(now):
-		return markNotified(r.perUser[uid])
-	case r.perSess[sessionKey] != nil && !r.perSess[sessionKey].peek(now):
-		return markNotified(r.perSess[sessionKey])
-	}
-	// No bucket is blocking anymore (refilled between rejection and this call):
-	// nothing to notify about.
-	return false
+	return true, false
 }
 
 // markNotified sets the bucket's debounce flag and reports whether this was the

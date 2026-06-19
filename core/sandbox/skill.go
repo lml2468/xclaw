@@ -109,7 +109,7 @@ func applyLinks(root, kind string, desired map[string]string) error {
 		return nil // best-effort
 	}
 
-	// Prune managed symlinks no longer wanted (or pointing at a changed/dangling target).
+	// Prune managed symlinks no longer wanted (or pointing at a changed target).
 	if existing, err := os.ReadDir(root); err == nil {
 		for _, e := range existing {
 			linkPath := filepath.Join(root, e.Name())
@@ -121,11 +121,13 @@ func applyLinks(root, kind string, desired map[string]string) error {
 			want, wanted := desired[e.Name()]
 			if !wanted || err != nil || target != want {
 				_ = os.Remove(linkPath)
-				continue
 			}
-			if _, statErr := os.Stat(linkPath); statErr != nil {
-				_ = os.Remove(linkPath) // dangling
-			}
+			// A wanted link whose target matches is left as-is. We deliberately do
+			// NOT os.Stat() it to drop "dangling" links: Stat follows the symlink, so
+			// a source on a slow/temporarily-unmounted volume would look dangling and
+			// get needlessly removed+recreated every turn. If the source is truly
+			// gone, collect() won't have listed it in `desired` and the !wanted
+			// branch above already removed it.
 		}
 	}
 

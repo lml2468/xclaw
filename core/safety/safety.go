@@ -58,15 +58,19 @@ var roleLabelRE = regexp.MustCompile(`(?im)^([^\S\r\n]*)(\[(?:user|assistant)\b[
 // answered/new group-context segment headers (groupctx.answeredHeader /
 // newHeader) so untrusted background can't forge a segment boundary.
 var sectionMarkerRE = regexp.MustCompile(
-	`(?im)^([^\S\r\n]*)\[(Group context|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
+	`(?im)^([^\S\r\n]*)\[(Group context|Group Members|Group Info|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
 
 // Bracket delimiters + all line/para separators that could forge a boundary:
 // [ ] CR LF VT FF NEL(U+0085) LS(U+2028) PS(U+2029).
 var nameUnsafeRE = regexp.MustCompile(`[\[\]\r\n\x{000b}\x{000c}\x{0085}\x{2028}\x{2029}]`)
 
-// VT, FF, NEL — separators ^(m) does NOT anchor on but a model may render as a
-// new line. Normalized to \n before label/section escaping.
-var extraLineBreaksRE = regexp.MustCompile(`[\x{000b}\x{000c}\x{0085}]`)
+// Separators a model may render as a new line but RE2's (?m)^ does NOT anchor
+// on: CR, VT, FF, NEL(U+0085), LS(U+2028), PS(U+2029). Normalized to \n before
+// label/section escaping so the line-leading anchors fire on them too. This must
+// stay in sync with nameUnsafeRE's separator set (minus the bracket delimiters)
+// — both protect against the same boundary-forging characters. (LF needs no
+// normalization; CRLF collapses to "\n\n", a harmless extra blank line.)
+var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\x{2029}]`)
 
 func normalizeLineBreaks(text string) string {
 	return extraLineBreaksRE.ReplaceAllString(text, "\n")

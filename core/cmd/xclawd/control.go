@@ -17,6 +17,7 @@ import (
 // over single-bot mode (one fixed target) and multi-bot mode (resolved by id),
 // so the command handler below is written once for both.
 type botTarget struct {
+	id      string // resolved bot id (echoed in responses so the client can route)
 	gateway *gateway.Gateway
 	store   *store.Store
 	secrets *secretStore
@@ -63,7 +64,11 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				return nil, err
 			}
 			// Never log b.Value.
-			if err := t.secrets.Set(b.Kind, b.Value); err != nil {
+			if b.Clear {
+				if err := t.secrets.Clear(b.Kind); err != nil {
+					return nil, err
+				}
+			} else if err := t.secrets.Set(b.Kind, b.Value); err != nil {
 				return nil, err
 			}
 			return control.OKBody{OK: true}, nil
@@ -116,7 +121,13 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
-			return historyFromMessages(msgs), nil
+			// Echo botId + key so the client routes the rows to the right session
+			// even if the user switched sessions while this fetch was in flight.
+			return control.HistoryResponse{
+				BotID:    b.BotID,
+				Key:      b.SessionKey,
+				Messages: historyFromMessages(msgs),
+			}, nil
 
 		case "sessions.list":
 			var b control.SessionsListBody
@@ -131,7 +142,11 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
-			return summariesFromSessions(sums), nil
+			// Echo botId so the client never folds these rows into the wrong bot.
+			return control.SessionsListResponse{
+				BotID:    b.BotID,
+				Sessions: summariesFromSessions(sums),
+			}, nil
 
 		case "usage.stats":
 			var b control.UsageStatsBody

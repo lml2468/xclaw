@@ -11,7 +11,8 @@
 </script>
 
 <div class="cscrim" role="presentation" onclick={() => onresult(false)} onkeydown={onKey}>
-  <div class="confirm" role="alertdialog" aria-label={message} onclick={(e) => e.stopPropagation()}>
+  <!-- svelte-ignore a11y_click_events_have_key_events (scrim's onkeydown handles keys; this onclick only stops propagation) -->
+  <div class="confirm" role="alertdialog" aria-label={message} tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <p>{message}</p>
     <div class="cbtns">
       <button onclick={() => onresult(false)}>{cancelLabel}</button>

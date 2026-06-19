@@ -67,7 +67,11 @@ func ResolveBinary() (string, error) {
 			return filepath.Clean(cand), nil
 		}
 	}
-	// Monorepo dev: walk up from cwd looking for core/.xclawd-dev.
+	// Monorepo dev: walk up from cwd looking for core/.xclawd-dev. TRUST NOTE:
+	// this (and the PATH fallback below) trusts the working directory / PATH, so it
+	// is for developer machines only. In production the bundled Helpers/xclawd
+	// branch above resolves first via the app's own executable path, so a hostile
+	// cwd can't substitute a binary for an installed app.
 	if dir, err := os.Getwd(); err == nil {
 		for i := 0; i < 6; i++ {
 			cand := filepath.Join(dir, "core", ".xclawd-dev")
@@ -190,6 +194,13 @@ func (s *Supervisor) stopLocked() {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		_ = s.cmd.Process.Kill()
+		// Wait for the Wait() goroutine to reap the killed process, so it doesn't
+		// linger as a zombie and the goroutine doesn't leak. Kill makes Wait return
+		// promptly; bound it so a truly stuck process can't hang Stop forever.
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
 	}
 	s.cmd = nil
 	_ = os.Remove(s.SocketPath)

@@ -71,7 +71,8 @@
 </script>
 
 <div class="scrim" onclick={onclose} role="presentation">
-  <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板" onclick={(e) => e.stopPropagation()}>
+  <!-- svelte-ignore a11y_click_events_have_key_events (scrim handles keys; this onclick only stops propagation) -->
+  <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板" tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <div class="pinput">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--ink-faint)"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input bind:this={input} bind:value={q} onkeydown={onKey} placeholder="搜索会话、切换 Space 或执行命令…" aria-label="搜索" />

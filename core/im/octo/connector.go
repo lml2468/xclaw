@@ -49,6 +49,14 @@ type Connector struct {
 	sock    *socketConn
 	closed  bool
 
+	// turnQueues serializes turn dispatch PER session key so the WS read loop is
+	// never blocked by a running turn (H3): onInbound hands the turn to a per-key
+	// worker goroutine and returns immediately, so the read loop keeps acking
+	// frames, answering pings, and observing other channels while a long turn runs.
+	// Same-key turns stay strictly FIFO (one worker drains its queue in order);
+	// different keys run concurrently. Guarded by mu.
+	turnQueues map[string]*turnQueue
+
 	// toolProgress mirrors the agent's tool invocations to the channel as it runs
 	// (opt-in; see config AgentConfig.ToolProgress). progress holds the per-turn
 	// dedup/cap state, keyed by sessionKey; both are guarded by c.mu.
@@ -150,9 +158,18 @@ func NewConnector(rest *RESTClient) *Connector {
 		targets:       make(map[string]replyTarget),
 		progress:      make(map[string]*toolProgressState),
 		typers:        make(map[string]*typingTicker),
+		turnQueues:    make(map[string]*turnQueue),
 		reconnectBase: 3 * time.Second,
 		reconnectMax:  60 * time.Second,
 	}
+}
+
+// turnQueue is the per-session-key serial dispatch state (guarded by Connector.mu).
+// pending holds turns awaiting execution in arrival order; running marks whether
+// a worker goroutine is draining them. See enqueueTurn/drainTurns (H3).
+type turnQueue struct {
+	pending []router.InboundMessage
+	running bool
 }
 
 // SetToolProgress enables/disables mirroring tool invocations to the channel as
@@ -312,7 +329,13 @@ func sleep(ctx context.Context, d time.Duration) {
 }
 
 func (c *Connector) connectOnce(ctx context.Context, reg RegisterResponse) error {
-	sock := newSocketConn(reg.WSURL, reg.RobotID, reg.IMToken, c.onInbound, func(error) {})
+	// onError logs socket-level events (poison-drop, kicks) that are not fatal to
+	// the read loop — previously a no-op, which silently swallowed them (H4). The
+	// server DISCONNECT case ends the read loop via run() returning, which Run's
+	// reconnect path handles; this hook is for the informational drops.
+	sock := newSocketConn(reg.WSURL, reg.RobotID, reg.IMToken, c.onInbound, func(err error) {
+		c.logf("socket: %v", err)
+	})
 	c.mu.Lock()
 	c.sock = sock
 	c.mu.Unlock()
@@ -457,6 +480,17 @@ func (c *Connector) onInbound(m BotMessage) {
 		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(uid)) {
 		tgt.onBehalfOf = c.persona.UID
 	}
+	// issue #98 auto-reroute, computed ONCE at registration (not on every target()
+	// read): if a thread session's reply target is the bare parent group, rewrite
+	// it to the thread so the reply lands in the sub-topic. Restricted to
+	// group-like targets so a DM is never rewritten into a CommunityTopic.
+	if tgt.channelType != ChannelDM {
+		if rerouted, did := RerouteTarget(key, tgt.channelID); did {
+			c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", key, tgt.channelID, rerouted)
+			tgt.channelID = rerouted
+			tgt.channelType = ChannelCommunityTopic
+		}
+	}
 	c.mu.Lock()
 	c.targets[key] = tgt
 	c.mu.Unlock()
@@ -471,7 +505,8 @@ func (c *Connector) onInbound(m BotMessage) {
 	// turn: observe it so it becomes a later @-mention's delta. (The router
 	// would drop it anyway; observing first preserves group context.) Background
 	// context is stored history, so it carries the plain resolved text WITHOUT
-	// the quoted-reply prefix.
+	// the quoted-reply prefix. Observe is a fast in-memory cache write, so it runs
+	// inline (not worth a worker goroutine).
 	//
 	// Exception (G12): in a mention-free channel an unmentioned message IS a turn
 	// — hand it to the gateway so the router applies the mention-free + bot-loop
@@ -486,17 +521,67 @@ func (c *Connector) onInbound(m BotMessage) {
 	if prefix := resolveQuotePrefix(m.Payload.Reply, c.rest.APIURL()); prefix != "" {
 		inbound.Text = prefix + inbound.Text
 	}
-	dec, err := c.gateway.Handle(c.ctx(), inbound)
-	if err != nil {
-		c.logf("handle turn for %s: %v", key, err)
+	// Dispatch the turn on the per-key worker so the WS read loop is not blocked
+	// for the whole (possibly multi-minute) turn (H3). The router still serializes
+	// same-session turns; the per-key queue guarantees they reach the router in
+	// arrival order despite running on a goroutine.
+	c.enqueueTurn(key, inbound)
+}
+
+// enqueueTurn appends a turn to the per-session-key serial queue, starting a
+// worker goroutine for the key if none is running. Same-key turns run FIFO; the
+// worker exits when its queue drains, so idle keys hold no goroutine.
+func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
 	}
-	// A mention-free unmentioned message the router declined to run (bot-loop
-	// guard, or it turned out not to be mention-free after all) is still group
-	// chatter the agent should see later — observe it as background. runTurn
-	// already cached it on the Accepted path, so only observe on these drops.
-	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned &&
-		(dec == router.DroppedBot || dec == router.DroppedNotMentioned) {
-		c.gateway.Observe(inbound)
+	q := c.turnQueues[key]
+	if q == nil {
+		q = &turnQueue{}
+		c.turnQueues[key] = q
+	}
+	q.pending = append(q.pending, inbound)
+	start := !q.running
+	q.running = true
+	c.mu.Unlock()
+
+	if start {
+		go c.drainTurns(key)
+	}
+}
+
+// drainTurns runs queued turns for one session key in order, then retires the
+// queue. New arrivals during a turn are picked up before the worker exits, so a
+// burst is handled by a single worker with no lost messages.
+func (c *Connector) drainTurns(key string) {
+	for {
+		c.mu.Lock()
+		q := c.turnQueues[key]
+		if q == nil || len(q.pending) == 0 {
+			if q != nil {
+				delete(c.turnQueues, key)
+			}
+			c.mu.Unlock()
+			return
+		}
+		inbound := q.pending[0]
+		q.pending = q.pending[1:]
+		c.mu.Unlock()
+
+		dec, err := c.gateway.Handle(c.ctx(), inbound)
+		if err != nil {
+			c.logf("handle turn for %s: %v", key, err)
+		}
+		// A mention-free unmentioned message the router declined to run (bot-loop
+		// guard, or it turned out not to be mention-free after all) is still group
+		// chatter the agent should see later — observe it as background. runTurn
+		// already cached it on the Accepted path, so only observe on these drops.
+		if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned &&
+			(dec == router.DroppedBot || dec == router.DroppedNotMentioned) {
+			c.gateway.Observe(inbound)
+		}
 	}
 }
 
@@ -718,10 +803,36 @@ func (c *Connector) OnReply(sessionKey string, text string) {
 			mentionAllConsumed = true
 		}
 		// SendTextAs carries on_behalf_of for a persona clone (empty otherwise).
-		if _, err := c.rest.SendTextAs(c.ctx(), tgt.channelID, tgt.channelType, seg.text, segUids, segEntities, useMentionAll, tgt.onBehalfOf); err != nil {
-			c.logf("send reply to %s: %v", sessionKey, err)
+		// A failed segment send means the user never receives that part of the
+		// reply, so retry once on transient errors before giving up (M7) — the turn
+		// is already "done", there's no other recovery path. A final failure is
+		// logged distinctly as a DROPPED segment so it's greppable in ops.
+		if err := c.sendReplySegment(tgt, seg.text, segUids, segEntities, useMentionAll); err != nil {
+			c.logf("DROPPED reply segment for %s (user will not see it): %v", sessionKey, err)
 		}
 	}
+}
+
+// sendReplySegment sends one reply segment with a single bounded retry. The reply
+// is the turn's only user-visible output, so a transient send failure (network
+// blip) shouldn't silently lose it; one retry covers the common case without
+// risking duplicate delivery on a slow-but-eventually-successful send.
+func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string, entities []MentionEntity, mentionAll bool) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			sleep(c.ctx(), 500*time.Millisecond)
+			if c.ctx().Err() != nil {
+				return lastErr // shutting down — don't keep retrying
+			}
+		}
+		if _, err := c.rest.SendTextAs(c.ctx(), tgt.channelID, tgt.channelType, text, uids, entities, mentionAll, tgt.onBehalfOf); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 // typingTicker holds the cancel hook and the done channel of one session's
@@ -806,27 +917,14 @@ func (c *Connector) stopTyping(sessionKey string) {
 // index.ts) so the user gets a reply rather than silence.
 const noResponseFallback = "[No response generated. Please try rephrasing your question.]"
 
+// target returns the stored reply target for a session key. It is a pure read:
+// the issue-#98 thread reroute is applied ONCE when the target is registered (see
+// onInbound), so calling this repeatedly per turn (tool-progress, typing, reply)
+// no longer recomputes the reroute or re-logs it (L20).
 func (c *Connector) target(sessionKey string) (replyTarget, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t, ok := c.targets[sessionKey]
-	if !ok {
-		return t, false
-	}
-	// issue #98 auto-reroute: a thread session's sessionKey is the compound
-	// "<groupNo>____<shortId>" channel id (router maps group/thread sessionKey →
-	// ChannelID). If the stored reply target drifted to the bare parent group of
-	// that thread, send back to the thread so the reply lands in the sub-topic,
-	// not the parent group. See thread.go / openclaw actions.ts. Restricted to
-	// group-like targets so a DM (whose sessionKey/uid is unconstrained and could
-	// in theory contain the separator) is never rewritten into a CommunityTopic.
-	if t.channelType != ChannelDM {
-		if rerouted, did := RerouteTarget(sessionKey, t.channelID); did {
-			c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", sessionKey, t.channelID, rerouted)
-			t.channelID = rerouted
-			t.channelType = ChannelCommunityTopic
-		}
-	}
 	return t, ok
 }
 
@@ -837,8 +935,14 @@ func minDur(a, b time.Duration) time.Duration {
 	return b
 }
 
-// splitMessage breaks text into <=max-rune segments, preferring paragraph,
+// splitMessage breaks text into <=max-RUNE segments, preferring paragraph,
 // newline, then space boundaries before a hard cut (stream-relay parity).
+//
+// DEPRECATED / not used in production. OnReply uses splitMessageProtected, which
+// counts in UTF-16 code units (the Octo wire contract) and never cuts through a
+// resolved @mention span. Do NOT call this for outbound delivery — its rune-based
+// length disagrees with the wire's UTF-16 offsets for astral-plane characters.
+// Retained only because its boundary-preference logic is unit-tested.
 func splitMessage(text string, max int) []string {
 	runes := []rune(text)
 	if len(runes) <= max {

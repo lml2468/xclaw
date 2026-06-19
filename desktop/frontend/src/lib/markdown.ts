@@ -1,6 +1,24 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 
+// Harden any anchor DOMPurify keeps: force rel="noopener noreferrer" on links
+// that carry a target (defends against reverse-tabnabbing if a target ever
+// appears), and drop href entirely for non-http(s)/mailto schemes so a
+// javascript:/data: URL in agent output can't become a clickable vector. Runs
+// once at module load; applies to every sanitize call below.
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    const el = node as Element;
+    const href = el.getAttribute("href") ?? "";
+    if (href && !/^(https?:|mailto:|#|\/)/i.test(href.trim())) {
+      el.removeAttribute("href");
+    }
+    if (el.getAttribute("target")) {
+      el.setAttribute("rel", "noopener noreferrer");
+    }
+  }
+});
+
 // Render agent Markdown to sanitized HTML, memoized per source text so scrolling
 // is O(1). Fenced code gets a header (language + copy) and lightweight,
 // language-agnostic syntax tinting — the "developer instrument" detail.

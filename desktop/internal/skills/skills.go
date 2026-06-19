@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
 // Dir is ~/.xclaw/skills (the global catalog the daemon reads).
@@ -21,13 +22,9 @@ func Dir() string {
 	return filepath.Join(home, ".xclaw", "skills")
 }
 
-var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-func validSlug(s string) bool { return s != "" && s != "." && s != ".." && slugRe.MatchString(s) }
-
 // skillDir resolves and validates a skill's directory.
 func skillDir(name string) (string, error) {
-	if !validSlug(name) {
+	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid skill name %q — letters, digits, . _ - only", name)
 	}
 	return filepath.Join(Dir(), name), nil
@@ -35,28 +32,21 @@ func skillDir(name string) (string, error) {
 
 // resolveInSkill validates that rel is a clean relative path inside the skill
 // dir and returns the absolute path. Rejects empty, absolute, and any ".."
-// segment outright (rather than silently rewriting), with a final containment
-// check as defense in depth.
+// segment outright (lexical), plus a real-path symlink-escape check so an
+// intermediate symlinked component can't redirect a write outside the bundle.
 func resolveInSkill(name, rel string) (string, error) {
 	dir, err := skillDir(name)
 	if err != nil {
 		return "", err
 	}
-	rel = filepath.ToSlash(rel)
-	if rel == "" {
-		return "", fmt.Errorf("empty path")
+	full, err := safepath.ResolveLexical(dir, rel)
+	if err != nil {
+		return "", err
 	}
-	if strings.HasPrefix(rel, "/") {
-		return "", fmt.Errorf("absolute path not allowed: %q", rel)
-	}
-	for _, seg := range strings.Split(rel, "/") {
-		if seg == ".." {
-			return "", fmt.Errorf("path escapes skill directory: %q", rel)
-		}
-	}
-	full := filepath.Join(dir, filepath.FromSlash(rel))
-	if full != dir && !strings.HasPrefix(full, dir+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes skill directory: %q", rel)
+	// dirOnly: the file itself may not exist yet (a create), so check the parent
+	// chain in real-path space.
+	if err := safepath.AssertNoSymlinkEscape(dir, full, true); err != nil {
+		return "", err
 	}
 	return full, nil
 }

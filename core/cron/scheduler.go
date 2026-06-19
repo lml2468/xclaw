@@ -9,6 +9,7 @@ package cron
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -257,23 +258,27 @@ func (m *Manager) Tick() {
 			if task.Recurring {
 				if next, ok := computeNextRun(task.Schedule, true, now); ok {
 					task.NextRun = unixMS(next)
+					survivors = append(survivors, task)
 				} else {
-					task.NextRun = 0 // no future occurrence → inert
+					// No future occurrence (e.g. a one-shot ISO time wrongly flagged
+					// recurring, or an unsatisfiable cron): drop it rather than keeping
+					// a dead task that never fires yet counts against MaxTasksPerBot
+					// (L27).
+					changed = true
 				}
-				survivors = append(survivors, task)
 			}
 			// one-shot: drop (not appended to survivors)
 		}
 		return survivors, changed
 	})
 	if err != nil {
-		fmt.Printf("%scron: tick failed: %v\n", m.label, err)
+		fmt.Fprintf(os.Stderr, "%scron: tick failed: %v\n", m.label, err)
 		return
 	}
 	for _, f := range fires {
 		late := time.Duration(nowMS-f.Task.NextRun) * time.Millisecond
 		if late >= time.Minute {
-			fmt.Printf("%scron: task %s (%s) fired %d min late (catch-up)\n",
+			fmt.Fprintf(os.Stderr, "%scron: task %s (%s) fired %d min late (catch-up)\n",
 				m.label, f.Task.ID, f.Task.Schedule, int(late.Minutes()))
 		}
 		if m.onFire != nil {
@@ -287,7 +292,7 @@ func (m *Manager) Tick() {
 func (m *Manager) safeFire(f Fire) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("%scron: onFire panicked for %s: %v\n", m.label, f.Task.ID, r)
+			fmt.Fprintf(os.Stderr, "%scron: onFire panicked for %s: %v\n", m.label, f.Task.ID, r)
 		}
 	}()
 	m.onFire(f)

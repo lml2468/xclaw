@@ -3,7 +3,9 @@ package control
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +44,10 @@ type client struct {
 	// token. Atomic: written on the connection's handleConn goroutine (dispatch)
 	// and read by the Broadcast fan-out on the gateway goroutine.
 	authed atomic.Bool
+	// dropped counts events shed because the send queue was full (slow client).
+	// Atomic; surfaced via a throttled log so backpressure is diagnosable (L31)
+	// without logging on the hot enqueue path for every drop.
+	dropped atomic.Uint64
 }
 
 const clientSendQueue = 256
@@ -79,7 +85,13 @@ func (c *client) enqueue(line []byte) {
 		// client closing: drop.
 	default:
 		// queue full: drop. The client is too slow; dropping an event beats
-		// stalling every other client and the agent turn.
+		// stalling every other client and the agent turn. Count drops and log on a
+		// power-of-two cadence so persistent backpressure is visible without
+		// spamming a log line per drop on the hot path (L31).
+		n := c.dropped.Add(1)
+		if n&(n-1) == 0 { // n is 1, 2, 4, 8, …
+			fmt.Fprintf(os.Stderr, "[control] slow client dropped %d event(s)\n", n)
+		}
 	}
 }
 

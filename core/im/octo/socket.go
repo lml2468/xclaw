@@ -19,6 +19,15 @@ func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
 // decrypts them, acks them, and forwards BotMessages. Outbound business
 // messages go via REST (this never SENDs over WS), so only the decrypt
 // direction is implemented. Ported from socket.ts.
+//
+// Concurrency invariant: onRecv, handleDecryptFailure, dispatch, and the
+// aesKey/aesIV/srvVer/decryptFails fields are ONLY ever touched from the single
+// run() read-loop goroutine, so they need no lock. (writeRaw is the exception —
+// it may be called from the ping loop and the read loop, so conn/closed are
+// guarded by mu.) The connector dispatches turns onto its OWN worker goroutines
+// AFTER onMessage returns (see Connector.enqueueTurn), so those goroutines never
+// reach back into socketConn — keep it that way: do NOT call onRecv/decrypt paths
+// concurrently or these fields must grow a lock.
 type socketConn struct {
 	wsURL string
 	uid   string
@@ -66,6 +75,11 @@ func (s *socketConn) connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ws dial: %w", err)
 	}
+	// Cap a single WS message so a malicious/corrupt server can't make ReadMessage
+	// buffer unbounded bytes (OOM DoS). gorilla's default is unlimited (0). A WS
+	// message may carry several frames, so allow a little headroom over the
+	// per-frame body cap. Defense in depth with nextFrame's remLen check (M4).
+	c.SetReadLimit(maxFrameBodyBytes + 64*1024)
 	s.conn = c
 
 	// Send CONNECT.
@@ -187,11 +201,21 @@ func (s *socketConn) run(ctx context.Context) error {
 			if !ok {
 				break // wait for more bytes (rare: WS preserves message boundaries)
 			}
+			// A server DISCONNECT must end the read loop so the caller reconnects
+			// (and re-registers) — otherwise we'd block in ReadMessage on a dead
+			// session, appearing "connected" while receiving nothing.
+			if pt == pktDisconnect {
+				return errServerDisconnect
+			}
 			s.dispatch(pt, data[0], body)
 			data = data[consumed:]
 		}
 	}
 }
+
+// errServerDisconnect is returned by run when the server sends a DISCONNECT
+// packet, so Run's reconnect path re-registers instead of hanging on a dead WS.
+var errServerDisconnect = fmt.Errorf("server sent disconnect")
 
 func (s *socketConn) pingLoop(done chan struct{}) {
 	t := time.NewTicker(wsPingInterval)
@@ -212,10 +236,7 @@ func (s *socketConn) dispatch(pt packetType, header byte, body []byte) {
 		// keepalive ack; nothing to do
 	case pktRecv:
 		s.onRecv(header, body)
-	case pktDisconnect:
-		if s.onError != nil {
-			s.onError(fmt.Errorf("kicked by server"))
-		}
+	// pktDisconnect is handled in run (it must end the read loop), not here.
 	default:
 		// SENDACK and others ignored
 	}
@@ -236,7 +257,7 @@ func (s *socketConn) onRecv(header byte, body []byte) {
 		return
 	}
 	fromUID, _ := d.readString()
-	channelID, _ := d.readString()
+	channelID, cerr := d.readString()
 	channelType, _ := d.readByte()
 	if s.srvVer >= 3 {
 		_, _ = d.readInt32() // expire (unused)
@@ -252,6 +273,14 @@ func (s *socketConn) onRecv(header byte, body []byte) {
 		_, _ = d.readString() // topic (unused)
 	}
 	encrypted := d.readRemaining()
+
+	// A truncated/short frame leaves channelID empty (decoder returns errShort +
+	// zero value). Acking and forwarding such a message would route an
+	// unaddressable turn, so drop it before the ack (L25). messageID already
+	// guarded above.
+	if cerr != nil || channelID == "" {
+		return
+	}
 
 	idStr := strconv.FormatUint(messageID, 10)
 
@@ -295,22 +324,26 @@ func (s *socketConn) handleDecryptFailure(idStr string, messageID uint64, messag
 		}
 		return
 	}
-	// Bound the map WITHOUT discarding this message's strike count: evict some
-	// other (older) entry. Resetting the whole map here would zero an in-flight
-	// poison message's count so it could never reach maxDecryptRetries — the
-	// server would then redeliver it forever (livelock).
+	// Bound the map WITHOUT discarding this message's strike count. Resetting the
+	// whole map (or evicting a high-strike entry) could zero an in-flight poison
+	// message's count so it never reaches maxDecryptRetries — the server would
+	// then redeliver it forever (livelock). Evict the LOWEST-strike other entry
+	// (a strike-1 entry has the least progress toward a drop, so losing its count
+	// costs the least), falling back to any other entry.
 	for len(s.decryptFails) > maxDecryptFailKeys {
-		evicted := false
-		for k := range s.decryptFails {
-			if k != idStr {
-				delete(s.decryptFails, k)
-				evicted = true
-				break
+		victim, victimStrikes := "", 0
+		for k, n := range s.decryptFails {
+			if k == idStr {
+				continue
+			}
+			if victim == "" || n < victimStrikes {
+				victim, victimStrikes = k, n
 			}
 		}
-		if !evicted {
+		if victim == "" {
 			break
 		}
+		delete(s.decryptFails, victim)
 	}
 	// else: no ack → redelivery
 }

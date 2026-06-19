@@ -19,12 +19,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/lml2468/xclaw/core/sandbox"
+	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or
@@ -46,9 +46,7 @@ func Dir() string {
 	return filepath.Join(home, ".xclaw")
 }
 
-var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-func validSlug(s string) bool { return s != "" && s != "." && s != ".." && slugRe.MatchString(s) }
+func validSlug(s string) bool { return safepath.ValidSlug(s) }
 
 // Node is a file or directory in the workspace tree. Path is relative to the
 // workspace root, forward-slashed; the root node has Path "". Children is nil for
@@ -158,25 +156,10 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 }
 
 // resolveIn validates that rel is a clean relative path inside root and returns
-// the absolute path. Mirrors internal/skills.resolveInSkill.
+// the absolute path (lexical only; callers that read also EvalSymlinks-check).
+// Shared with the other CRUD packages via safepath.
 func resolveIn(root, rel string) (string, error) {
-	rel = filepath.ToSlash(rel)
-	if rel == "" {
-		return "", fmt.Errorf("empty path")
-	}
-	if strings.HasPrefix(rel, "/") {
-		return "", fmt.Errorf("absolute path not allowed: %q", rel)
-	}
-	for _, seg := range strings.Split(rel, "/") {
-		if seg == ".." {
-			return "", fmt.Errorf("path escapes workspace: %q", rel)
-		}
-	}
-	full := filepath.Join(root, filepath.FromSlash(rel))
-	if full != root && !strings.HasPrefix(full, root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes workspace: %q", rel)
-	}
-	return full, nil
+	return safepath.ResolveLexical(root, rel)
 }
 
 // File reads one workspace file for inline preview. It refuses symlinks and

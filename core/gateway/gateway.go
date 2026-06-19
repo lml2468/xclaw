@@ -11,7 +11,9 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -41,7 +43,6 @@ type Gateway struct {
 	store  *store.Store
 	router *router.Router
 	sink   Sink
-	now    func() time.Time
 
 	// Optional group-context (set via WithGroupContext). When set, group
 	// messages get a [Recent group messages] delta injected into the prompt.
@@ -86,6 +87,11 @@ type Gateway struct {
 	// assertPublic overrides the media-download SSRF guard (defaults to
 	// config.AssertPublicURL). Test seam only — production never sets it.
 	assertPublic func(ctx context.Context, rawURL string) error
+	// mediaClient overrides the media-download HTTP client (defaults to the
+	// hardened mediaHTTPClient with the rebinding-proof dial guard). Test seam
+	// only — production never sets it; tests inject a client that permits the
+	// loopback httptest server the dial guard would otherwise reject.
+	mediaClient *http.Client
 
 	// dispatchTimeout bounds driver.Query + the stream loop for a single turn
 	// (#141). On expiry the turn's context is cancelled (which kills the claude
@@ -104,7 +110,7 @@ const defaultDispatchTimeout = 5 * time.Minute
 
 // New constructs a Gateway.
 func New(d agent.Driver, st *store.Store, rt *router.Router, sink Sink) *Gateway {
-	return &Gateway{driver: d, store: st, router: rt, sink: sink, now: time.Now, dispatchTimeout: defaultDispatchTimeout}
+	return &Gateway{driver: d, store: st, router: rt, sink: sink, dispatchTimeout: defaultDispatchTimeout}
 }
 
 // WithGroupContext enables group-context injection.
@@ -265,10 +271,11 @@ func (g *Gateway) Handle(ctx context.Context, msg router.InboundMessage) (router
 			g.sink.OnReply(key, oversizedReply)
 		}
 	case router.RateLimited:
-		// Dedup like cc's per-bucket `notified` flag: only reply on the FIRST
-		// rejection of a rate-limit window, so a flooder doesn't get a "请稍后再试"
-		// for every dropped message. The router owns the notify state.
-		if key, kerr := msg.SessionKey(); kerr == nil && g.router.ShouldNotifyRateLimit(key, msg.FromUID) {
+		// First rejection of this rate-limit window — notify once. The router
+		// decided this atomically with the rejection (deduping subsequent
+		// rejections in the same window to RateLimitedSilent), so a flooder doesn't
+		// get a "请稍后再试" for every dropped message.
+		if key, kerr := msg.SessionKey(); kerr == nil {
 			g.sink.OnReply(key, rateLimitedReply)
 		}
 	}
@@ -292,6 +299,11 @@ const (
 	busyReply = "⏳ 服务繁忙，请稍后重试。"
 )
 
+// errDispatchTimeout is the cause attached to the per-turn dispatch deadline, so
+// runTurn can distinguish its own timeout from a caller cancellation via
+// context.Cause (M9).
+var errDispatchTimeout = errors.New("dispatch timeout")
+
 // Observe caches a non-triggering group message into the group context so it
 // becomes background for a later @-mention turn. Call this for group messages
 // that did NOT mention the bot (which Handle would drop). No-op outside groups
@@ -306,12 +318,116 @@ func (g *Gateway) Observe(msg router.InboundMessage) {
 	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
 }
 
+// failTurn logs an internal turn failure and sends the user a generic apology so
+// no error path is silently swallowed (which would also leave the typing
+// indicator running until it times out). It returns nil because the user has been
+// signalled and the session lock should release cleanly; the error is for logs.
+func (g *Gateway) failTurn(sessionKey, stage string, err error) error {
+	fmt.Fprintf(os.Stderr, "[gateway] turn failed at %s (session=%s): %v\n", stage, sessionKey, err)
+	g.sink.OnReply(sessionKey, errorReply)
+	return nil
+}
+
+// buildGroupPrompt assembles the prompt for a turn. For a DM (or when group
+// context is disabled) it returns the raw message text. For a group message it
+// injects the [Recent group messages] delta as UNTRUSTED background and
+// demarcates the real request with the current-message anchor. CRITICAL ordering
+// (group-context.ts): the delta is built BEFORE the current message is cached, so
+// the message isn't echoed into its own background.
+func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage) string {
+	if g.groups == nil || msg.ChannelType != router.ChannelGroup || msg.ChannelID == "" {
+		return msg.Text
+	}
+
+	// Cold-start backfill (cc G4): the FIRST time this channel is seen with an
+	// empty local window, seed it from the IM REST API. Runs at most once per
+	// (process, channel). The inferred cutoff (highest bot-reply seq found in the
+	// backfill) primes answered/new segmentation so the first turn doesn't treat
+	// already-answered history as new.
+	if g.groupBackfill != nil {
+		channelID := msg.ChannelID
+		botUID := ""
+		if g.botUID != nil {
+			botUID = g.botUID()
+		}
+		inferred, ran := g.groups.Backfill(channelID, botUID, func() []groupctx.BackfillMessage {
+			return g.groupBackfill(channelID, 0)
+		})
+		if ran && inferred > 0 {
+			if err := g.store.SaveBotReplySeq(sessionKey, inferred); err != nil {
+				fmt.Fprintf(os.Stderr, "[gateway] save inferred reply seq %s: %v\n", sessionKey, err)
+			}
+		}
+	}
+
+	// Answered/new cutoff (cc G10): the IM seq of the last message the bot replied
+	// to. Messages at/below it render under [Previously answered].
+	cutoffSeq, err := g.store.BotReplySeq(sessionKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[gateway] bot reply seq %s: %v\n", sessionKey, err)
+	}
+
+	cursor := g.groups.Cursor(msg.ChannelID)
+	deltaText, _ := g.groups.BuildContextSince(msg.ChannelID, cursor, cutoffSeq)
+	// Cache the current message AFTER reading the delta.
+	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
+	// Advance the cursor past everything now in the channel.
+	g.groups.SetCursor(msg.ChannelID, g.groups.MaxID(msg.ChannelID))
+
+	var b strings.Builder
+	if deltaText != "" {
+		// The whole block (header + raw bodies) is escaped once here.
+		b.WriteString(safety.SanitizePromptBody(deltaText))
+		b.WriteString("\n")
+	}
+	b.WriteString(safety.CurrentMessageAnchor)
+	b.WriteString("\n")
+	// Defense-in-depth: the current-message body is untrusted. Escape role labels
+	// / section markers so a crafted body cannot forge prompt structure below the
+	// real anchor (e.g. a second [Current message …] anchor or a fake
+	// [Recent group messages] header).
+	b.WriteString(safety.SafeBody(msg.Text).String())
+	return b.String()
+}
+
+// resolveSandbox resolves the per-session sandbox (cwd + memory dir) and links
+// the bot's skills/workflows into it. Returns ("", "", nil) when the sandbox is
+// disabled. A non-nil error means the cwd could not be built — the caller MUST
+// abort the turn rather than fall back to the process cwd (which would leak
+// across sessions). Skill/workflow linking is best-effort (a missing skill only
+// degrades capability, never breaks the turn).
+func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (cwd, memDir string, err error) {
+	if g.cwdBase == "" {
+		return "", "", nil
+	}
+	sctx := sandbox.SessionCtx{Kind: kindFor(msg.ChannelType), SessionKey: sessionKey}
+	cwd, err = sandbox.ResolveSessionCwd(g.cwdBase, sctx)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve sandbox cwd: %w", err)
+	}
+	// Global catalog is scoped to this bot's allow-list; per-bot dir skills always link.
+	_ = sandbox.LinkSkillsIntoSandbox(cwd, []sandbox.SkillSource{
+		{Dir: g.globalSkillsDir, Allow: g.globalSkillAllow},
+		{Dir: g.skillsDir},
+	})
+	// Same for workflows (.claude/workflows): global catalog scoped to the bot's
+	// allow-list, plus the always-linked per-bot dir.
+	_ = sandbox.LinkWorkflowsIntoSandbox(cwd, []sandbox.SkillSource{
+		{Dir: g.globalWorkflowsDir, Allow: g.globalWorkflowAllow},
+		{Dir: g.workflowsDir},
+	})
+	if g.memoryBase != "" {
+		memDir = sandbox.ResolveMemoryDir(g.memoryBase, sctx)
+	}
+	return cwd, memDir, nil
+}
+
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
 	// Ensure the session row exists (refreshes TTL). Touch avoids the extra
 	// read-back the turn doesn't use.
 	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
-		return err
+		return g.failTurn(sessionKey, "store.Touch", err)
 	}
 
 	// In-chat slash commands (/reset, /config, /help) — handled BEFORE group
@@ -326,66 +442,14 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return nil // skip context, history, and the agent query entirely
 	}
 
-	// Build the prompt. For group messages, inject the [Recent group messages]
-	// delta as UNTRUSTED background and demarcate the real request with the
-	// current-message anchor. CRITICAL ordering (group-context.ts): build the
-	// delta BEFORE caching the current message, so it isn't echoed into itself.
-	prompt := msg.Text
-	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
-		// Cold-start backfill (cc G4): the FIRST time this channel is seen with an
-		// empty local window, seed it from the IM REST API. Runs at most once per
-		// (process, channel). The inferred cutoff (highest bot-reply seq found in
-		// the backfill) primes answered/new segmentation so the first turn doesn't
-		// treat already-answered history as new.
-		if g.groupBackfill != nil {
-			channelID := msg.ChannelID
-			botUID := ""
-			if g.botUID != nil {
-				botUID = g.botUID()
-			}
-			inferred, ran := g.groups.Backfill(channelID, botUID, func() []groupctx.BackfillMessage {
-				return g.groupBackfill(channelID, 0)
-			})
-			if ran && inferred > 0 {
-				if err := g.store.SaveBotReplySeq(sessionKey, inferred); err != nil {
-					fmt.Fprintf(os.Stderr, "[gateway] save inferred reply seq %s: %v\n", sessionKey, err)
-				}
-			}
-		}
-
-		// Answered/new cutoff (cc G10): the IM seq of the last message the bot
-		// replied to. Messages at/below it render under [Previously answered].
-		cutoffSeq, err := g.store.BotReplySeq(sessionKey)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[gateway] bot reply seq %s: %v\n", sessionKey, err)
-		}
-
-		cursor := g.groups.Cursor(msg.ChannelID)
-		deltaText, _ := g.groups.BuildContextSince(msg.ChannelID, cursor, cutoffSeq)
-		// Cache the current message AFTER reading the delta.
-		g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
-		// Advance the cursor past everything now in the channel.
-		g.groups.SetCursor(msg.ChannelID, g.groups.MaxID(msg.ChannelID))
-
-		var b strings.Builder
-		if deltaText != "" {
-			// The whole block (header + raw bodies) is escaped once here.
-			b.WriteString(safety.SanitizePromptBody(deltaText))
-			b.WriteString("\n")
-		}
-		b.WriteString(safety.CurrentMessageAnchor)
-		b.WriteString("\n")
-		// Defense-in-depth: the current-message body is untrusted. Escape role
-		// labels / section markers so a crafted body cannot forge prompt
-		// structure below the real anchor (e.g. a second [Current message …]
-		// anchor or a fake [Recent group messages] header).
-		b.WriteString(safety.SafeBody(msg.Text).String())
-		prompt = b.String()
-	}
+	// Build the prompt. For group messages this injects the [Recent group
+	// messages] delta as untrusted background and demarcates the real request
+	// with the current-message anchor; DM messages pass through unchanged.
+	prompt := g.buildGroupPrompt(sessionKey, msg)
 
 	// Persist the (original) user message.
 	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName); err != nil {
-		return err
+		return g.failTurn(sessionKey, "store.AppendUser", err)
 	}
 
 	// Resume the agent's prior session if we have one. A real read error (not
@@ -397,31 +461,12 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	// Resolve the per-session sandbox (cwd + memory + skills) when enabled.
-	var cwd, memDir string
-	if g.cwdBase != "" {
-		sctx := sandbox.SessionCtx{Kind: kindFor(msg.ChannelType), SessionKey: sessionKey}
-		resolved, err := sandbox.ResolveSessionCwd(g.cwdBase, sctx)
-		if err != nil {
-			// Building the sandbox failed — running in the process cwd would leak
-			// across sessions, which is exactly what this guards against. Fail loud.
-			return fmt.Errorf("resolve sandbox cwd: %w", err)
-		}
-		cwd = resolved
-		// Best-effort: a missing skill only degrades capability, never breaks the turn.
-		// Global catalog is scoped to this bot's allow-list; per-bot dir skills always link.
-		_ = sandbox.LinkSkillsIntoSandbox(cwd, []sandbox.SkillSource{
-			{Dir: g.globalSkillsDir, Allow: g.globalSkillAllow},
-			{Dir: g.skillsDir},
-		})
-		// Same for workflows (.claude/workflows): global catalog scoped to the
-		// bot's allow-list, plus the always-linked per-bot dir.
-		_ = sandbox.LinkWorkflowsIntoSandbox(cwd, []sandbox.SkillSource{
-			{Dir: g.globalWorkflowsDir, Allow: g.globalWorkflowAllow},
-			{Dir: g.workflowsDir},
-		})
-		if g.memoryBase != "" {
-			memDir = sandbox.ResolveMemoryDir(g.memoryBase, sctx)
-		}
+	cwd, memDir, err := g.resolveSandbox(sessionKey, msg)
+	if err != nil {
+		// Building the sandbox failed — running in the process cwd would leak
+		// across sessions, which is exactly what this guards against. Fail loud
+		// AND signal the user (don't leave them hanging on a silent failure).
+		return g.failTurn(sessionKey, "resolve sandbox cwd", err)
 	}
 
 	// For GROUP turns, inject the channel roster + structured-mention format as
@@ -438,6 +483,13 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// inline as a base64 <file_content> block. The returned hint/blocks go into
 	// THIS turn's prompt ONLY — never the stored history (already persisted as the
 	// original text above), so it can't accumulate stale paths or inlined bodies.
+	//
+	// Safety: this block sits after the current-message anchor but is NOT raw user
+	// text — it is gateway-authored hint strings with only (a) filenames already
+	// run through safety.SanitizeDisplayName (no brackets/newlines) and (b) file
+	// bodies base64-wrapped (the base64 alphabet can't forge the </file_content>
+	// tag or a section marker). So it cannot inject prompt structure even though
+	// it is not re-escaped here.
 	if media := g.materializeAttachments(ctx, cwd, msg.Attachments); media != "" {
 		prompt += media
 	}
@@ -450,7 +502,10 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	turnCtx := ctx
 	if g.dispatchTimeout > 0 {
 		var cancel context.CancelFunc
-		turnCtx, cancel = context.WithTimeout(ctx, g.dispatchTimeout)
+		// WithTimeoutCause tags OUR deadline with a sentinel so we can tell our own
+		// dispatch timeout apart from any caller cancellation without racily
+		// comparing two ctx.Err() snapshots (M9).
+		turnCtx, cancel = context.WithTimeoutCause(ctx, g.dispatchTimeout, errDispatchTimeout)
 		defer cancel()
 	}
 
@@ -471,7 +526,10 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			SystemAppend: sysAppend,
 		})
 		if err != nil {
-			return err
+			// Spawning/dispatching the agent failed (incl. the fresh retry after a
+			// stale resume). Signal the user instead of returning silently — a bare
+			// return would leave them with no reply and the typing indicator stuck.
+			return g.failTurn(sessionKey, "driver.Query", err)
 		}
 
 		reply.Reset()
@@ -480,23 +538,54 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		termTransient = false
 		termHint = ""
 		resumeBad := false
+		// On a resume attempt the stream may turn out doomed (stale resume id). To
+		// avoid leaking a doomed attempt's events to the sink (H6) — the
+		// ResumeInvalid signal arrives on stderr while content arrives on stdout,
+		// with no ordering guarantee between the two reader goroutines — we GATE
+		// sink emission: buffer events until the session proves valid (first
+		// KindSessionStarted), then flush and stream live. If ResumeInvalid arrives
+		// first, the buffer is dropped. A fresh attempt (no resume id) streams live
+		// immediately. Latency is bounded by the first event, so a healthy resume is
+		// unaffected.
+		gated := resume != ""
+		var gatedBuf []agent.AgentEvent
+		emitToSink := func(ev agent.AgentEvent) {
+			if gated {
+				gatedBuf = append(gatedBuf, ev)
+				return
+			}
+			g.sink.OnEvent(sessionKey, ev)
+		}
+		releaseGate := func() {
+			if !gated {
+				return
+			}
+			gated = false
+			for _, e := range gatedBuf {
+				g.sink.OnEvent(sessionKey, e)
+			}
+			gatedBuf = nil
+		}
 		for ev := range events {
 			// A stale resume id (session not found, e.g. after the agent's config
 			// dir changed) dooms this attempt — swallow its events so the failed
 			// run never reaches the sink, then retry fresh below.
 			if ev.ResumeInvalid {
 				resumeBad = true
+				gatedBuf = nil // drop anything buffered for the doomed attempt
 				continue
 			}
 			if resumeBad {
 				continue
 			}
-			g.sink.OnEvent(sessionKey, ev)
+			emitToSink(ev)
 			switch ev.Kind {
 			case agent.KindSessionStarted:
 				if ev.SessionID != "" {
 					newResume = ev.SessionID
 				}
+				// The session is live — safe to flush buffered events and stream live.
+				releaseGate()
 			case agent.KindTextDelta:
 				reply.WriteString(ev.Text)
 			case agent.KindTurnDone:
@@ -521,6 +610,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 				}
 			}
 		}
+		// Stream ended while still gated but not doomed (e.g. a valid resume that
+		// produced no SessionStarted event): flush the buffer so nothing is lost.
+		if !resumeBad {
+			releaseGate()
+		}
 
 		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
 		if resumeBad && resume != "" && attempt == 0 {
@@ -533,9 +627,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	// If the turn was cut short by the dispatch timeout (not the caller's own
-	// cancellation), apologize and release the lock. We distinguish OUR timeout
-	// from caller cancellation by checking whether the parent ctx is still live.
-	if g.dispatchTimeout > 0 && turnCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+	// cancellation), apologize and release the lock. context.Cause returns our
+	// sentinel ONLY when turnCtx expired on its own deadline — a parent
+	// cancellation propagates the parent's cause instead, so this is unambiguous
+	// even if both fire near-simultaneously (M9).
+	if g.dispatchTimeout > 0 && errors.Is(context.Cause(turnCtx), errDispatchTimeout) {
 		fmt.Fprintf(os.Stderr, "[gateway] dispatch timed out after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
 		g.sink.OnReply(sessionKey, timeoutReply)
 		return nil
@@ -571,8 +667,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	text := reply.String()
+	// Persist the assistant turn. A write failure must NOT suppress delivery — the
+	// reply was produced, so still send it; just log the persistence loss (history
+	// will be missing this turn, but the user gets their answer).
 	if err := g.store.AppendAssistant(sessionKey, text, g.driver.Name()); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "[gateway] append assistant %s: %v\n", sessionKey, err)
 	}
 	g.sink.OnReply(sessionKey, text)
 

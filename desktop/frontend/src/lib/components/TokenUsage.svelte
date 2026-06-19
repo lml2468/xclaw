@@ -42,13 +42,21 @@
   // $effect, because loadUsage writes bot.usage — an effect that also read it
   // would re-run itself (update-depth loop). For "yesterday" we also need the
   // today-bound bucket to subtract, so fetch both.
-  function fetchRange(k: RangeKey) {
+  let loading = $state(false);
+  async function fetchRange(k: RangeKey) {
     const bnd = boundsFor(k);
-    store.loadUsage(bnd.since);
-    if (k === "yesterday") store.loadUsage(bnd.until); // today's bucket, to subtract
+    loading = true;
+    try {
+      const calls = [store.loadUsage(bnd.since)];
+      if (k === "yesterday") calls.push(store.loadUsage(bnd.until)); // today's bucket, to subtract
+      await Promise.all(calls);
+    } finally {
+      loading = false;
+    }
   }
   onMount(() => fetchRange(range));
   function pickRange(k: RangeKey) {
+    if (k === range) return;
     range = k;
     fetchRange(k);
   }
@@ -111,6 +119,7 @@
   <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量" tabindex="-1">
     <SettingsHeader active="usage" {onclose} onnav={(fn) => { onclose(); fn(); }} {onedit} {onskills} {onworkflows}>
       {#snippet children()}
+        <span class="spin" class:on={loading} aria-hidden="true"></span>
         <div class="range" role="tablist" aria-label="时间范围">
           {#each RANGES as r (r.key)}
             <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
@@ -125,7 +134,7 @@
       {:else if !anyUsage}
         <div class="empty">该区间暂无用量</div>
       {:else}
-        <div class="wrap">
+        <div class="wrap" class:loading>
           <!-- Grand total card -->
           <div class="total">
             <span class="tlabel">全部 Bot</span>
@@ -195,7 +204,14 @@
   .range button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   .body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
-  .wrap { width: 100%; max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .wrap { width: 100%; max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; transition: opacity .2s ease; }
+  .wrap.loading { opacity: 0.5; }
+
+  /* Range-switch spinner — sits left of the time-range selector in the header. */
+  .spin { width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent); border-top-color: var(--accent); opacity: 0; transition: opacity .15s ease; }
+  .spin.on { opacity: 1; animation: tu-spin 0.7s linear infinite; }
+  @keyframes tu-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin.on { animation-duration: 1.5s; } .wrap { transition: none; } }
   .empty { color: var(--ink-faint); font-size: 13px; padding: 32px 8px; text-align: center; line-height: 1.5; margin: auto; }
 
   /* Grand-total card */

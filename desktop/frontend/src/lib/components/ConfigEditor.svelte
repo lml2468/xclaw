@@ -66,16 +66,22 @@
   }
 
   function addBot() {
-    let n = 1;
-    const ids = new Set(bots.map((b) => b.id));
-    while (ids.has(`bot${n}`)) n++;
-    const b = new BotConfig({ id: `bot${n}`, apiUrl: bots[0]?.apiUrl ?? "https://" });
+    const b = new BotConfig({ id: nextBotId(), apiUrl: bots[0]?.apiUrl ?? "https://" });
     bots = [...bots, b];
     sel = bots.length - 1;
   }
 
+  // Next free local bot id (slug naming ~/.xclaw/<id>/, the config entry, sessions).
+  function nextBotId() {
+    let n = 1;
+    const ids = new Set(bots.map((b) => b.id));
+    while (ids.has(`bot${n}`)) n++;
+    return `bot${n}`;
+  }
+
   // --- Add-bot wizard: provision a bot on octo-server in one click ---
   let wizardOpen = $state(false);
+  let wizId = $state("");
   let wizApiUrl = $state("");
   let wizApiKey = $state("");
   let wizName = $state("");
@@ -83,6 +89,7 @@
   let wizError = $state("");
 
   function openWizard() {
+    wizId = nextBotId();
     wizApiUrl = bots[0]?.apiUrl && bots[0].apiUrl !== "https://" ? bots[0].apiUrl : "";
     wizApiKey = ""; wizName = ""; wizError = "";
     wizardOpen = true;
@@ -96,13 +103,17 @@
   }
 
   async function createBot() {
+    const id = wizId.trim();
+    if (!id) { wizError = "请填写 Bot ID"; return; }
+    if (bots.some((b) => b.id === id)) { wizError = `Bot ID “${id}” 已存在`; return; }
     wizError = ""; wizBusy = true;
     try {
       const r = await XClawService.OctoAddBot(wizApiUrl.trim(), wizApiKey.trim(), wizName.trim());
-      // Fold the provisioned identity into a new editor row; the operator can
-      // then fill SOUL/AGENTS/model and 保存并重启 (SaveConfig stores the bf_
-      // token in the keychain, never config.json).
-      const b = new BotConfig({ id: r.robotId, apiUrl: wizApiUrl.trim(), octoToken: r.botToken });
+      // The XClaw bot id is a LOCAL slug (names ~/.xclaw/<id>/, config, sessions),
+      // distinct from the Octo robot_id — the latter is the agent's octo identity,
+      // injected as OCTO_BOT_ID. The operator can then fill SOUL/AGENTS/model and
+      // 保存并重启 (SaveConfig stores the bf_ token in the keychain, never config.json).
+      const b = new BotConfig({ id, apiUrl: wizApiUrl.trim(), octoToken: r.botToken, env: { OCTO_BOT_ID: r.robotId } });
       bots = [...bots, b];
       sel = bots.length - 1;
       dirty = true;
@@ -227,6 +238,10 @@
           </div>
           <p class="wizsub">用你的 octo API Key(uk_…)一键在服务器创建 Bot,自动获取并保存 Token。</p>
           <div class="wizform">
+            <label>Bot ID
+              <input bind:value={wizId} placeholder="my-bot" />
+              <small>本地标识(目录、会话),与 Octo 上的 Bot ID 无关。</small>
+            </label>
             <label>API URL <input bind:value={wizApiUrl} placeholder="https://im.deepminer.com.cn/api" /></label>
             <label>API Key
               <input type="password" bind:value={wizApiKey} placeholder="uk_…" autocomplete="off" />

@@ -15,7 +15,10 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
-	t.Setenv("HOME", t.TempDir())
+	// UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows — set both.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 }
 
 func writeConfig(t *testing.T, f config.File) {

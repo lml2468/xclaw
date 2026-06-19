@@ -105,4 +105,3 @@ func PruneInstallsAcrossBots(xclawDir, subdir, linkName string, catalogSubdirs .
 		_, _ = Prune(filepath.Join(xclawDir, id, subdir, linkName))
 	}
 }
-

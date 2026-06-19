@@ -7,7 +7,15 @@ import (
 	"testing"
 )
 
-func setup(t *testing.T) { t.Helper(); t.Setenv("HOME", t.TempDir()) }
+// setup points Dir()/botDir() (os.UserHomeDir) at a fresh temp dir on every OS:
+// UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows, so set both —
+// otherwise tests share the real home and pollute each other.
+func setup(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
 
 func TestCreateListFilesRoundTrip(t *testing.T) {
 	setup(t)

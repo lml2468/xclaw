@@ -6,8 +6,18 @@ import (
 	"testing"
 )
 
+// setHome points Dir()/botDir() (os.UserHomeDir) at a fresh temp dir on every
+// OS: UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows, so set both
+// — otherwise tests share the real home and pollute each other.
+func setHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestCRUDAndValidation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t)
 	if err := Create("deploy"); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +57,7 @@ func botPath(t *testing.T, id string) string {
 }
 
 func TestInstallPruneAndBroken(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t)
 	if err := Create("review"); err != nil { // catalog workflow
 		t.Fatal(err)
 	}
@@ -88,7 +98,7 @@ func TestInstallPruneAndBroken(t *testing.T) {
 }
 
 func TestBrokenWorkflowSurfaced(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t)
 	_ = Create("ghost")
 	if err := Install("bot1", "ghost"); err != nil {
 		t.Fatal(err)

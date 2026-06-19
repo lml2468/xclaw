@@ -11,13 +11,15 @@ import "regexp"
 // transientUpstreamRE matches the upstream conditions that warrant a
 // retry-later reply: provider rate-limit / overload (HTTP 429/503/529) and
 // account usage-cap exhaustion. Kept deliberately broad — a false positive
-// only changes the user-facing wording, never correctness.
-var transientUpstreamRE = regexp.MustCompile(`(?i)(rate[-\s]?limit(ed)?|rate_limit_error|too many requests|\b429\b|overloaded(_error)?|server overloaded|service unavailable|\b503\b|\b529\b|high demand|try again later|temporarily unavailable|throttl(ed|ing)|throttlingexception|servicequotaexceededexception|out of extra usage|extra usage|usage limit reached|usage cap reached|5[-\s]?hour limit reached|weekly limit reached)`)
+// only changes the user-facing wording, never correctness. The usage-cap
+// alternatives are anchored to their full phrasing ("out of extra usage", not a
+// bare "extra usage") so ordinary model prose mentioning those words doesn't trip.
+var transientUpstreamRE = regexp.MustCompile(`(?i)(rate[-\s]?limit(ed)?|rate_limit_error|too many requests|\b429\b|overloaded(_error)?|server overloaded|service unavailable|\b503\b|\b529\b|high demand|try again later|temporarily unavailable|throttl(ed|ing)|throttlingexception|servicequotaexceededexception|out of extra usage|usage limit reached|usage cap reached|5[-\s]?hour limit reached|weekly limit reached)`)
 
 // retryResetRE pulls a human-readable reset window out of a usage-limit
 // message ("…usage limit reached, resets at 3pm (PST)"). Group 1 is the time
 // phrase; we keep it verbatim for the reply rather than computing a timestamp.
-var retryResetRE = regexp.MustCompile(`(?i)(?:usage (?:limit|cap) reached|5[-\s]?hour limit reached|weekly limit reached|out of extra usage|extra usage)[\s\S]{0,80}?\bresets?\s+(?:at\s+)?([^\n().]+(?:\([^)]+\))?)`)
+var retryResetRE = regexp.MustCompile(`(?i)(?:usage (?:limit|cap) reached|5[-\s]?hour limit reached|weekly limit reached|out of extra usage)[\s\S]{0,80}?\bresets?\s+(?:at\s+)?([^\n().]+(?:\([^)]+\))?)`)
 
 // isTransientUpstream reports whether s describes an upstream rate-limit /
 // overload / usage-cap condition.

@@ -63,7 +63,11 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				return nil, err
 			}
 			// Never log b.Value.
-			if err := t.secrets.Set(b.Kind, b.Value); err != nil {
+			if b.Clear {
+				if err := t.secrets.Clear(b.Kind); err != nil {
+					return nil, err
+				}
+			} else if err := t.secrets.Set(b.Kind, b.Value); err != nil {
 				return nil, err
 			}
 			return control.OKBody{OK: true}, nil

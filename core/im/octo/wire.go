@@ -31,6 +31,13 @@ const (
 const protoVersion = 4
 const maxVarlenBytes = 4
 
+// maxFrameBodyBytes caps a single frame's declared remaining-length. A 4-byte
+// base-128 varint can declare up to ~256 MiB, so without a cap a malicious or
+// corrupt server could make nextFrame wait to buffer a quarter-gigabyte body
+// (OOM DoS). 8 MiB comfortably exceeds any legitimate RECV payload. The WS layer
+// also caps total read size via SetReadLimit (socket.go) — defense in depth.
+const maxFrameBodyBytes = 8 * 1024 * 1024
+
 // --- encoder ---
 
 type encoder struct{ buf []byte }
@@ -209,6 +216,14 @@ func nextFrame(buf []byte) (pt packetType, body []byte, consumed int, ok bool, e
 	header := buf[0]
 	pt = packetType(header >> 4)
 
+	// Reject undefined packet types early: a frame whose type is out of range
+	// usually means the stream desynced (a mis-counted boundary), so fail fast and
+	// let the caller reconnect rather than consuming `total` bytes of garbage and
+	// cascading into the next frame (L24).
+	if pt < pktConnect || pt > pktDisconnect {
+		return 0, nil, 0, false, fmt.Errorf("octo: unknown packet type %d", pt)
+	}
+
 	// PING/PONG are single-byte packets with no length/body.
 	if pt == pktPing || pt == pktPong {
 		return pt, nil, 1, true, nil
@@ -232,6 +247,9 @@ func nextFrame(buf []byte) (pt packetType, body []byte, consumed int, ok bool, e
 		if digit&0x80 == 0 {
 			break
 		}
+	}
+	if remLen > maxFrameBodyBytes {
+		return 0, nil, 0, false, fmt.Errorf("octo: frame body too large (%d > %d)", remLen, maxFrameBodyBytes)
 	}
 	total := i + remLen
 	if total > len(buf) {

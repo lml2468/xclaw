@@ -145,6 +145,10 @@ type SecretInjectBody struct {
 	BotID string `json:"botId,omitempty"`
 	Kind  string `json:"kind"` // e.g. "octoToken" | "gatewayToken"
 	Value string `json:"value"`
+	// Clear, when true, explicitly removes the stored token for Kind (the GUI's
+	// "log out / clear credentials" action). Without it an empty Value is ignored,
+	// so seeding from an absent config field never clobbers an injected token.
+	Clear bool `json:"clear,omitempty"`
 }
 
 // CronCreateBody registers a scheduled task (proto: cron.create). Owner-gated on

@@ -27,12 +27,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,10 +54,14 @@ const (
 	maxImageBytes        = 5 * 1024 * 1024 // MAX_IMAGE_BYTES
 	maxFileDownloadBytes = 5 * 1024 * 1024 // MAX_FILE_DOWNLOAD_BYTES
 	inlineFileMaxBytes   = 20 * 1024       // INLINE_FILE_MAX_BYTES
-	maxImagesPerMessage  = 6               // MAX_IMAGES_PER_MESSAGE
-	downloadTimeout      = 15 * time.Second
-	maxRedirects         = 10
-	mediaConcurrency     = 4 // max simultaneous attachment downloads per message
+	// inlineProbeBytes reads one byte past the inline cap so an over-cap file is
+	// detected without reading it unboundedly (see resolveFile). Keep it exactly
+	// inlineFileMaxBytes+1 — the overflow test (n > inlineFileMaxBytes) depends on it.
+	inlineProbeBytes    = inlineFileMaxBytes + 1
+	maxImagesPerMessage = 6 // MAX_IMAGES_PER_MESSAGE
+	downloadTimeout     = 15 * time.Second
+	maxRedirects        = 10
+	mediaConcurrency    = 4 // max simultaneous attachment downloads per message
 )
 
 // allowedImageTypes maps the content types Claude can natively Read to a file
@@ -88,13 +94,54 @@ var textFileExtensions = map[string]bool{
 // hook preserves the gateway's IM-agnosticism — it never embeds a token.
 type MediaAuth func(url string) string
 
-// httpClient is the media downloader's transport. redirect: manual — we walk the
-// chain ourselves so each hop is SSRF-revalidated and the Authorization header is
-// recomputed per hop (fetchWithRedirectGuard parity).
+// mediaHTTPClient is the media downloader's transport.
+//
+//   - redirect: manual — we walk the chain ourselves so each hop is
+//     SSRF-revalidated and the Authorization header is recomputed per hop
+//     (fetchWithRedirectGuard parity).
+//   - DialControl: the actual socket address chosen by the resolver is
+//     re-checked against the private/local ranges at *dial time*. This closes the
+//     DNS-rebinding TOCTOU: AssertPublicURL resolves once for the policy check,
+//     but the transport resolves again to dial — a hostile authoritative DNS
+//     could return a public IP to the first lookup and 169.254.169.254 / a
+//     private IP to the second. Validating in Control (which runs on the exact
+//     address being connected) makes the check authoritative for the connection.
+//   - explicit Transport timeouts + per-host conn cap so a slow/hostile endpoint
+//     can't tie up connections (the ctx deadline still bounds the whole fetch).
 var mediaHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   downloadTimeout,
+			KeepAlive: 30 * time.Second,
+			Control:   dialControlGuard,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          16,
+		MaxConnsPerHost:       8,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: downloadTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	},
+}
+
+// dialControlGuard rejects a connection whose resolved destination address is in
+// a private/loopback/link-local/CGN/unspecified range. Runs after DNS resolution
+// on the concrete address the kernel is about to connect to, so it defeats DNS
+// rebinding that AssertPublicURL's earlier lookup cannot (the resolver may return
+// a different IP at dial time).
+func dialControlGuard(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("media dial: bad address %q: %w", address, err)
+	}
+	if config.IsPrivateOrLocalAddress(host) {
+		return fmt.Errorf("media dial: refusing private/local address %s", host)
+	}
+	return nil
 }
 
 // materializeAttachments downloads/inlines the message's attachments into cwd and
@@ -194,7 +241,7 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 // downloadImage fetches url into <cwd>/.xclaw-media/<uuid>-<safeName> and returns
 // the path relative to cwd (what the Read hint shows). Mirrors
 // downloadInboundImage: SSRF-checked, per-hop token scoping, content-type gate,
-// 5 MB cap, 30s timeout.
+// 5 MB cap, downloadTimeout deadline.
 func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string, error) {
 	resp, err := g.fetchGuarded(ctx, rawURL)
 	if err != nil {
@@ -260,7 +307,7 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	}
 
 	// Read up to the inline cap + 1 byte to detect overflow.
-	head := make([]byte, inlineFileMaxBytes+1)
+	head := make([]byte, inlineProbeBytes)
 	n, err := io.ReadFull(resp.Body, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Sprintf("[文件: %s - 网络错误: %v]", filename, err)
@@ -303,6 +350,10 @@ func (g *Gateway) fetchGuarded(ctx context.Context, rawURL string) (*http.Respon
 	if assertPublic == nil {
 		assertPublic = config.AssertPublicURL
 	}
+	client := g.mediaClient
+	if client == nil {
+		client = mediaHTTPClient
+	}
 	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	current := rawURL
 	for hop := 0; hop <= maxRedirects; hop++ {
@@ -320,7 +371,7 @@ func (g *Gateway) fetchGuarded(ctx context.Context, rawURL string) (*http.Respon
 				req.Header.Set("Authorization", h)
 			}
 		}
-		resp, err := mediaHTTPClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			cancel()
 			return nil, err
@@ -435,7 +486,14 @@ func sanitizeFileBaseName(name string) string {
 	if b.Len() == 0 {
 		return "file"
 	}
-	return b.String()
+	s := b.String()
+	// A name that is only dots (".", "..", …) is harmless here because callers
+	// always prefix a uuid, but collapse it anyway so an on-disk name never reads
+	// like a path traversal segment.
+	if strings.Trim(s, ".") == "" {
+		return "file"
+	}
+	return s
 }
 
 // extractExtension returns the lowercase extension from the URL path, falling
@@ -450,6 +508,11 @@ func extractExtension(rawURL, fallbackName string) string {
 }
 
 func extFromPath(p string) string {
+	// Drop any query/fragment that rode along on a fallback name (the URL-parsed
+	// path is already clean, but a raw filename may carry "?v=2" etc.).
+	if i := strings.IndexAny(p, "?#"); i >= 0 {
+		p = p[:i]
+	}
 	i := strings.LastIndex(p, ".")
 	if i < 0 || i == len(p)-1 {
 		return ""

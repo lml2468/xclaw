@@ -294,12 +294,28 @@ func (c *RESTClient) postJSON(ctx context.Context, path string, body any, out an
 		return err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	// Cap the body read so a misbehaving server can't return an unbounded
+	// response, and truncate what we echo into an error so a large/sensitive
+	// error body doesn't flood logs (L26).
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxRESTResponseBytes))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("octo API %s failed (%d): %s", path, resp.StatusCode, string(data))
+		return fmt.Errorf("octo API %s failed (%d): %s", path, resp.StatusCode, truncateForError(data))
 	}
 	if out == nil || len(data) == 0 {
 		return nil
 	}
 	return json.Unmarshal(data, out)
+}
+
+// maxRESTResponseBytes bounds how much of a REST response body we read.
+const maxRESTResponseBytes = 4 * 1024 * 1024
+
+// truncateForError renders a response body for an error message, capping it so a
+// large body doesn't bloat logs.
+func truncateForError(b []byte) string {
+	const max = 512
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "…(truncated)"
 }

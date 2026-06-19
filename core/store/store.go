@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -159,7 +160,7 @@ func dsn(path string) string {
 	return path + sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 }
 
-// SetClock overrides the time source (tests use this for deterministic TTL).
+// SetClock overrides the time source (tests use this for deterministic timestamps).
 func (s *Store) SetClock(now func() time.Time) { s.now = now }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -175,10 +176,11 @@ type Session struct {
 	UpdatedAt   int64
 }
 
-// Touch creates the session if absent and refreshes updated_at so the TTL sweep
-// keeps it alive — without GetOrCreate's extra round-trip to read the row back.
-// Use this when the caller only needs the session to exist (the gateway's
-// per-turn path), not the Session value.
+// Touch creates the session if absent and refreshes updated_at so ListSessions
+// orders it newest-first — without GetOrCreate's extra round-trip to read the row
+// back. Use this when the caller only needs the session to exist (the gateway's
+// per-turn path), not the Session value. (Sessions are persistent: there is no
+// TTL reclamation; updated_at only drives ordering.)
 func (s *Store) Touch(id, channelID string, channelType int) error {
 	now := s.now().Unix()
 	if _, err := s.db.Exec(
@@ -192,7 +194,8 @@ func (s *Store) Touch(id, channelID string, channelType int) error {
 }
 
 // GetOrCreate returns the session for id, creating it if absent. updated_at is
-// refreshed on every call so the TTL sweep keeps active sessions alive.
+// refreshed on every call so ListSessions orders active sessions newest-first.
+// (Sessions are persistent: no TTL reclamation; updated_at only drives ordering.)
 func (s *Store) GetOrCreate(id, channelID string, channelType int) (Session, error) {
 	now := s.now().Unix()
 	_, err := s.db.Exec(
@@ -228,7 +231,12 @@ func (s *Store) appendMessage(sessionID string, role Role, content, fromName str
 	if err != nil {
 		return fmt.Errorf("append %s: %w", role, err)
 	}
-	_, _ = s.db.Exec(`UPDATE sessions SET updated_at=? WHERE id=?`, now, sessionID)
+	// Bump updated_at so ListSessions orders this conversation newest-first. A
+	// failure here only affects ordering (the message is already persisted), so
+	// log it rather than failing the whole append.
+	if _, uerr := s.db.Exec(`UPDATE sessions SET updated_at=? WHERE id=?`, now, sessionID); uerr != nil {
+		fmt.Fprintf(os.Stderr, "[store] bump updated_at for %s: %v\n", sessionID, uerr)
+	}
 	return nil
 }
 
@@ -384,7 +392,10 @@ func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
 		 ON CONFLICT(session_key) DO UPDATE SET agent=excluded.agent,
 		   resume_id=excluded.resume_id, updated_at=excluded.updated_at;`,
 		sessionKey, agent, resumeID, s.now().Unix())
-	return err
+	if err != nil {
+		return fmt.Errorf("save resume: %w", err)
+	}
+	return nil
 }
 
 // Resume returns the stored resume id for a session key ("" if none).
@@ -402,8 +413,10 @@ func (s *Store) Resume(sessionKey string) (string, error) {
 
 // ClearResume drops the resume mapping (used by /reset).
 func (s *Store) ClearResume(sessionKey string) error {
-	_, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=?`, sessionKey)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=?`, sessionKey); err != nil {
+		return fmt.Errorf("clear resume: %w", err)
+	}
+	return nil
 }
 
 // --- group reply cursor (answered/new segmentation) ---
@@ -437,17 +450,22 @@ func (s *Store) SaveBotReplySeq(sessionKey string, seq int64) error {
 		   updated_at=excluded.updated_at
 		 WHERE excluded.last_seq > group_reply_cursors.last_seq;`,
 		sessionKey, seq, s.now().Unix())
-	return err
+	if err != nil {
+		return fmt.Errorf("save bot reply seq: %w", err)
+	}
+	return nil
 }
 
 // ClearHistory deletes the persisted conversation messages for a session (the
 // /reset side effect, the Go analogue of cc-channel's store.deleteSession
 // history clear). It does NOT touch the agent resume mapping (clear that with
 // ClearResume) nor long-term auto-memory (which lives outside the store). The
-// session row itself is kept so its TTL and channel binding survive a reset.
+// session row itself is kept so its channel binding survives a reset.
 func (s *Store) ClearHistory(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM messages WHERE session_id=?`, sessionID)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM messages WHERE session_id=?`, sessionID); err != nil {
+		return fmt.Errorf("clear history: %w", err)
+	}
+	return nil
 }
 
 // --- maintenance ---

@@ -95,10 +95,9 @@ func (g Grantor) ComposeHint(personaPrompt string) string {
 	if prompt == "" {
 		return ""
 	}
+	// displayName() always returns a non-empty string once Configured() holds (it
+	// falls back to the grantor UID), so no empty-name guard is needed here.
 	name := g.displayName()
-	if name == "" {
-		return ""
-	}
 	return "你正在以「" + name + "」的分身身份运作。请以 " + name + " 的身份回复。\n\n" + prompt
 }
 

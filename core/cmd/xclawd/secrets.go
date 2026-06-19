@@ -55,3 +55,19 @@ func (s *secretStore) Set(kind, value string) error {
 	}
 	return nil
 }
+
+// Clear removes the token for kind (the explicit revoke path, distinct from Set's
+// seed-ignores-empty behavior). Unknown kinds return an error.
+func (s *secretStore) Clear(kind string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch kind {
+	case secretKindOcto:
+		s.octo = ""
+	case secretKindGateway:
+		s.gateway = ""
+	default:
+		return fmt.Errorf("unknown secret kind %q", kind)
+	}
+	return nil
+}

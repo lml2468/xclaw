@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+
+	"github.com/lml2468/xclaw/core/control"
 )
 
 // mustListenUnix creates the control-bus Unix socket with owner-only access.
@@ -34,6 +36,25 @@ func mustListenUnix(path string) net.Listener {
 		fatal("chmod %s: %v", path, err)
 	}
 	return &peerCredListener{Listener: ln, allowUID: os.Geteuid()}
+}
+
+// serveControlBus listens on the owner-only Unix socket, serves srv in a
+// background goroutine, and returns a cleanup func the caller should defer (close
+// the listener + remove the socket file). It assumes srv already has its handler
+// and auth gate configured. Shared by the single-bot (main.go) and multi-bot
+// (bot.go) paths so the listen/serve/cleanup plumbing lives in one place.
+func serveControlBus(srv *control.Server, path string) (cleanup func()) {
+	ln := mustListenUnix(path)
+	go func() {
+		if err := srv.Serve(ln); err != nil {
+			fmt.Fprintf(os.Stderr, "control serve: %v\n", err)
+		}
+	}()
+	fmt.Printf("control bus listening on %s\n", path)
+	return func() {
+		_ = ln.Close()
+		_ = os.Remove(path)
+	}
 }
 
 // peerCredListener rejects any accepted connection whose peer OS-uid is not the

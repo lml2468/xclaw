@@ -20,12 +20,27 @@ import (
 // the downloader — only the content-type header gates acceptance).
 var pngBytes = []byte("\x89PNG\r\n\x1a\nfake-image-data")
 
+// loopbackMediaClient is a media HTTP client without the production dial guard,
+// so httptest servers on 127.0.0.1 are reachable. It keeps the manual-redirect
+// CheckRedirect contract fetchGuarded depends on. The dial guard itself is
+// exercised by the SSRF tests, which use the real client.
+func loopbackMediaClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // testGW builds a Gateway whose SSRF guard is permissive, so httptest servers
 // (which bind to 127.0.0.1 and would otherwise be rejected as loopback) can be
 // reached. The real config.AssertPublicURL is exercised separately in the SSRF
 // tests below, which deliberately do NOT use this helper.
 func testGW() *Gateway {
-	return &Gateway{assertPublic: func(context.Context, string) error { return nil }}
+	return &Gateway{
+		assertPublic: func(context.Context, string) error { return nil },
+		mediaClient:  loopbackMediaClient(),
+	}
 }
 
 func TestMaterializeImage_LandsInCwd(t *testing.T) {
@@ -248,6 +263,23 @@ func TestFetchGuarded_SSRFRejected(t *testing.T) {
 	}
 }
 
+// TestDialGuard_RejectsRebindToPrivate proves the H1 DNS-rebinding fix: even when
+// the policy check (assertPublic) is bypassed, the production transport's dial
+// guard refuses a connection whose resolved address is private/local. This is the
+// authoritative check that runs on the exact IP being dialed, defeating a DNS
+// answer that passed the earlier lookup but resolves to a private IP at dial time.
+func TestDialGuard_RejectsRebindToPrivate(t *testing.T) {
+	g := &Gateway{
+		// Policy check bypassed (simulating a hostname that resolved public once)…
+		assertPublic: func(context.Context, string) error { return nil },
+		// …but the real hardened client is used, so the dial guard still fires.
+	}
+	_, err := g.fetchGuarded(context.Background(), "http://127.0.0.1:9/x")
+	if err == nil || !strings.Contains(err.Error(), "private/local") {
+		t.Fatalf("dial guard should reject private target even when policy bypassed, got %v", err)
+	}
+}
+
 func TestMaterializeFile_SSRFRejectionDegrades(t *testing.T) {
 	g := &Gateway{}
 	att := router.Attachment{Kind: router.AttachmentFile, URL: "http://169.254.169.254/latest/meta-data/", Name: "meta.txt"}
@@ -276,6 +308,7 @@ func TestMediaAuth_PerHopScoping(t *testing.T) {
 	// Auth hook authorizes only the first host.
 	g := &Gateway{
 		assertPublic: func(context.Context, string) error { return nil },
+		mediaClient:  loopbackMediaClient(),
 		mediaAuth: func(u string) string {
 			if strings.HasPrefix(u, first.URL) {
 				return "Bearer secret-token"
@@ -310,6 +343,7 @@ func TestRunTurn_MediaHintTurnLocal(t *testing.T) {
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
 		WithSandbox(cwdBase, "", "", "")
 	gw.assertPublic = func(context.Context, string) error { return nil } // allow httptest loopback
+	gw.mediaClient = loopbackMediaClient()                               // bypass dial guard for loopback httptest
 
 	msg := router.InboundMessage{
 		ChannelType: router.ChannelDM,

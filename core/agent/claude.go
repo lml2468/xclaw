@@ -77,6 +77,12 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 	// Pin auto-memory to the per-session dir. --settings merges into (does not
 	// replace) the defaults, so project-scope skill discovery under <cwd> still
 	// works. JSON-encode so a path with special chars can't break the flag.
+	//
+	// Contract: req.MemoryDir MUST live OUTSIDE req.Cwd (sandbox.ResolveMemoryDir
+	// computes it under a separate memoryBase). That is the safety property — an
+	// agent with write access to its cwd must not be able to author the memory that
+	// is later injected as trusted context. The driver trusts the caller to honor
+	// this; the gateway derives the two from disjoint bases (gateway.resolveSandbox).
 	if req.MemoryDir != "" {
 		if b, err := json.Marshal(map[string]string{"autoMemoryDirectory": req.MemoryDir}); err == nil {
 			args = append(args, "--settings", string(b))
@@ -156,7 +162,10 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stderr)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		// Match the stdout cap (16 MiB): a verbose stack trace / overload message
+		// that classification depends on can exceed the default 64 KiB token, and a
+		// dropped line would silently downgrade a transient error to the generic one.
+		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if line == "" {
@@ -177,6 +186,11 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 			}
 			emit(AgentEvent{Kind: KindError, Err: line, Recoverable: true, Raw: line})
 		}
+		// A scan error (e.g. a line exceeding the buffer cap) would otherwise be
+		// swallowed; surface it as recoverable so it isn't silently lost.
+		if err := sc.Err(); err != nil {
+			emit(AgentEvent{Kind: KindError, Err: fmt.Sprintf("stderr scan: %v", err), Recoverable: true, Raw: err.Error()})
+		}
 	}()
 
 	go func() {
@@ -195,6 +209,12 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 				}
 				emit(ev)
 			}
+		}
+		// Surface a scan error (e.g. an over-cap line) as terminal: a truncated
+		// stream-json line means we may have lost the result, so don't let it pass
+		// silently as a successful empty turn.
+		if err := sc.Err(); err != nil {
+			emit(AgentEvent{Kind: KindError, Err: fmt.Sprintf("stdout scan: %v", err), Raw: err.Error()})
 		}
 	}()
 

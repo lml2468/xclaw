@@ -171,3 +171,70 @@ func TestSavePrunesOnlyExplicitRemovals(t *testing.T) {
 		t.Errorf("removed id without data/ dir should not be RemoveAll'd: %v", err)
 	}
 }
+
+// First-time Add-bot scaffolds SOUL.md + AGENTS.md with starter templates when
+// the operator left the fields blank, so the bot dir is never naked after a
+// successful Add-bot. Detected by botDir not existing before the Save.
+func TestSaveScaffoldsTemplatesOnFirstCreate(t *testing.T) {
+	setup(t)
+	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	soul, err := os.ReadFile(filepath.Join(botDir("fresh"), "SOUL.md"))
+	if err != nil {
+		t.Fatalf("SOUL.md should be scaffolded on first Save: %v", err)
+	}
+	if string(soul) != defaultSoulTemplate {
+		t.Errorf("SOUL.md content not the template:\n%s", soul)
+	}
+	agents, err := os.ReadFile(filepath.Join(botDir("fresh"), "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md should be scaffolded on first Save: %v", err)
+	}
+	if string(agents) != defaultAgentsTemplate {
+		t.Errorf("AGENTS.md content not the template:\n%s", agents)
+	}
+}
+
+// First-time Save respects operator-provided content — the template only fills
+// blanks, it never overwrites a non-empty value the editor sent.
+func TestSaveFirstCreateKeepsOperatorContent(t *testing.T) {
+	setup(t)
+	if err := Save([]BotConfig{{
+		ID: "fresh", APIURL: "https://x.example",
+		Soul:   "I am Atlas.",
+		Agents: "Be concise.",
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	soul, _ := os.ReadFile(filepath.Join(botDir("fresh"), "SOUL.md"))
+	if string(soul) != "I am Atlas." {
+		t.Errorf("operator SOUL.md overwritten by template: %q", soul)
+	}
+	agents, _ := os.ReadFile(filepath.Join(botDir("fresh"), "AGENTS.md"))
+	if string(agents) != "Be concise." {
+		t.Errorf("operator AGENTS.md overwritten by template: %q", agents)
+	}
+}
+
+// A subsequent Save by an existing bot that deliberately clears a field must
+// still remove the file (writeBotFile's "empty → remove" semantics preserved).
+// Without this guard the template would resurrect on every blank save.
+func TestSaveClearsFieldsOnExistingBot(t *testing.T) {
+	setup(t)
+	// First Save creates the bot dir + scaffolds templates.
+	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Operator now intentionally clears both fields. botDir exists → not first
+	// time → empty content reaches writeBotFile → files removed.
+	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(botDir("ex"), "SOUL.md")); !os.IsNotExist(err) {
+		t.Errorf("SOUL.md should be removed on subsequent blank save, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(botDir("ex"), "AGENTS.md")); !os.IsNotExist(err) {
+		t.Errorf("AGENTS.md should be removed on subsequent blank save, err=%v", err)
+	}
+}

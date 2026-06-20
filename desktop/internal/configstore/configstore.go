@@ -49,6 +49,23 @@ func Path() string { return filepath.Join(Dir(), "config.json") }
 
 func botDir(id string) string { return filepath.Join(Dir(), id) }
 
+// First-time scaffold for a newly-created bot. Applied only when the bot
+// directory did not exist before this Save call AND the operator left the
+// corresponding editor field blank — so a deliberate clear by an existing
+// operator still removes the file (writeBotFile's "empty content → remove"
+// semantics are preserved). Kept in English to match the file name + project
+// convention; operators in any locale are expected to overwrite these.
+const defaultSoulTemplate = `# Identity
+
+<Describe who this bot is — its voice, values, and non-negotiable boundaries.>
+`
+
+const defaultAgentsTemplate = `# Behavior
+
+<List observable rules. e.g. Always confirm before destructive actions.
+Be concise. Cite sources when asserting facts.>
+`
+
 // readFile parses config.json into the daemon's File shape (empty File if absent).
 func readFile() (config.File, error) {
 	var f config.File
@@ -228,13 +245,28 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	// Per-bot side effects (idempotent). On failure, config.json already
 	// reflects the intended set and a retry re-applies these.
 	for _, b := range bots {
+		// First-time creation: scaffold SOUL.md / AGENTS.md with starter
+		// templates when the operator left them blank, so the bot dir is never
+		// "naked" after Add-bot. Detected by botDir not existing yet; this
+		// keeps subsequent saves with a deliberately-cleared field as removes.
+		_, statErr := os.Stat(botDir(b.ID))
+		firstTime := os.IsNotExist(statErr)
 		if err := os.MkdirAll(botDir(b.ID), 0o755); err != nil {
 			return err
 		}
-		if err := writeBotFile(b.ID, "SOUL.md", b.Soul); err != nil {
+		soul, agents := b.Soul, b.Agents
+		if firstTime {
+			if strings.TrimSpace(soul) == "" {
+				soul = defaultSoulTemplate
+			}
+			if strings.TrimSpace(agents) == "" {
+				agents = defaultAgentsTemplate
+			}
+		}
+		if err := writeBotFile(b.ID, "SOUL.md", soul); err != nil {
 			return err
 		}
-		if err := writeBotFile(b.ID, "AGENTS.md", b.Agents); err != nil {
+		if err := writeBotFile(b.ID, "AGENTS.md", agents); err != nil {
 			return err
 		}
 		if err := secrets.Set(b.ID, secrets.OctoToken, b.OctoToken); err != nil {

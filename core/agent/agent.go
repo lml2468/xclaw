@@ -8,16 +8,54 @@ package agent
 import (
 	"context"
 	"os"
+	"strings"
 )
 
-// mergedEnv returns the process environment with `extra` (KEY=VALUE entries)
-// layered on top — later entries win, so callers put overrides (e.g.
-// ANTHROPIC_BASE_URL) last. A nil/empty extra returns os.Environ() unchanged.
+// inheritedClaudeSessionVars are Claude Code's own per-invocation session/runtime
+// env vars. When xclawd is itself launched from a Claude Code session (or any
+// shell that exports them), os.Environ() carries them — and without stripping
+// they would leak into EVERY spawned bot's claude child, making it believe it is
+// a nested child of that parent session (shared CLAUDE_CODE_SESSION_ID,
+// CLAUDE_CODE_CHILD_SESSION=1). CLAUDE_CONFIG_DIR isolates only the *config
+// directory*, not these runtime markers, so per-bot isolation silently breaks.
+//
+// We strip the markers a parent Claude Code session injects, but deliberately
+// KEEP:
+//   - CLAUDE_CONFIG_DIR — the driver re-injects the per-bot value via `extra`,
+//     which is appended after the strip so it always wins.
+//   - ANTHROPIC_* (auth/base-url) — a bot with no gateway config may rely on the
+//     operator's ANTHROPIC_* for auth; dropping it would break that deployment.
+//
+// Matching is exact (not prefix) so an operator's own unrelated CLAUDE_* never
+// gets caught. The list mirrors what a real `claude` invocation sets (observed
+// on the spawned daemon: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_*
+// session markers, CLAUDE_EFFORT).
+var inheritedClaudeSessionVars = map[string]bool{
+	"CLAUDECODE":                           true,
+	"CLAUDE_CODE_ENTRYPOINT":               true,
+	"CLAUDE_CODE_SESSION_ID":               true,
+	"CLAUDE_CODE_CHILD_SESSION":            true,
+	"CLAUDE_CODE_EXECPATH":                 true,
+	"CLAUDE_EFFORT":                        true,
+	"CLAUDE_CODE_SSE_PORT":                 true,
+	"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": true,
+}
+
+// mergedEnv returns the process environment — with inherited Claude Code session
+// vars stripped (see inheritedClaudeSessionVars) — and `extra` (KEY=VALUE
+// entries) layered on top. Later entries win, so callers put overrides (e.g.
+// ANTHROPIC_BASE_URL, the per-bot CLAUDE_CONFIG_DIR) last and they survive the
+// strip.
 func mergedEnv(extra []string) []string {
-	if len(extra) == 0 {
-		return os.Environ()
+	base := os.Environ()
+	out := make([]string, 0, len(base)+len(extra))
+	for _, e := range base {
+		if k, _, ok := strings.Cut(e, "="); ok && inheritedClaudeSessionVars[k] {
+			continue // drop the parent session's runtime marker
+		}
+		out = append(out, e)
 	}
-	return append(os.Environ(), extra...)
+	return append(out, extra...)
 }
 
 // EventKind classifies a normalized agent event.

@@ -45,6 +45,56 @@ func TestMergedEnvOverrides(t *testing.T) {
 	}
 }
 
+// TestMergedEnvStripsInheritedClaudeSession asserts that Claude Code's own
+// session/runtime vars — carried in os.Environ() when xclawd is launched from a
+// Claude Code session — are stripped before spawning a bot's claude child, so the
+// child does not inherit the parent session's identity (per-bot isolation).
+func TestMergedEnvStripsInheritedClaudeSession(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "parent-session")
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_CHILD_SESSION", "1")
+	t.Setenv("XCLAW_KEEP_ME", "keep") // an unrelated var must survive
+
+	env := mergedEnv(nil)
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "CLAUDE_CODE_SESSION_ID="),
+			strings.HasPrefix(e, "CLAUDECODE="),
+			strings.HasPrefix(e, "CLAUDE_CODE_CHILD_SESSION="):
+			t.Fatalf("inherited Claude Code session var leaked into child env: %q", e)
+		}
+	}
+	var keptUnrelated bool
+	for _, e := range env {
+		if e == "XCLAW_KEEP_ME=keep" {
+			keptUnrelated = true
+		}
+	}
+	if !keptUnrelated {
+		t.Fatal("an unrelated env var was wrongly stripped")
+	}
+}
+
+// TestMergedEnvKeepsInjectedConfigDir asserts the strip never eats the per-bot
+// CLAUDE_CONFIG_DIR the driver injects via `extra`: it is appended after the
+// strip, so even though the var name shares the CLAUDE_ prefix it survives (the
+// strip list is exact-match and excludes CLAUDE_CONFIG_DIR anyway).
+func TestMergedEnvKeepsInjectedConfigDir(t *testing.T) {
+	// A stale CLAUDE_CONFIG_DIR in the parent env must be overridden by the
+	// per-bot one the driver injects last (exec uses the last occurrence).
+	t.Setenv("CLAUDE_CONFIG_DIR", "/operator/.claude")
+	env := mergedEnv([]string{"CLAUDE_CONFIG_DIR=/bot/dir/claude"})
+	last := ""
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "CLAUDE_CONFIG_DIR="); ok {
+			last = v
+		}
+	}
+	if last != "/bot/dir/claude" {
+		t.Fatalf("per-bot CLAUDE_CONFIG_DIR must win, last = %q", last)
+	}
+}
+
 // TestClaudeDriverInjectsEnv spawns a fake "claude" that echoes an env var; the
 // driver should have set it. The echoed line is not stream-json, so it surfaces
 // as a KindSystem event — we just assert the value made it into the subprocess.

@@ -1,5 +1,6 @@
 <script lang="ts">
   import XMark from "./XMark.svelte";
+  import { store } from "../store.svelte";
 
   let { onpick }: { onpick: (prompt: string) => void } = $props();
 
@@ -10,16 +11,23 @@
   ];
 </script>
 
-<div class="empty">
-  <div class="hero" aria-hidden="true"><XMark size={40} /></div>
-  <h1>Talk to your agent</h1>
-  <p class="sub">Ask anything below, or start with one of these.</p>
-  <div class="chips">
-    {#each prompts as p}
-      <button class="chip" onclick={() => onpick(p)}>{p}</button>
-    {/each}
+{#if store.isConsole}
+  <div class="empty">
+    <div class="hero" aria-hidden="true"><XMark size={40} /></div>
+    <h1>Talk to your agent</h1>
+    <p class="sub">Ask anything below, or start with one of these.</p>
+    <div class="chips">
+      {#each prompts as p}
+        <button class="chip" onclick={() => onpick(p)}>{p}</button>
+      {/each}
+    </div>
   </div>
-</div>
+{:else}
+  <!-- Defensive: an IM-originated session only exists because of an inbound
+       message, so it should never be empty at steady state. This branch covers
+       the sub-second window between selectSession and loadHistory completing. -->
+  <div class="muted-empty">加载中…</div>
+{/if}
 
 <style>
   .empty {
@@ -46,5 +54,10 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
     color: var(--accent-strong); transform: translateY(-1px);
+  }
+  .muted-empty {
+    width: 100%; min-height: 40vh;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-faint); font-size: 12px; font-style: italic;
   }
 </style>

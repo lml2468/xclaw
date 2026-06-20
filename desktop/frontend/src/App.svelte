@@ -15,6 +15,7 @@
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
   import TokenUsage from "./lib/components/TokenUsage.svelte";
+  import Confirm from "./lib/components/Confirm.svelte";
 
   let composer = $state<Composer>();
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
@@ -24,6 +25,7 @@
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
   let collapsed = $state(false);
+  let confirmReset = $state(false);
   // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
@@ -109,7 +111,15 @@
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 6-6 6 6 6"/></svg>
           </button>
           <span class="title">{store.currentSession?.title ?? "XClaw"}</span>
+          {#if store.currentSession && !store.isConsole}
+            <span class="ro-badge" title="此会话来自 Octo IM，桌面仅供查看；用户消息从 IM 客户端发送">来自 IM · 只读</span>
+          {/if}
           <span class="spacer"></span>
+          {#if store.currentSession}
+            <button class="icon" style="--wails-draggable: no-drag;" title="重置会话（清空 resume id 与本地记录）" aria-label="重置会话" onclick={() => (confirmReset = true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+            </button>
+          {/if}
           {#if store.currentBot}
             <button class="icon" class:on={showFiles} style="--wails-draggable: no-drag;" title="Workspace files" onclick={() => (showFiles = !showFiles)} aria-label="Toggle workspace" aria-pressed={showFiles}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
@@ -118,7 +128,9 @@
         </header>
         <Transcript onpick={pick} />
         <StatusBar />
-        <Composer bind:this={composer} />
+        {#if store.isConsole}
+          <Composer bind:this={composer} />
+        {/if}
       </main>
     {/if}
     {#if showFiles && store.currentSession}
@@ -156,6 +168,14 @@
 {#if showUsage}
   <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
 {/if}
+{#if confirmReset && store.currentSession}
+  <Confirm
+    message={store.isConsole ? "重置 Console 会话？将清空 resume id 与本地记录，下次发送从全新会话开始。" : "重置此 IM 会话？将清空 resume id 与本地记录，对端下条消息将开启全新会话。"}
+    confirmLabel="重置"
+    danger
+    onresult={(ok) => { confirmReset = false; if (ok) store.reset(); }}
+  />
+{/if}
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--window-grad); }
@@ -179,6 +199,16 @@
     border-bottom: 1px solid var(--hairline);
   }
   .title { font-size: 15px; font-weight: 600; color: var(--ink); }
+  .ro-badge {
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px; line-height: 1.4;
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    border: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
   .spacer { flex: 1; }
   .icon {
     display: inline-flex; align-items: center; justify-content: center;

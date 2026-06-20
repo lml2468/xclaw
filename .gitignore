@@ -27,3 +27,5 @@ desktop/frontend/dist/
 # Go
 /vendor/
 /output/
+
+.playwright-mcp/

@@ -192,6 +192,13 @@ class Store {
   get currentSession(): Session | null {
     return this.sessions.find((s) => s.botId === this.selectedBotId && s.key === this.selectedKey) ?? null;
   }
+  // Only the Console session is writable from the desktop. Every other session
+  // (DM / Group) originates from Octo IM — the human counterpart lives there, so
+  // the desktop is an observation surface only. The Composer is hidden when this
+  // is false; send() additionally no-ops as defense in depth.
+  get isConsole(): boolean {
+    return this.selectedKey === CONSOLE_UID || this.selectedKey === "console";
+  }
 
   // --- commands ---
 
@@ -242,20 +249,24 @@ class Store {
   // loadHistory lazily fetches a session's transcript the first time it's opened
   // (sessions.list only carries a preview). applyHistory routes to currentSession,
   // so we fetch right after selecting; the loaded flag prevents refetching.
+  // Console is included: the daemon persists its messages just like any other
+  // session, so on app relaunch we must fetch them or the chat appears empty.
   private loadHistory(key: string) {
     if (this.preview) return;
     const botId = this.selectedBotId;
     if (!botId) return;
     const s = this.sessions.find((x) => x.botId === botId && x.key === key);
-    if (!s || s.loaded || s.key === CONSOLE_UID) return;
+    if (!s || s.loaded) return;
     XClawService.History(botId, key, 0);
   }
 
   send(text: string) {
     const botId = this.selectedBotId;
     if (!botId || !text.trim()) return;
-    // The console session key is deterministic (control-bus DM → key == CONSOLE_UID),
-    // so use it directly — no "adopt the first reply's key" guesswork.
+    // Desktop only writes to the Console session. IM-originated sessions belong
+    // to the remote human in DM/Group; the Composer is hidden for them, but
+    // guard here too so a stray keybinding path can't inject as the bot.
+    if (!this.isConsole && this.selectedKey != null) return;
     const key = CONSOLE_UID;
     const s = this.ensureSession(botId, key);
     s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000, streaming: false });
@@ -265,10 +276,16 @@ class Store {
     XClawService.Send(botId, CONSOLE_UID, text);
   }
 
+  // Reset clears the resume id for the active session and wipes its visible
+  // transcript. Works for any session (including IM-originated ones) — useful
+  // when a resume id has gone stale and the operator wants the next IM turn to
+  // start fresh. The IM-side human will not see this; they just notice the
+  // bot's memory has been cleared on their next message.
   reset() {
     const botId = this.selectedBotId;
-    if (!botId) return;
-    XClawService.Reset(botId, CONSOLE_UID);
+    const key = this.selectedKey;
+    if (!botId || !key) return;
+    XClawService.Reset(botId, key);
     const s = this.currentSession;
     if (s) { s.messages = []; s.proc = emptyProc(); }
   }

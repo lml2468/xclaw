@@ -349,6 +349,69 @@ func TestNotMentionedAndUnroutableStaySilent(t *testing.T) {
 	}
 }
 
+// trickleDriver streams `pulses` events spaced `interval` apart, then a final
+// session_started + text + turn_done, then closes. Used to prove the idle
+// dispatch timeout resets on every event — a stream slower than the timeout's
+// half but faster than the timeout itself must complete, not be killed.
+type trickleDriver struct {
+	pulses   int
+	interval time.Duration
+	reply    string
+}
+
+func (d *trickleDriver) Name() string                     { return "trickle" }
+func (d *trickleDriver) Capabilities() agent.Capabilities { return agent.Capabilities{Resume: true} }
+func (d *trickleDriver) Query(ctx context.Context, _ agent.Request) (<-chan agent.AgentEvent, error) {
+	ch := make(chan agent.AgentEvent, 4)
+	go func() {
+		defer close(ch)
+		ch <- agent.AgentEvent{Kind: agent.KindSessionStarted, SessionID: "trickle"}
+		for i := 0; i < d.pulses; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(d.interval):
+			}
+			select {
+			case ch <- agent.AgentEvent{Kind: agent.KindThinking}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		ch <- agent.AgentEvent{Kind: agent.KindTextDelta, Text: d.reply}
+		ch <- agent.AgentEvent{Kind: agent.KindTurnDone}
+	}()
+	return ch, nil
+}
+
+func TestDispatchTimeoutResetsOnEvents(t *testing.T) {
+	st := newTestStore(t)
+	// 4 pulses × 30ms = 120ms of streaming, plus the session_started/text/done
+	// — well over the 80ms idle window, but no GAP between events exceeds 30ms,
+	// so the idle timer must reset and the turn must complete normally.
+	drv := &trickleDriver{pulses: 4, interval: 30 * time.Millisecond, reply: "ok"}
+	sink := &recordSink{}
+	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), sink).
+		WithDispatchTimeout(80 * time.Millisecond)
+
+	start := time.Now()
+	if _, err := gw.Handle(context.Background(),
+		router.InboundMessage{ChannelType: router.ChannelDM, FromUID: "u1", Text: "trickle"}); err != nil {
+		t.Fatalf("trickle turn errored: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("trickle turn returned suspiciously fast (%s) — events may not have flowed", elapsed)
+	}
+	// Must NOT have apologized — the real reply should arrive.
+	if n := sink.count(timeoutReply); n != 0 {
+		t.Fatalf("idle timer did not reset on events: got %d timeout apologies", n)
+	}
+	got := sink.all()
+	if len(got) == 0 || got[len(got)-1].text != "ok" {
+		t.Fatalf("want trailing reply \"ok\", got %+v", got)
+	}
+}
+
 // --- dispatch timeout (#141) ---
 
 func TestDispatchTimeoutFiresApology(t *testing.T) {

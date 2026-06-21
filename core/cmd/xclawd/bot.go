@@ -277,6 +277,9 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithCommandInfo(cfg.RateLimit.MaxPerMinute, cfg.Context.MaxContextChars).
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase).
 		WithMediaAuth(connector.MediaAuth())
+	if cfg.Agent.DispatchTimeoutSec > 0 {
+		gw = gw.WithDispatchTimeout(time.Duration(cfg.Agent.DispatchTimeoutSec) * time.Second)
+	}
 	connector.SetGateway(gw)
 
 	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st, secrets: sec}

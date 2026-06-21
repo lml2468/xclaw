@@ -40,6 +40,13 @@ type AgentConfig struct {
 	// leak into every bot. Set true only for a trusted single-operator deployment
 	// that deliberately shares its ~/.claude with the bots.
 	InheritUserConfig bool `json:"inheritUserConfig,omitempty"`
+	// DispatchTimeoutSec overrides the per-turn IDLE timeout (seconds) for this
+	// bot. The timer resets on every AgentEvent, so a long workflow with steady
+	// event flow is fine — only N seconds of silence kills the turn. <=0 leaves
+	// the daemon default (20 min). Set higher when a bot routinely runs long
+	// tools that can stay silent for >20 min (e.g. a slow Bash); set lower for
+	// snappy DMs where a stuck turn should surface fast.
+	DispatchTimeoutSec int `json:"dispatchTimeoutSec,omitempty"`
 }
 
 // RateLimitConfig mirrors the on-disk rateLimit block.
@@ -347,6 +354,9 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	}
 	if src.InheritUserConfig {
 		dst.InheritUserConfig = true
+	}
+	if src.DispatchTimeoutSec > 0 {
+		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
 	}
 	// env merges per-key (global base + per-bot overrides/additions), not whole
 	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a

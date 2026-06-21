@@ -11,7 +11,9 @@
     "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief '🔧 Running <tool>(<params>)…' notice (deduped, capped at 10/turn). Off by default.",
     "toolProgress": false,
     "_comment_inheritUserConfig": "When true, the agent inherits the operator's ~/.claude (user-scope skills + installed plugins). OFF by default: each bot gets an isolated CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude) so operator plugins/user-skills don't leak into every bot. The bot's own skills/workflows live under ~/.xclaw/<id>/.claude/{skills,workflows} and the CLI auto-loads them as user-scope; built-in CLI skills still load. Set true only for a trusted single-operator deployment.",
-    "inheritUserConfig": false
+    "inheritUserConfig": false,
+    "_comment_dispatchTimeoutSec": "Per-turn IDLE timeout (seconds) — resets on every AgentEvent, so a long-running healthy turn (multi-agent workflow, big stream, many tool calls) survives as long as events flow; only N seconds of silence kills it. Omit to use the daemon default (1200 = 20 min). Bump higher when the bot routinely runs long silent tools (e.g. a slow Bash); lower for snappy DMs where a stuck turn should surface fast.",
+    "dispatchTimeoutSec": 0
   },
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },

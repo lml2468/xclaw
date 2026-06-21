@@ -91,11 +91,15 @@ type Gateway struct {
 	// loopback httptest server the dial guard would otherwise reject.
 	mediaClient *http.Client
 
-	// dispatchTimeout bounds driver.Query + the stream loop for a single turn
-	// (#141). On expiry the turn's context is cancelled (which kills the claude
-	// subprocess via CommandContext) and the user gets a "处理超时" apology. The
-	// session lock then releases as runTurn returns, so a hung turn cannot wedge
-	// the session queue forever. <=0 disables the bound. Defaults to 5 min.
+	// dispatchTimeout bounds a single turn (#141), but as an IDLE deadline: the
+	// timer resets on every AgentEvent received from the driver, so a long-running
+	// healthy turn (multi-agent workflow, big stream, lots of tool calls) survives
+	// as long as events keep flowing — only true silence kills it. On expiry the
+	// turn's context is cancelled (which kills the claude subprocess via
+	// CommandContext) and the user gets a "处理超时" apology. The session lock then
+	// releases as runTurn returns, so a wedged turn cannot block the queue forever.
+	// <=0 disables the bound. Default 20 min — long enough to cover most complex
+	// workflows between events, short enough that a truly hung turn frees up.
 	dispatchTimeout time.Duration
 
 	// Effective settings surfaced by /config (no secrets). Set via WithCommandInfo.
@@ -103,8 +107,10 @@ type Gateway struct {
 	contextChars int
 }
 
-// defaultDispatchTimeout bounds a single turn (#141, config.ts dispatchTimeoutMs).
-const defaultDispatchTimeout = 5 * time.Minute
+// defaultDispatchTimeout bounds a single turn as an idle deadline (#141 — config.ts
+// dispatchTimeoutMs). Reset on every AgentEvent, so it kills only a truly silent
+// turn, not a long-running healthy one.
+const defaultDispatchTimeout = 20 * time.Minute
 
 // New constructs a Gateway.
 func New(d agent.Driver, st *store.Store, rt *router.Router, sink Sink) *Gateway {
@@ -202,8 +208,10 @@ func (g *Gateway) WithMediaAuth(fn MediaAuth) *Gateway {
 	return g
 }
 
-// WithDispatchTimeout overrides the per-turn dispatch timeout (#141). A value
-// <=0 disables the bound (the turn runs unguarded). Default is 5 minutes.
+// WithDispatchTimeout overrides the per-turn idle timeout (#141). The timer
+// resets on every AgentEvent, so a long turn with steady event flow is fine —
+// only N seconds of silence kills it. A value <=0 disables the bound. Default
+// 20 minutes.
 func (g *Gateway) WithDispatchTimeout(d time.Duration) *Gateway {
 	g.dispatchTimeout = d
 	return g
@@ -278,10 +286,10 @@ const (
 	busyReply = "⏳ 服务繁忙，请稍后重试。"
 )
 
-// errDispatchTimeout is the cause attached to the per-turn dispatch deadline, so
+// errDispatchTimeout is the cause attached to the per-turn idle deadline, so
 // runTurn can distinguish its own timeout from a caller cancellation via
 // context.Cause (M9).
-var errDispatchTimeout = errors.New("dispatch timeout")
+var errDispatchTimeout = errors.New("dispatch idle timeout")
 
 // Observe caches a non-triggering group message into the group context so it
 // becomes background for a later @-mention turn. Call this for group messages
@@ -461,19 +469,29 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		prompt += media
 	}
 
-	// Bound driver.Query + the stream loop with a per-turn dispatch timeout
-	// (#141). Cancelling turnCtx kills the claude subprocess (CommandContext) and
-	// closes the event stream, so a hung turn (stuck query, wedged tool, stalled
-	// stream) can't block the session queue forever. On timeout we send an apology
-	// and return nil — the per-session lock then releases as runTurn returns.
+	// Bound driver.Query + the stream loop with a per-turn IDLE timeout (#141).
+	// Cancelling turnCtx kills the claude subprocess (CommandContext) and closes
+	// the event stream, so a hung turn (stuck query, wedged tool, stalled stream)
+	// can't block the session queue forever. The timer resets on every AgentEvent
+	// — a long but healthy turn (multi-agent workflow, big stream) survives as
+	// long as events flow; only true silence kills it. On expiry we send an
+	// apology and return nil — the per-session lock then releases as runTurn
+	// returns.
 	turnCtx := ctx
+	resetIdle := func() {} // no-op when disabled
 	if g.dispatchTimeout > 0 {
-		var cancel context.CancelFunc
-		// WithTimeoutCause tags OUR deadline with a sentinel so we can tell our own
-		// dispatch timeout apart from any caller cancellation without racily
-		// comparing two ctx.Err() snapshots (M9).
-		turnCtx, cancel = context.WithTimeoutCause(ctx, g.dispatchTimeout, errDispatchTimeout)
-		defer cancel()
+		var cancel context.CancelCauseFunc
+		turnCtx, cancel = context.WithCancelCause(ctx)
+		// time.AfterFunc fires once after the idle window; we Reset it on every
+		// event. The closure captures `cancel` so an expiry tags the cancellation
+		// with our sentinel (errDispatchTimeout), letting the post-loop check tell
+		// our own timeout apart from a parent cancellation (M9).
+		idle := time.AfterFunc(g.dispatchTimeout, func() { cancel(errDispatchTimeout) })
+		defer func() {
+			idle.Stop()
+			cancel(nil)
+		}()
+		resetIdle = func() { idle.Reset(g.dispatchTimeout) }
 	}
 
 	sysAppend := g.buildSystemPrompt(msg, rosterPrefix)
@@ -534,6 +552,9 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			gatedBuf = nil
 		}
 		for ev := range events {
+			// Reset the idle deadline on every event — a steady stream keeps the
+			// turn alive, only true silence kills it.
+			resetIdle()
 			// A stale resume id (session not found, e.g. after the agent's config
 			// dir changed) dooms this attempt — swallow its events so the failed
 			// run never reaches the sink, then retry fresh below.

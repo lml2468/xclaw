@@ -164,7 +164,7 @@ store, gateway, driver, group-context, Octo connector, each under `~/.xclaw/<id>
   operator-trusted append. Either may be omitted.
 - Each `bots[]` entry is `id` + `octoToken` and may override top-level
   `apiUrl`/`agent`/`rateLimit`/`context` defaults. Capability switches live under
-  `agent` (`cron`, `toolProgress`, `inheritUserConfig`); the group-gating lists
+  `agent` (`cron`, `toolProgress`, `inheritUserConfig`, `dispatchTimeoutSec`); the group-gating lists
   (`mentionFreeGroups`, `knownBotUids`, `allowedBotUids`, `botBlocklist`) plus
   `groupConfigDir` and `onBehalfOf` are top-level defaults a bot may override — a
   per-bot value REPLACES the default. (Skills/workflows are **not** config fields;

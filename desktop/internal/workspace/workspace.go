@@ -357,8 +357,13 @@ func kindOf(mime string, textual bool) string {
 // FILES (round 10 Sec J2 — the prior skipDir list mixed file names like
 // `.netrc` in but readDir only consulted it for directories, so files
 // slipped through and were readable via File()).
+// skipDir reports whether the workspace file tree should refuse to descend
+// into the named child DIRECTORY. Comparison is case-INSENSITIVE — macOS
+// APFS-default and Windows NTFS resolve `.AWS/` to `.aws/` on read but
+// `os.ReadDir` returns the on-disk casing verbatim, so a case-sensitive
+// switch would silently leak `cp ~/.aws .AWS` (round 11 Sec).
 func skipDir(name string) bool {
-	switch name {
+	switch strings.ToLower(name) {
 	case ".claude",
 		// Cloud / SaaS credential stores. If the agent runs a Bash command
 		// that copies any of these into its cwd (e.g. a research turn that
@@ -383,13 +388,35 @@ func skipDir(name string) bool {
 // agent's bash might copy into cwd (`cp ~/.netrc .`). Consulted by both
 // readDir (so they don't appear in the tree) and File (so a hand-crafted
 // path can't read them either).
+//
+// All matches are case-INSENSITIVE — macOS APFS-default and Windows NTFS
+// preserve case on read but resolve case-insensitively, so a file landing
+// as `.NETRC` or `Id_Rsa` would slip a case-sensitive list (round 11 Sec).
+// Two match modes:
+//   - exact basename (lowercase) — for canonical names like `.netrc`,
+//     `authorized_keys`, `id_rsa` and its family
+//   - dangerous extension — for cert/key file types whose names vary
+//     widely (`server.key`, `mycert.pem`, `wallet.kdbx`)
 func skipFile(name string) bool {
-	switch name {
+	lc := strings.ToLower(name)
+	switch lc {
 	case ".netrc", ".npmrc", ".pypirc",
 		".git-credentials", ".pgpass",
 		".my.cnf",
 		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
-		"id_rsa.pub", "id_ecdsa.pub", "id_ed25519.pub":
+		"id_rsa.pub", "id_ecdsa.pub", "id_ed25519.pub",
+		"authorized_keys", "known_hosts":
+		return true
+	}
+	// `.env` / `.env.local` / `.env.production` …
+	if lc == ".env" || strings.HasPrefix(lc, ".env.") {
+		return true
+	}
+	// Common cert / key / keystore / password-store extensions.
+	switch filepath.Ext(lc) {
+	case ".pem", ".key", ".p12", ".pfx",
+		".jks", ".keystore", ".kdbx",
+		".kubeconfig", ".ovpn":
 		return true
 	}
 	return false

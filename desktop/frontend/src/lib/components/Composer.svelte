@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "../store.svelte";
+  import { isImeComposing } from "../keys";
 
   let draft = $state("");
   let ta: HTMLTextAreaElement;
@@ -23,14 +24,12 @@
     requestAnimationFrame(autogrow);
   }
   function onKey(e: KeyboardEvent) {
-    // Skip during IME composition: CJK input methods commit a candidate
-    // (Pinyin / Wubi / Kana / Hangul) by pressing Enter, and the browser
-    // delivers that same Enter to keydown handlers with isComposing=true.
+    // Skip during IME composition (CJK Pinyin / Wubi / Kana / Hangul commit
+    // candidates with Enter, delivered as keydown with isComposing=true).
     // Without this guard the handler swallows the commit and ships a
-    // half-typed pinyin/romaji string — every other message for Chinese
-    // and Japanese users. e.keyCode === 229 is the legacy fallback for
-    // older webviews that don't set isComposing.
-    if (e.isComposing || e.keyCode === 229) return;
+    // half-typed pinyin/romaji string — every other message for Chinese,
+    // Japanese, Korean users.
+    if (isImeComposing(e)) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   }
 </script>

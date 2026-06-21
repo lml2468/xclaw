@@ -372,7 +372,7 @@ func fireCronTask(ctx context.Context, gw *gateway.Gateway, connector *octo.Conn
 		fmt.Fprintf(os.Stderr, "cron: task %s has unroutable coords: %v\n", t.ID, err)
 		return
 	}
-	connector.EnqueueCron(key, t.ChannelID, octoType, inbound, t.CreatedBy)
+	connector.EnqueueCron(key, t.ChannelID, octoType, inbound)
 }
 
 // makeMultiBotHandler routes control-bus commands by botId across the registry.

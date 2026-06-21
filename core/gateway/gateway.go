@@ -639,7 +639,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
 		if resumeBad && resume != "" && attempt == 0 {
 			fmt.Fprintf(os.Stderr, "[gateway] stale resume id for %s; clearing and retrying fresh\n", sessionKey)
-			_ = g.store.ClearResume(sessionKey)
+			// Per-agent clear (round 11): self-heal only nukes THIS driver's
+			// row, not every agent's. Round 10's composite-PK promise was
+			// that two drivers can hold concurrent resume ids; a blanket
+			// ClearResume(sessionKey) would have crossed that boundary.
+			_ = g.store.ClearResumeForAgent(sessionKey, g.driver.Name())
 			resume = ""
 			continue
 		}

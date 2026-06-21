@@ -107,6 +107,12 @@ if [[ -n "$octo_tag" ]]; then
   # non-code file would break the bundle signature.
   mkdir -p "$bundle/Contents/Resources"
   cp "$out/octo-cli.version" "$bundle/Contents/Resources/octo-cli.version"
+  # SHA-256 sidecar (round 11 Sec) — EnsureInstalled verifies the helper
+  # against this before copying it to ~/.xclaw/bin. Without it, anyone with
+  # write access to Helpers/ (admin, tampered .zip, post-install attacker)
+  # could swap the binary and have it silently executed as the user on
+  # next launch. Sits in Resources so it's sealed as data, not signed code.
+  ( cd "$bundle/Contents/Helpers" && shasum -a 256 octo-cli ) > "$bundle/Contents/Resources/octo-cli.sha256"
 fi
 
 if [[ -n "$sign_identity" ]]; then

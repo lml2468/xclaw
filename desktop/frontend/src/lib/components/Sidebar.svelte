@@ -11,16 +11,21 @@
   let { onedit, onusage, onpalette, collapsed = false }:
     { onedit: () => void; onusage: () => void; onpalette: () => void; collapsed?: boolean } = $props();
 
+  // Relative timestamp for the sidebar's session list. The rest of the UI
+  // is Chinese (sidebar headers 会话/BOTS, settings 编辑Bot/技能/工作流,
+  // error toasts, etc.); the prior "now/5m/2h/3d" was the one English
+  // helper that drifted (round 11 F3). Kept the same compact one-token
+  // shape that fits the .time slot.
   function relTime(ms: number): string {
     if (!ms) return "";
     const d = (Date.now() - ms) / 1000;
-    if (d < 60) return "now";
-    if (d < 3600) return `${Math.floor(d / 60)}m`;
-    if (d < 86400) return `${Math.floor(d / 3600)}h`;
-    return `${Math.floor(d / 86400)}d`;
+    if (d < 60) return "刚刚";
+    if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
+    if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;
+    return `${Math.floor(d / 86400)} 天前`;
   }
   const preview = (s: any) =>
-    s.awaiting ? "replying…" : (s.messages.at(-1)?.text ?? s.preview ?? "No messages yet");
+    s.awaiting ? "正在回复…" : (s.messages.at(-1)?.text ?? s.preview ?? "暂无消息");
 
   // In-app light/dark toggle (persisted). The store also honours ?theme=.
   // The button shows the icon for the OPPOSITE state — sun while in dark

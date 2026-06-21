@@ -6,6 +6,7 @@
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
+  import { isImeComposing } from "../keys";
   import ErrorFooter from "./ErrorFooter.svelte";
 
   let { botId, isPreview = false }: { botId: string; isPreview?: boolean } = $props();
@@ -138,7 +139,7 @@
     {/each}
     {#if skills.length === 0}<div class="muted">该 Bot 还没有技能</div>{/if}
     <div class="new">
-      <input placeholder="新建技能名称" aria-label="新建技能名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createOwn()} />
+      <input placeholder="新建技能名称" aria-label="新建技能名称" bind:value={newName} onkeydown={(e) => { if (!isImeComposing(e) && e.key === "Enter") createOwn(); }} />
       <button class="add" onclick={createOwn} disabled={!newName.trim()}>+ 新建技能</button>
     </div>
   </aside>
@@ -158,7 +159,7 @@
             </div>
           {/each}
           <div class="new">
-            <input placeholder="路径/文件.ext" bind:value={newFilePath} onkeydown={(e) => e.key === "Enter" && addFile()} />
+            <input placeholder="路径/文件.ext" bind:value={newFilePath} onkeydown={(e) => { if (!isImeComposing(e) && e.key === "Enter") addFile(); }} />
             <button class="add" onclick={addFile} disabled={!newFilePath.trim()}>+ 添加文件</button>
           </div>
         </div>

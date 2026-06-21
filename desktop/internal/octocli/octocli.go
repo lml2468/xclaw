@@ -147,6 +147,16 @@ func bundledBinary() (path, version string) {
 // (an app update) — but never downgrades a binary the user upgraded via Upgrade.
 // Best-effort: a dev build with no bundle is a no-op (the user can still
 // Upgrade to download octo-cli).
+//
+// Verifies the bundled binary's SHA-256 against a sha256 sidecar shipped
+// alongside the version file (Contents/Resources/octo-cli.sha256), so a
+// post-build / post-install tamper of the helper — anyone with write access
+// to XClaw.app/Contents/Helpers/ on a non-Developer-signed bundle, e.g. an
+// admin user, a tampered .zip downloaded over HTTP, a malicious package
+// extractor — fails closed instead of getting silently installed and
+// executed (round 11 Sec). When the sidecar is missing (dev builds, older
+// app images) install proceeds with a stderr warning so the operator knows
+// the integrity gate is off.
 func EnsureInstalled() error {
 	src, bundledVer := bundledBinary()
 	if src == "" {
@@ -156,6 +166,9 @@ func EnsureInstalled() error {
 	if isFile(BinPath()) && !(bundledVer != "" && compareVersions(bundledVer, installed) > 0) {
 		return nil // already installed and not older than the bundle
 	}
+	if err := verifyBundledSHA(src); err != nil {
+		return fmt.Errorf("EnsureInstalled: bundled octo-cli integrity check failed: %w", err)
+	}
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return err
 	}
@@ -164,6 +177,48 @@ func EnsureInstalled() error {
 	}
 	if bundledVer != "" {
 		writeVersion(bundledVer)
+	}
+	return nil
+}
+
+// verifyBundledSHA hashes src and compares to the expected sha256 written in
+// the app bundle's Resources/octo-cli.sha256 sidecar (one hex digest per
+// line; the first token wins so the file can carry an optional filename
+// suffix in shasum -a 256 format). A missing sidecar is treated as
+// "integrity gate disabled" — logged to stderr so the operator knows — but
+// does NOT block install (dev builds and pre-round-11 app images don't ship
+// the sidecar yet; a build that DOES ship one expects it to be honored).
+func verifyBundledSHA(src string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil // no executable path means no bundle — skip
+	}
+	contents := filepath.Dir(filepath.Dir(exe))
+	shaPath := filepath.Join(contents, "Resources", "octo-cli.sha256")
+	raw, err := os.ReadFile(shaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "[octocli] WARNING: %s missing — installing bundled binary without integrity check (dev build or pre-round-11 app image)\n", shaPath)
+			return nil
+		}
+		return fmt.Errorf("read sha256 sidecar: %w", err)
+	}
+	want := strings.ToLower(strings.TrimSpace(strings.Fields(string(raw))[0]))
+	if len(want) != 64 {
+		return fmt.Errorf("sha256 sidecar malformed: expected 64 hex chars, got %d", len(want))
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open bundled binary: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash bundled binary: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != want {
+		return fmt.Errorf("bundled octo-cli sha256 mismatch: have %s, want %s", got, want)
 	}
 	return nil
 }

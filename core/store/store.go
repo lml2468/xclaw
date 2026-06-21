@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Composite PK on (session_key, agent) so two drivers can hold concurrent
 -- resume ids for the same logical session without one overwriting the
 -- other; Resume() filters by agent so a Claude id is never silently
--- handed to a Codex driver (round 10).
+-- handed to a Codex driver (round 10). Existing pre-round-10 DBs with
+-- the old single-column-PK shape are rebuilt by Open's
+-- migrateAgentSessions BEFORE this DDL runs.
 CREATE TABLE IF NOT EXISTS agent_sessions (
   session_key TEXT NOT NULL,
   agent       TEXT NOT NULL,
@@ -104,6 +106,15 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Run pre-schema migrations FIRST so the schema's IF-NOT-EXISTS DDL
+	// (which can't ALTER an existing table) doesn't lock us into the old
+	// shape. agent_sessions in particular went from single-column PK
+	// (pre-round-10) to composite PK in round 10; the IF-NOT-EXISTS form
+	// is a no-op against the legacy shape, so SaveResume's ON CONFLICT(...)
+	// fails until we destructively rebuild the table.
+	if err := migrateAgentSessions(db); err != nil {
+		return nil, err
+	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
 	}
@@ -111,6 +122,61 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// migrateAgentSessions rebuilds the agent_sessions table when it carries the
+// pre-round-10 single-column PK shape. SQLite has no portable ALTER for PK,
+// so we copy → drop → recreate via the current schema (run by Open right
+// after) → restore the rows. Idempotent: a no-op when the table already has
+// the composite shape (or when it doesn't exist yet — a fresh DB).
+//
+// We preserve the existing rows verbatim; pre-round-10 rows are all
+// single-(session_key) so the de-dup-into-composite-PK collision can't fire.
+func migrateAgentSessions(db *sql.DB) error {
+	// 1. Does the table exist at all? (Fresh DB → skip; schema below creates it.)
+	var tableSQL string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_sessions'`,
+	).Scan(&tableSQL)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("agent_sessions detect: %w", err)
+	}
+	// 2. Already composite? Look for the composite PRIMARY KEY tuple. (The
+	// substring check is robust to whitespace; the schema constant is the
+	// only thing that generates this DDL.)
+	if strings.Contains(tableSQL, "PRIMARY KEY (session_key, agent)") ||
+		strings.Contains(tableSQL, "PRIMARY KEY(session_key, agent)") {
+		return nil
+	}
+	// 3. Legacy shape — rebuild. Wrap in a tx so a crash mid-migration can't
+	// orphan the data.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("agent_sessions migrate tx: %w", err)
+	}
+	defer tx.Rollback()
+	stmts := []string{
+		`ALTER TABLE agent_sessions RENAME TO agent_sessions_legacy`,
+		`CREATE TABLE agent_sessions (
+		   session_key TEXT NOT NULL,
+		   agent       TEXT NOT NULL,
+		   resume_id   TEXT NOT NULL,
+		   updated_at  INTEGER NOT NULL,
+		   PRIMARY KEY (session_key, agent)
+		 )`,
+		`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at)
+		 SELECT session_key, agent, resume_id, updated_at FROM agent_sessions_legacy`,
+		`DROP TABLE agent_sessions_legacy`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("agent_sessions migrate: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateTokenUsage folds the legacy single-row token_usage aggregate (pre
@@ -430,10 +496,29 @@ func (s *Store) Resume(sessionKey, agent string) (string, error) {
 	return id, nil
 }
 
-// ClearResume drops the resume mapping (used by /reset).
+// ClearResume drops EVERY agent's resume mapping for sessionKey. Used by
+// /reset (the user-facing reset), which intentionally severs continuity
+// across all drivers — a /reset on a session means "start fresh, regardless
+// of which agent was last in charge."
 func (s *Store) ClearResume(sessionKey string) error {
 	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=?`, sessionKey); err != nil {
 		return fmt.Errorf("clear resume: %w", err)
+	}
+	return nil
+}
+
+// ClearResumeForAgent drops the resume mapping for ONE (sessionKey, agent)
+// pair. Used by the gateway self-heal path (round 11): when ONE driver
+// emits ResumeInvalid, only ITS row should be cleared — nuking every
+// driver's row would contradict the round-10 composite-PK promise that
+// two drivers can hold concurrent resume ids without one feeding the
+// other a stale id.
+func (s *Store) ClearResumeForAgent(sessionKey, agent string) error {
+	if agent == "" {
+		return fmt.Errorf("clear resume: agent name required")
+	}
+	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=? AND agent=?`, sessionKey, agent); err != nil {
+		return fmt.Errorf("clear resume (agent): %w", err)
 	}
 	return nil
 }

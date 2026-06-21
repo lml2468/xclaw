@@ -118,11 +118,22 @@ func (m *Manager) SetLabel(label string) { m.label = label }
 // the OLD persona grantor, posting messages "on behalf of" someone who
 // never consented.
 func (m *Manager) SetOwnerUID(uid string) {
+	// Refuse empty uid OUTRIGHT — don't even swap. An empty m.ownerUID
+	// turns cron.Create's `RequestUID == OwnerUID()` gate into
+	// `"" == ""`, letting an unauthenticated control-bus caller create
+	// tasks under the bot's identity (round 11 Sec). The only legitimate
+	// callers are connector.OnOwner (fires only after a successful
+	// BotRegisterResp with a non-empty server-resolved uid) and tests; both
+	// already pass non-empty values, so a "" arriving here means a
+	// malformed reconnect response or a future caller bug — fail closed.
+	if uid == "" {
+		return
+	}
 	m.ownerMu.Lock()
 	prior := m.ownerUID
 	m.ownerUID = uid
 	m.ownerMu.Unlock()
-	if uid == "" || prior == uid {
+	if prior == uid {
 		return
 	}
 	// Drop tasks whose CreatedBy doesn't match the (new) owner.

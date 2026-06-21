@@ -149,7 +149,7 @@ func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 	const key = "dm:bot1:peer"
 	// Task authored by the bot owner (the production case): stamp onBehalfOf.
 	// taskCreatedBy is accepted for tracing but doesn't gate the stamp anymore.
-	c.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"}, "u_bot_owner")
+	c.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"})
 	c.mu.Lock()
 	q := c.turnQueues[key]
 	if q == nil || len(q.pending) != 1 {
@@ -164,7 +164,7 @@ func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 
 	// Sanity: with NO persona configured, no onBehalfOf stamp.
 	c2 := NewConnector(NewRESTClient("http://x", func() string { return "tk" }))
-	c2.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"}, "u_anyone")
+	c2.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"})
 	c2.mu.Lock()
 	q2 := c2.turnQueues[key]
 	if q2 == nil || len(q2.pending) != 1 {
@@ -206,7 +206,7 @@ func TestNoTargetMapStompUnderConcurrentEnqueue(t *testing.T) {
 
 	tgtA := replyTarget{channelID: "chanA", channelType: ChannelDM}
 	c.enqueueTurn(key, router.InboundMessage{ChannelID: "chanA", ChannelType: router.ChannelDM, Text: "A"}, tgtA)
-	c.EnqueueCron(key, "chanB", ChannelDM, router.InboundMessage{ChannelID: "chanB", ChannelType: router.ChannelDM, Text: "B"}, "")
+	c.EnqueueCron(key, "chanB", ChannelDM, router.InboundMessage{ChannelID: "chanB", ChannelType: router.ChannelDM, Text: "B"})
 
 	// c.targets MUST be empty: no writer besides drainTurns (which we
 	// prevented from running). A regression that re-adds an onInbound /

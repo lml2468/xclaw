@@ -4,6 +4,7 @@
   // real store; no mock data. Fully keyboard-driven: ↑/↓ to move, Enter to pick,
   // Esc to close.
   import { store } from "../store.svelte";
+  import { isImeComposing } from "../keys";
   import Avatar from "./Avatar.svelte";
 
   let { onclose, onedit, onskills, onworkflows, onusage }:
@@ -57,12 +58,10 @@
   function runCmd(fn: () => void) { onclose(); fn(); }
 
   function onKey(e: KeyboardEvent) {
-    // Skip during IME composition (CJK Pinyin / Kana / Hangul commit
-    // candidates with Enter, delivered as keydown with isComposing=true).
-    // Without this guard the highlighted item runs on the commit keystroke
-    // and the actual search text is lost. keyCode 229 is the legacy
-    // fallback for webviews that don't set isComposing.
-    if (e.isComposing || e.keyCode === 229) return;
+    // Skip during IME composition. See lib/keys.ts isImeComposing — CJK
+    // commit Enter would otherwise pick the highlighted palette item
+    // mid-pinyin/kana entry.
+    if (isImeComposing(e)) return;
     if (e.key === "Escape") { e.preventDefault(); onclose(); }
     else if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) active = (active + 1) % items.length; }
     else if (e.key === "ArrowUp") { e.preventDefault(); if (items.length) active = (active - 1 + items.length) % items.length; }

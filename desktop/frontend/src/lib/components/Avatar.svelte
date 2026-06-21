@@ -18,7 +18,11 @@
     return Math.abs(h);
   }
   const color = $derived(palette[hash(name || "x") % palette.length]);
-  const initial = $derived((name.trim()[0] || "?").toUpperCase());
+  // Unicode-safe first character: `name[0]` indexes UTF-16 CODE UNITS, so
+  // for a name starting with an emoji or a surrogate-pair script
+  // (`🐙Bot`, `𠮷田` — JIS extension kanji at U+20BB7) it returns half a
+  // surrogate pair and renders mojibake. `[...str]` iterates code points.
+  const initial = $derived((([...name.trim()][0]) || "?").toUpperCase());
   const radius = $derived(Math.round(size * 0.09));
 </script>
 

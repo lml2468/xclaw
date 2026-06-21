@@ -136,8 +136,13 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 		if *count >= maxEntries {
 			break
 		}
-		*count++
 		name := e.Name()
+		// Refuse credential-bearing FILES outright (don't even list them).
+		// Directory-level skip happens via skipDir below once we decide isDir.
+		if !e.IsDir() && skipFile(name) {
+			continue
+		}
+		*count++
 		childRel := name
 		if rel != "" {
 			childRel = rel + "/" + name
@@ -170,6 +175,12 @@ func resolveIn(root, rel string) (string, error) {
 // non-text content (images, binaries) so the UI can render it via a data URL.
 func File(botID, sessionKey, relPath string) (FileContent, error) {
 	var fc FileContent
+	// Refuse credential-bearing dotfiles at the door (Sec J2). A hand-crafted
+	// File("..../.netrc") path would otherwise bypass the tree-level filter
+	// (readDir skips listing these but the path resolver doesn't refuse them).
+	if skipFile(filepath.Base(relPath)) {
+		return fc, fmt.Errorf("path is a credential-bearing file: %q", relPath)
+	}
 	root, exists, err := resolveRoot(botID, sessionKey)
 	if err != nil {
 		return fc, err
@@ -340,6 +351,12 @@ func kindOf(mime string, textual bool) string {
 //     self-exposure, not RCE, but a viewing pane shouldn't surface secrets
 //     by default. Operators who specifically want to inspect a `.aws/` dir
 //     can still `cat` it via the agent's tools.
+//
+// skipDir reports whether the workspace file tree should refuse to descend
+// into the named child DIRECTORY. Use skipFile for credential-bearing
+// FILES (round 10 Sec J2 — the prior skipDir list mixed file names like
+// `.netrc` in but readDir only consulted it for directories, so files
+// slipped through and were readable via File()).
 func skipDir(name string) bool {
 	switch name {
 	case ".claude",
@@ -353,9 +370,26 @@ func skipDir(name string) bool {
 		".docker", ".kube", ".helm",
 		".cloudflared", ".terraform.d",
 		".cargo", ".m2", ".gradle",
-		".snowsql", ".databricks",
-		".npmrc", ".pypirc", ".netrc",
+		".snowsql", ".databricks", ".kaggle",
+		".continue", ".ipython",
 		".config":
+		return true
+	}
+	return false
+}
+
+// skipFile reports whether the workspace file tree should refuse to LIST
+// or READ the named file. Catches credential-bearing dotfiles that an
+// agent's bash might copy into cwd (`cp ~/.netrc .`). Consulted by both
+// readDir (so they don't appear in the tree) and File (so a hand-crafted
+// path can't read them either).
+func skipFile(name string) bool {
+	switch name {
+	case ".netrc", ".npmrc", ".pypirc",
+		".git-credentials", ".pgpass",
+		".my.cnf",
+		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+		"id_rsa.pub", "id_ecdsa.pub", "id_ed25519.pub":
 		return true
 	}
 	return false

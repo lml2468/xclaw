@@ -476,7 +476,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Resume the agent's prior session if we have one. A real read error (not
 	// "no row") degrades the turn to a fresh session — acceptable, but log it so
 	// silent loss of conversation continuity is diagnosable.
-	resumeID, err := g.store.Resume(sessionKey)
+	resumeID, err := g.store.Resume(sessionKey, g.driver.Name())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[gateway] resume %s: %v\n", sessionKey, err)
 	}

@@ -163,17 +163,22 @@ func (c *Connector) RegisterReplyTarget(sessionKey, channelID string, channelTyp
 // (connector.WaitTurns + cm.Wait) ensures the in-flight turn finishes
 // before the store closes.
 //
-// taskCreatedBy is the uid that authored the task at create-time. Used by
-// the persona-grantor stamp: we only speak `on_behalf_of` the current
-// grantor when the task itself was authored by that grantor's identity.
-// Without this guard (round 9 Sec F1), a task authored under one persona
-// would silently fire `on_behalf_of` a DIFFERENT persona after a grantor
-// rotation — speaking on behalf of someone who never consented. (The
-// owner-transfer drop in cron.SetOwnerUID is the primary defense; this is
-// defense in depth for the persona-vs-owner mismatch case.)
+// taskCreatedBy is the uid that authored the task at create-time. It is
+// recorded on the queue item for downstream tracing but no longer
+// participates in the persona-grantor stamp: in production
+// `task.CreatedBy = bot owner UID` (set by cron.create from the
+// server-resolved OwnerUID), so the round-9 `taskCreatedBy == c.persona.UID`
+// check was effectively dead code — persona-clone bots' scheduled prompts
+// always replied as the bot, never as the grantor (Sec J4). The proper
+// trust model: cron.SetOwnerUID prunes any task whose CreatedBy isn't the
+// current owner (rounds 9 F1 + 10 J1); a task that survives that fence
+// is operator-authored on this bot, and the operator-configured persona
+// is allowed to speak for it. The persona is the cron's identity by
+// design — same as for any live reply.
 func (c *Connector) EnqueueCron(sessionKey, channelID string, channelType ChannelType, inbound router.InboundMessage, taskCreatedBy string) {
+	_ = taskCreatedBy // accepted for future tracing; trust comes from owner-prune
 	tgt := replyTarget{channelID: channelID, channelType: channelType}
-	if c.persona.UID != "" && taskCreatedBy == c.persona.UID {
+	if c.persona.UID != "" {
 		tgt.onBehalfOf = c.persona.UID
 	}
 	c.enqueueTurn(sessionKey, inbound, tgt)

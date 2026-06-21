@@ -32,22 +32,28 @@ import (
 // `extra` parameter, NOT via inheritance. Operators with unusual setups can
 // extend the list, but the default is fail-closed.
 var envAllowlist = map[string]struct{}{
-	"HOME":              {}, // ~/.claude lookups, ~/.npmrc, etc.
-	"USER":              {}, // some CLIs read it for prompts/log lines
-	"LOGNAME":           {}, // POSIX alias for USER
-	"PATH":              {}, // resolve `node`, `git`, `claude`, etc.
-	"TMPDIR":            {}, // child writes scratch files
-	"TMP":               {}, // Windows analogue
-	"TEMP":              {}, // Windows analogue
-	"LANG":              {}, // locale; affects message formatting
-	"LC_ALL":            {}, // locale override
-	"LC_CTYPE":          {}, // locale subset commonly set on macOS
-	"TZ":                {}, // time zone
-	"TERM":              {}, // some CLIs check before printing ANSI
-	"SSL_CERT_FILE":     {}, // CA bundle override
-	"SSL_CERT_DIR":      {}, // CA bundle override
-	"NODE_PATH":         {}, // node module resolution for claude
-	"NODE_OPTIONS":      {}, // operator-tuned node flags
+	"HOME":          {}, // ~/.claude lookups, ~/.npmrc, etc.
+	"USER":          {}, // some CLIs read it for prompts/log lines
+	"LOGNAME":       {}, // POSIX alias for USER
+	"PATH":          {}, // resolve `node`, `git`, `claude`, etc.
+	"TMPDIR":        {}, // child writes scratch files
+	"TMP":           {}, // Windows analogue
+	"TEMP":          {}, // Windows analogue
+	"LANG":          {}, // locale; affects message formatting
+	"LC_ALL":        {}, // locale override
+	"LC_CTYPE":      {}, // locale subset commonly set on macOS
+	"TZ":            {}, // time zone
+	"TERM":          {}, // some CLIs check before printing ANSI
+	"SSL_CERT_FILE": {}, // CA bundle override
+	"SSL_CERT_DIR":  {}, // CA bundle override
+	"NODE_PATH":     {}, // node module resolution for claude
+	// NOTE: NODE_OPTIONS was deliberately REMOVED in round 10 — it's an
+	// RCE pass-through. `NODE_OPTIONS=--require=/tmp/evil.js` executes
+	// arbitrary JS in the claude child at startup, same category as the
+	// SHELL drop in round 9 but executable. Operators who genuinely need a
+	// node flag set per bot can supply it via `agent.env`, which flows
+	// through `extra` (and is reviewed at config-edit time), not via the
+	// inherited operator environment.
 	"NPM_CONFIG_PREFIX": {}, // npm-installed claude lookups
 	// Corporate proxies — universally honored by node, curl, and the
 	// Anthropic SDK. NOT secrets; dropping them silently breaks claude

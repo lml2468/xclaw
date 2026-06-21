@@ -57,11 +57,16 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- Maps a logical sessionKey to the agent's resume id (Claude session id /
 -- Codex thread id). Separate lifecycle from sessions; cleared on /reset.
+-- Composite PK on (session_key, agent) so two drivers can hold concurrent
+-- resume ids for the same logical session without one overwriting the
+-- other; Resume() filters by agent so a Claude id is never silently
+-- handed to a Codex driver (round 10).
 CREATE TABLE IF NOT EXISTS agent_sessions (
-  session_key TEXT PRIMARY KEY,
+  session_key TEXT NOT NULL,
   agent       TEXT NOT NULL,
   resume_id   TEXT NOT NULL,
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (session_key, agent)
 );
 
 -- Group answered/new segmentation cursor (cc G10 / openclaw lastBotReplySeqMap):
@@ -384,12 +389,18 @@ func (s *Store) usageWhere(cond string, args ...any) (TokenUsage, error) {
 
 // --- resume map ---
 
-// SaveResume records (or replaces) the resume id for a session key.
+// SaveResume records (or replaces) the resume id for a (sessionKey, agent)
+// pair. The agent name is part of the conflict key: a resume id minted by
+// the claude CLI must not be silently fed back to a different driver
+// (Codex / Gemini) that can't honor it (round 10 store key-by-agent fix).
 func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
+	if agent == "" {
+		return fmt.Errorf("save resume: agent name required")
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at)
 		 VALUES(?,?,?,?)
-		 ON CONFLICT(session_key) DO UPDATE SET agent=excluded.agent,
+		 ON CONFLICT(session_key, agent) DO UPDATE SET
 		   resume_id=excluded.resume_id, updated_at=excluded.updated_at;`,
 		sessionKey, agent, resumeID, s.now().Unix())
 	if err != nil {
@@ -398,10 +409,18 @@ func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
 	return nil
 }
 
-// Resume returns the stored resume id for a session key ("" if none).
-func (s *Store) Resume(sessionKey string) (string, error) {
+// Resume returns the stored resume id for a (sessionKey, agent) pair, or ""
+// if none. The agent filter is load-bearing: prior code keyed on sessionKey
+// alone and would silently return a Claude resume id to a Codex driver
+// (latent multi-driver bug — only one driver exists today, but the seam is
+// documented as additive). Empty agent argument returns "" (and would have
+// matched anything in the old schema).
+func (s *Store) Resume(sessionKey, agent string) (string, error) {
+	if agent == "" {
+		return "", nil
+	}
 	var id string
-	err := s.db.QueryRow(`SELECT resume_id FROM agent_sessions WHERE session_key=?`, sessionKey).Scan(&id)
+	err := s.db.QueryRow(`SELECT resume_id FROM agent_sessions WHERE session_key=? AND agent=?`, sessionKey, agent).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

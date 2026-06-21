@@ -20,27 +20,41 @@ func openTemp(t *testing.T) *Store {
 
 func TestResumeRoundTrip(t *testing.T) {
 	s := openTemp(t)
-	if got, _ := s.Resume("group:123"); got != "" {
+	if got, _ := s.Resume("group:123", "claude"); got != "" {
 		t.Fatalf("expected empty for unknown key, got %q", got)
 	}
 	if err := s.SaveResume("group:123", "claude", "sess-abc"); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "sess-abc" {
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-abc" {
 		t.Fatalf("got %q want sess-abc", got)
 	}
-	// upsert replaces
-	if err := s.SaveResume("group:123", "codex", "thr-def"); err != nil {
+	// Saving the same (key, agent) replaces.
+	if err := s.SaveResume("group:123", "claude", "sess-xyz"); err != nil {
 		t.Fatalf("re-save: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "thr-def" {
-		t.Fatalf("upsert failed: got %q", got)
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-xyz" {
+		t.Fatalf("upsert (same agent) failed: got %q", got)
 	}
-	// clear
+	// A DIFFERENT agent's save for the same key does NOT overwrite — round-10
+	// fix: (session_key, agent) is the composite PK so Claude and Codex
+	// drivers can hold concurrent resume ids for the same logical session
+	// without one silently feeding the other a stale id.
+	if err := s.SaveResume("group:123", "codex", "thr-def"); err != nil {
+		t.Fatalf("save second agent: %v", err)
+	}
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-xyz" {
+		t.Fatalf("claude resume id should be unchanged after codex save: got %q", got)
+	}
+	if got, _ := s.Resume("group:123", "codex"); got != "thr-def" {
+		t.Fatalf("codex resume not stored: got %q", got)
+	}
+	// clear drops every agent's row for the key (a /reset clears the whole
+	// session, regardless of which driver authored it).
 	if err := s.ClearResume("group:123"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "" {
+	if got, _ := s.Resume("group:123", "claude"); got != "" {
 		t.Fatalf("clear failed: got %q", got)
 	}
 }

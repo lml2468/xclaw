@@ -139,3 +139,92 @@ choosing what version to deploy:
   module-cache absolute paths or the local VCS-dirty flag.
 - **CI coverage**. `govulncheck` runs on both the `core` and `desktop`
   modules now (was core-only); `go test -race` runs on both Linux and macOS.
+
+## Trust model invariants
+
+These invariants are load-bearing across the rounds 8–10 hardening work. They're
+documented here so a future contributor doesn't accidentally weaken any of them.
+
+### Cron-task ownership
+
+- `cron.Manager.OwnerUID` is set from the **server-resolved** bot owner uid
+  (from the octo `register` response), NEVER from a client-supplied body.
+- `cron.create` is gated on the *server-resolved* owner uid — the body's
+  `uid` field is ignored for authorization; it's only echoed into the task's
+  `FromUID` for routing.
+- On `SetOwnerUID(newUID)`, every persisted task whose `CreatedBy != newUID`
+  is dropped. This covers two scenarios:
+    1. In-process owner change (bf_ token rotation while the daemon is up).
+    2. First owner resolve after a daemon restart against tasks that
+       `cron.json` carried over from a prior owner.
+  Without this, an operator-handoff or attacker-rotation would silently
+  inherit every prior owner's scheduled prompts.
+- Cron prompts are operator-trusted content (only the bot owner can author
+  them). Stored in plaintext at `~/.xclaw/<id>/cron.json` (mode `0o600`).
+
+### Persona / OBO clones
+
+- The persona grantor uid is set ONCE at daemon startup from per-bot config
+  (`onBehalfOf.uid`), NEVER mutated at runtime. No code path reloads it
+  without a daemon restart.
+- OBO v2 fields on inbound messages (`obo_origin_channel_id`,
+  `obo_respond_as`, etc.) are honored ONLY when `m.FromUID == c.persona.UID`
+  (the configured grantor is the one relaying). A forged OBO v2 message from
+  any other uid is dropped — the trust comes from the FROM uid, not the
+  body claim.
+- Cron-fired turns on a persona-clone bot reply `on_behalf_of` the
+  configured grantor (same identity as live replies). Trust derives from
+  the owner-prune (above), not from `task.CreatedBy` (which is always the
+  bot owner uid in production, not the grantor).
+
+### Inbound→outbound target binding (round 8 F1-Arch + round 9 F1)
+
+- The reply target for each turn travels with the turn on the per-session
+  queue (`queuedTurn.tgt`). `drainTurns` is the SOLE writer of
+  `c.targets[key]` and sets it just before `gw.Handle` runs.
+- `onInbound` and `EnqueueCron` enqueue the turn (with target) and do not
+  touch `c.targets[key]` directly. This prevents the wrong-recipient
+  delivery race that existed when concurrent inbound + cron on the same
+  sessionKey stomped a shared per-key target slot.
+
+### Cron shutdown ordering (rounds 8 F2 → 9 F2 → 10 R10-F1)
+
+Graceful shutdown sequence in `runBot`:
+
+1. `cm.Stop()` — halts the scheduler loop and *waits for the loop
+   goroutine to exit* (round 10: prevents a tick from spawning a fire
+   after Stop returned).
+2. `cm.Wait()` — drains any in-flight `safeFire` goroutines.
+3. `connector.WaitTurns()` — sets `closed=true` (refuses any further
+   enqueue) then drains every `drainTurns` worker.
+4. `rtBot.target.turnsWG.Wait()` — drains any control-bus `session.send`
+   goroutines.
+5. Return → deferred `st.Close()` fires.
+
+A tick or inbound that lands between steps 1 and 3 is refused at
+`enqueueTurn` (sees `closed=true`). Without this ordering a late cron fire
+would write to a closed store — `"database is closed"` data loss.
+
+### Agent subprocess environment
+
+- The agent subprocess inherits ONLY the variables on `core/agent.envAllowlist`
+  (HOME / PATH / locale / proxy trio / SSL CA bundle pointers / `LC_*`).
+  Operator env that might carry secrets — `AWS_*`, `GH_TOKEN`,
+  `OPENAI_API_KEY`, `SSH_AUTH_SOCK`, etc. — is dropped. Specifically NOT
+  inherited: `SHELL` (dropped round 9), `NODE_OPTIONS` (dropped round 10
+  — it's an RCE pass-through via `--require=/tmp/evil.js`).
+- Per-bot env (`agent.env` in config) flows through `extra` and is the
+  supported channel for operator-set variables; operators authoring
+  `agent.env` are accepting responsibility for whatever they put there.
+
+### Workspace file preview (`desktop/internal/workspace`)
+
+- Refuses to **list or read** a fixed set of credential-bearing dotfiles
+  (`.netrc`, `.npmrc`, `.git-credentials`, `id_rsa*`, `.pgpass`, `.my.cnf`)
+  even if the agent has copied them into its cwd.
+- Refuses to **descend into** a fixed set of credential-bearing dotdirs
+  (`.aws` / `.azure` / `.gcloud` / `.ssh` / `.gnupg` / `.docker` / `.kube`
+  / `.helm` / `.cloudflared` / `.terraform.d` / `.cargo` / `.m2` / `.gradle`
+  / `.snowsql` / `.databricks` / `.config` / `.continue` / `.kaggle`).
+- Never follows symlinks (would let `.claude/skills/<bundle>/` escape into
+  the global skill catalog).

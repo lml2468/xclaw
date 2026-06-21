@@ -132,17 +132,24 @@ func TestQueuedTurnsCarryOwnTarget(t *testing.T) {
 }
 
 // TestEnqueueCronCarriesPersonaGrantor is the regression for the round-8
-// F1-Arch persona slice + round-9 Sec F1 tightening: cron fires from a
-// persona-OBO bot stamp the grantor onto the queued target so the cron
-// reply speaks `on_behalf_of` the same identity as live replies, BUT only
-// when the task was authored by that grantor (post-round-9: prevents a
-// task from a prior grantor firing under a new grantor after rotation).
+// F1-Arch persona slice + round-10 Sec J4 simplification: cron fires from a
+// persona-OBO bot always stamp the grantor onto the queued target so the
+// cron reply speaks `on_behalf_of` the same identity as live replies.
+// The trust boundary is cron.SetOwnerUID's foreign-CreatedBy prune (rounds
+// 9 F1 + 10 J1): any task that survives that pruning belongs to the
+// current owner and the operator-configured persona is allowed to speak
+// for it. Round 10 dropped the `taskCreatedBy == c.persona.UID` filter
+// here because, in production, task.CreatedBy is the bot OWNER uid (set
+// from server-resolved OwnerUID), not the persona grantor uid — so the
+// filter was effectively dead code and persona-clone cron always replied
+// as the bot, never as the grantor.
 func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 	c := NewConnector(NewRESTClient("http://x", func() string { return "tk" }))
 	c.SetPersona(persona.Grantor{UID: "u_grantor", Name: "Admin"})
 	const key = "dm:bot1:peer"
-	// Task authored BY the grantor: stamp onBehalfOf.
-	c.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"}, "u_grantor")
+	// Task authored by the bot owner (the production case): stamp onBehalfOf.
+	// taskCreatedBy is accepted for tracing but doesn't gate the stamp anymore.
+	c.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"}, "u_bot_owner")
 	c.mu.Lock()
 	q := c.turnQueues[key]
 	if q == nil || len(q.pending) != 1 {
@@ -155,23 +162,20 @@ func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 	}
 	c.mu.Unlock()
 
-	// Task authored by a DIFFERENT uid (e.g. prior owner before rotation):
-	// must NOT speak on behalf of the current grantor. This is round-9 Sec F1:
-	// without this guard, a task scheduled before a persona handoff would
-	// silently fire `on_behalf_of` someone who never consented.
-	const key2 = "dm:bot1:other"
-	c.EnqueueCron(key2, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "old"}, "u_prior_owner")
-	c.mu.Lock()
-	q = c.turnQueues[key2]
-	if q == nil || len(q.pending) != 1 {
-		c.mu.Unlock()
-		t.Fatalf("expected 1 queued foreign-owner cron item, got %v", q)
+	// Sanity: with NO persona configured, no onBehalfOf stamp.
+	c2 := NewConnector(NewRESTClient("http://x", func() string { return "tk" }))
+	c2.EnqueueCron(key, "cron-channel", ChannelDM, router.InboundMessage{ChannelID: "cron-channel", ChannelType: router.ChannelDM, Text: "daily"}, "u_anyone")
+	c2.mu.Lock()
+	q2 := c2.turnQueues[key]
+	if q2 == nil || len(q2.pending) != 1 {
+		c2.mu.Unlock()
+		t.Fatalf("expected 1 queued cron item, got %v", q2)
 	}
-	if got := q.pending[0].tgt.onBehalfOf; got != "" {
-		c.mu.Unlock()
-		t.Errorf("cron task authored by foreign uid must NOT carry current persona grantor; got onBehalfOf=%q", got)
+	if got := q2.pending[0].tgt.onBehalfOf; got != "" {
+		c2.mu.Unlock()
+		t.Errorf("non-persona bot must not stamp onBehalfOf; got %q", got)
 	}
-	c.mu.Unlock()
+	c2.mu.Unlock()
 }
 
 // TestNoTargetMapStompUnderConcurrentEnqueue is the regression for round-9 F1:

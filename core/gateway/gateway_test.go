@@ -102,7 +102,7 @@ func TestFullTurnPipeline(t *testing.T) {
 		t.Fatalf("assistant content wrong: %q", msgs[1].Content)
 	}
 	// 4. resume id persisted.
-	if got, _ := st.Resume("u1"); got != "thr-1" {
+	if got, _ := st.Resume("u1", "fake"); got != "thr-1" {
 		t.Fatalf("resume not persisted: %q", got)
 	}
 }
@@ -265,7 +265,7 @@ func TestStaleResumeSelfHeals(t *testing.T) {
 		}
 	}
 	// The fresh resume id replaced the stale one.
-	if got, _ := st.Resume("u1"); got != "fresh-id" {
+	if got, _ := st.Resume("u1", "fake"); got != "fresh-id" {
 		t.Errorf("resume = %q, want fresh-id", got)
 	}
 }

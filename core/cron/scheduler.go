@@ -67,6 +67,16 @@ type Manager struct {
 	// connector.WaitTurns + botTarget.turnsWG (round 5 A3).
 	firesWG sync.WaitGroup
 
+	// loopWG tracks the scheduler loop goroutine itself so Stop can
+	// synchronously wait for it to exit. Without this (round 10 finding),
+	// `Stop()` would return as soon as it closed stopCh, but the loop
+	// goroutine could still be mid-`Tick()` — and Tick is what increments
+	// firesWG. Result: cm.Stop() → cm.Wait() race window in which Wait sees
+	// firesWG=0 and returns, then the still-running Tick spawns a fire
+	// goroutine, then connector.WaitTurns sets c.closed=true, then the fire
+	// reaches enqueueTurn(closed) and SILENTLY drops the cron prompt.
+	loopWG sync.WaitGroup
+
 	// fireSync, when true, makes Tick invoke onFire on the caller goroutine
 	// instead of dispatching to a new goroutine. Tests flip this so
 	// `Tick(); checkFireCount()` works without a poll-wait. Production
@@ -90,45 +100,56 @@ func (m *Manager) SetLabel(label string) { m.label = label }
 // call from any goroutine — guarded by ownerMu. The scheduler loop does not read
 // it (only Create/Delete do).
 //
-// On an ownership CHANGE (non-empty prior → different non-empty new), drops
-// every task whose CreatedBy isn't the new owner. Rationale (round 9 Sec F1):
-// an octo bot whose owner transfers — legitimate handoff OR an attacker who
-// rotates the bf_ token and re-registers — would otherwise inherit every
-// previously scheduled prompt. Those prompts fire with FromUID = old owner;
-// for persona-OBO bots they fire `on_behalf_of` the OLD persona grantor too,
-// posting messages "on behalf of" someone who never consented. Dropping the
-// foreign-owner tasks at the boundary is the cheapest correct semantic.
-// First-time owner resolution ("" → uid) does NOT prune (the prior empty
-// owner couldn't have created any tasks anyway; the disk file may carry
-// tasks from a prior daemon run that this bot identity legitimately owns).
+// Drops any persisted task whose CreatedBy isn't the new owner, in two
+// scenarios:
+//
+//  1. In-process owner CHANGE (non-empty prior → different non-empty new):
+//     rotation/handoff while the daemon is running. Round 9's original case.
+//  2. First-time owner resolution after RESTART (prior empty, persisted
+//     cron.json carries tasks whose CreatedBy != new owner): the operator
+//     restarted with a rotated bf_ token; the disk-loaded tasks are still
+//     authored by the prior owner and must not silently fire under the new
+//     owner. Round 10 Sec J1.
+//
+// Rationale (round 9 Sec F1): an octo bot whose owner transfers — legitimate
+// handoff OR an attacker who rotates the bf_ token and re-registers — would
+// otherwise inherit every previously scheduled prompt. Those prompts fire
+// with FromUID = old owner; for persona-OBO bots they fire `on_behalf_of`
+// the OLD persona grantor, posting messages "on behalf of" someone who
+// never consented.
 func (m *Manager) SetOwnerUID(uid string) {
 	m.ownerMu.Lock()
 	prior := m.ownerUID
 	m.ownerUID = uid
 	m.ownerMu.Unlock()
-	if prior == "" || prior == uid {
+	if uid == "" || prior == uid {
 		return
 	}
-	// Owner changed. Drop any tasks created by the prior owner.
-	dropped, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
+	// Drop tasks whose CreatedBy doesn't match the (new) owner.
+	// Covers both the in-process owner change (prior != "") AND the
+	// first-time-after-restart case (prior == "" but disk-loaded tasks
+	// carry a foreign CreatedBy).
+	var removed int
+	_, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
 		out := make([]Task, 0, len(tasks))
 		changed := false
 		for _, t := range tasks {
 			if t.CreatedBy == uid {
 				out = append(out, t)
 			} else {
+				removed++
 				changed = true
 			}
 		}
 		return out, changed
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%scron: prune tasks after owner change %s→%s: %v\n",
+		fmt.Fprintf(os.Stderr, "%scron: prune tasks after owner resolve %s→%s: %v\n",
 			m.label, prior, uid, err)
 		return
 	}
-	if removed := len(dropped); removed > 0 {
-		fmt.Fprintf(os.Stderr, "%scron: dropped %d task(s) on owner change %s→%s (foreign CreatedBy)\n",
+	if removed > 0 {
+		fmt.Fprintf(os.Stderr, "%scron: dropped %d task(s) on owner resolve %s→%s (foreign CreatedBy)\n",
 			m.label, removed, prior, uid)
 	}
 }
@@ -271,7 +292,9 @@ func (m *Manager) Start() {
 	m.stopCh = make(chan struct{})
 	stopCh := m.stopCh
 	timerCh := m.timer.C
+	m.loopWG.Add(1)
 	go func() {
+		defer m.loopWG.Done()
 		for {
 			select {
 			case <-stopCh:
@@ -283,19 +306,25 @@ func (m *Manager) Start() {
 	}()
 }
 
-// Stop halts the scan. Idempotent under concurrent calls. Does NOT wait for
-// in-flight onFire goroutines — call Wait() for that (or Wait separately so a
-// graceful shutdown can stop the scan promptly, then drain).
+// Stop halts the scan and waits for the loop goroutine to exit. Once Stop
+// returns, the loop is guaranteed not to run another Tick (and therefore
+// not to enqueue any further onFire goroutines). Wait() then drains the
+// fires that DID get started. Without the loopWG.Wait here, a Tick that
+// began before Stop's close-stopCh observation would still run to
+// completion AFTER Stop returned, spawning fires that the caller's
+// subsequent Wait() couldn't see (round 10 R10-F1).
 func (m *Manager) Stop() {
 	m.runMu.Lock()
-	defer m.runMu.Unlock()
 	if m.timer == nil {
+		m.runMu.Unlock()
 		return
 	}
 	m.timer.Stop()
 	close(m.stopCh)
 	m.timer = nil
 	m.stopCh = nil
+	m.runMu.Unlock()
+	m.loopWG.Wait()
 }
 
 // Wait blocks until every in-flight onFire goroutine spawned by Tick has

@@ -9,6 +9,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"github.com/lml2468/xclaw/desktop/internal/autostart"
 	"github.com/lml2468/xclaw/desktop/internal/control"
 	"github.com/lml2468/xclaw/desktop/internal/octocli"
 )
@@ -143,6 +144,34 @@ func setupSystemTray() {
 			go bridge.RestartCore()
 		}
 	})
+
+	// Launch at Login: a per-user LaunchAgent plist under ~/Library/LaunchAgents.
+	// macOS-only; on other platforms autostart.Enabled returns false and we skip
+	// the row entirely (no dead checkbox in the tray on linux/windows).
+	if autostart.Supported() {
+		menu.AddSeparator()
+		on, _ := autostart.Enabled()
+		login := menu.AddCheckbox("Launch at Login", on)
+		login.OnClick(func(*application.Context) {
+			want := login.Checked()
+			var err error
+			if want {
+				err = autostart.Enable()
+			} else {
+				err = autostart.Disable()
+			}
+			if err != nil {
+				log.Printf("xclaw: launch-at-login %v failed: %v", want, err)
+				// Re-read the on-disk truth — the click may have flipped the
+				// checkbox optimistically before the operation failed.
+				if real, rerr := autostart.Enabled(); rerr == nil {
+					login.SetChecked(real)
+				} else {
+					login.SetChecked(!want)
+				}
+			}
+		})
+	}
 
 	// octo-cli companion: show the installed version + a one-click upgrade.
 	menu.AddSeparator()

@@ -111,37 +111,61 @@ func Load() ([]BotConfig, error) {
 	}
 	out := make([]BotConfig, 0, len(f.Bots))
 	for _, b := range f.Bots {
-		bc := BotConfig{ID: b.ID, Env: map[string]string{}}
-
-		bc.APIURL = firstNonEmpty(b.APIURL, f.APIURL)
-		// Agent fields: prefer per-bot, fall back to top-level defaults.
-		var topModel, topGW string
-		var topEnv map[string]string
-		if f.Agent != nil {
-			topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
-		}
-		if b.Agent != nil {
-			bc.Model = firstNonEmpty(b.Agent.Model, topModel)
-			bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
-			for k, v := range b.Agent.Env {
-				bc.Env[k] = v
-			}
-		} else {
-			bc.Model, bc.GatewayBaseURL = topModel, topGW
-		}
-		if len(bc.Env) == 0 {
-			for k, v := range topEnv {
-				bc.Env[k] = v
-			}
-		}
-
-		bc.Soul = readBotFile(b.ID, "SOUL.md")
-		bc.Agents = readBotFile(b.ID, "AGENTS.md")
-		bc.OctoToken = secrets.Get(b.ID, secrets.OctoToken)
-		bc.GatewayToken = secrets.Get(b.ID, secrets.GatewayToken)
-		out = append(out, bc)
+		out = append(out, resolveBot(f, b))
 	}
 	return out, nil
+}
+
+// LoadOne returns just one bot, doing exactly ONE config.json parse + ONE pair
+// of keychain reads + ONE pair of SOUL/AGENTS reads — vs Load(), which fans
+// the keychain + file work over every bot just to satisfy a single-bot caller.
+// Returns (BotConfig{}, false, nil) when the id isn't in config.json; non-nil
+// err is reserved for genuine I/O / parse failures.
+func LoadOne(botID string) (BotConfig, bool, error) {
+	f, err := readFile()
+	if err != nil {
+		return BotConfig{}, false, err
+	}
+	for _, b := range f.Bots {
+		if b.ID == botID {
+			return resolveBot(f, b), true, nil
+		}
+	}
+	return BotConfig{}, false, nil
+}
+
+// resolveBot builds a single BotConfig from a parsed File entry. Shared by
+// Load (fan-out) and LoadOne (single-bot fast path).
+func resolveBot(f config.File, b config.BotEntry) BotConfig {
+	bc := BotConfig{ID: b.ID, Env: map[string]string{}}
+
+	bc.APIURL = firstNonEmpty(b.APIURL, f.APIURL)
+	// Agent fields: prefer per-bot, fall back to top-level defaults.
+	var topModel, topGW string
+	var topEnv map[string]string
+	if f.Agent != nil {
+		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
+	}
+	if b.Agent != nil {
+		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
+		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
+		for k, v := range b.Agent.Env {
+			bc.Env[k] = v
+		}
+	} else {
+		bc.Model, bc.GatewayBaseURL = topModel, topGW
+	}
+	if len(bc.Env) == 0 {
+		for k, v := range topEnv {
+			bc.Env[k] = v
+		}
+	}
+
+	bc.Soul = readBotFile(b.ID, "SOUL.md")
+	bc.Agents = readBotFile(b.ID, "AGENTS.md")
+	bc.OctoToken = secrets.Get(b.ID, secrets.OctoToken)
+	bc.GatewayToken = secrets.Get(b.ID, secrets.GatewayToken)
+	return bc
 }
 
 // Save writes the view model back to disk:

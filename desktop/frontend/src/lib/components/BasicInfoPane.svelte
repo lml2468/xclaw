@@ -3,26 +3,31 @@
   // non-Octo env vars, and the persona/behavior prompts (SOUL/AGENTS).
   // Octo-specific fields (apiUrl, octoToken, OCTO_BOT_ID) live in the
   // sibling Octo 集成 pane.
+  // Env editor: filter out the keys other panes manage. Keep a local pairs
+  // array so the user can add/rename keys without weird proxy-mutation
+  // gymnastics, then commit back to bot.env on every change. RESERVED_ENV_KEYS
+  // is the single source of truth — see lib/reservedEnv.ts.
   import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
+  import { RESERVED_ENV_KEYS } from "../reservedEnv";
 
   let { bot = $bindable<BotConfig>(), ondirty, ondelete }:
     { bot: BotConfig; ondirty: () => void; ondelete: () => void } = $props();
 
-  // Env editor: filter out the Octo-owned key (rendered in the Octo pane).
-  // Keep a local pairs array so the user can add/rename keys without weird
-  // proxy-mutation gymnastics, then commit back to bot.env on every change.
   type Row = { k: string; v: string };
-  const OCTO_KEY = "OCTO_BOT_ID";
   let rows = $state<Row[]>([]);
   $effect(() => {
     bot.id; // re-seed on bot switch
     const e = bot.env ?? {};
-    rows = Object.entries(e).filter(([k]) => k !== OCTO_KEY).map(([k, v]) => ({ k, v: String(v ?? "") }));
+    rows = Object.entries(e).filter(([k]) => !RESERVED_ENV_KEYS.has(k)).map(([k, v]) => ({ k, v: String(v ?? "") }));
   });
   function commitEnv() {
+    // Preserve reserved keys (owned by other panes) by passing them through
+    // unchanged; rebuild the free-form half from `rows`.
     const next: { [k: string]: string } = {};
-    // Preserve OCTO_BOT_ID owned by the Octo pane.
-    if (bot.env?.[OCTO_KEY]) next[OCTO_KEY] = bot.env[OCTO_KEY];
+    for (const k of RESERVED_ENV_KEYS) {
+      const v = bot.env?.[k];
+      if (v !== undefined) next[k] = v;
+    }
     for (const r of rows) if (r.k.trim()) next[r.k.trim()] = r.v;
     bot.env = next;
     ondirty();

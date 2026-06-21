@@ -17,19 +17,13 @@
 
   let composer = $state<Composer>();
 
-  // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows]
-  // (or the legacy ?editor/?skills/?workflows for backward-compat in preview URLs).
+  // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows].
   type SettingsTab = "basic" | "octo" | "skills" | "workflows";
+  const TABS: SettingsTab[] = ["basic", "octo", "skills", "workflows"];
   function initialSettingsState(): { show: boolean; tab: SettingsTab } {
-    const p = new URLSearchParams(location.search);
-    if (p.has("settings")) {
-      const t = p.get("settings");
-      return { show: true, tab: (["basic","octo","skills","workflows"].includes(t ?? "") ? t : "basic") as SettingsTab };
-    }
-    if (p.has("editor")) return { show: true, tab: "basic" };
-    if (p.has("skills")) return { show: true, tab: "skills" };
-    if (p.has("workflows")) return { show: true, tab: "workflows" };
-    return { show: false, tab: "basic" };
+    const t = new URLSearchParams(location.search).get("settings");
+    if (t === null) return { show: false, tab: "basic" };
+    return { show: true, tab: TABS.includes(t as SettingsTab) ? (t as SettingsTab) : "basic" };
   }
   const initialSettings = initialSettingsState();
   let showSettings = $state(initialSettings.show);
@@ -98,8 +92,8 @@
     showSettings = false;
   }
   try { Events.On("xclaw:open-settings", (e: any) => {
-    const tab = (e?.data?.tab ?? e?.data ?? "basic") as SettingsTab;
-    openSettings(["basic","octo","skills","workflows"].includes(tab) ? tab : "basic");
+    const tab = e?.data?.tab as SettingsTab | undefined;
+    openSettings(tab && TABS.includes(tab) ? tab : "basic");
   }); } catch {}
   try { Events.On("xclaw:open-usage", () => openUsage()); } catch {}
 

@@ -128,7 +128,7 @@ func setupSystemTray() {
 	menu.Add("Open Console").OnClick(func(*application.Context) { openConsole() })
 	menu.Add("Settings…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-settings", "basic")
+		app.Event.Emit("xclaw:open-settings", map[string]string{"tab": "basic"})
 	})
 	menu.Add("Token Usage…").OnClick(func(*application.Context) {
 		openConsole()

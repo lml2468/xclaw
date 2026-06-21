@@ -370,19 +370,17 @@ func (x *XClawService) OctoCliLogout(botID string) error {
 }
 
 // loadOctoBinding returns the bot's (robotID, bf_token, apiURL) by reading
-// configstore (which folds in the keychain token).
+// configstore. Uses LoadOne so we do one config.json parse + two keychain
+// reads — not N of each for a single-bot lookup.
 func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
-	bots, lerr := configstore.Load()
+	bot, ok, lerr := configstore.LoadOne(botID)
 	if lerr != nil {
 		return "", "", "", lerr
 	}
-	for _, b := range bots {
-		if b.ID != botID {
-			continue
-		}
-		return b.Env["OCTO_BOT_ID"], b.OctoToken, b.APIURL, nil
+	if !ok {
+		return "", "", "", fmt.Errorf("bot %q not found", botID)
 	}
-	return "", "", "", fmt.Errorf("bot %q not found", botID)
+	return bot.Env["OCTO_BOT_ID"], bot.OctoToken, bot.APIURL, nil
 }
 
 // OctoAddBot provisions a new bot on octo-server using the operator's User API

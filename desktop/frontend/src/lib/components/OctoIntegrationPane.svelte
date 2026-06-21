@@ -60,8 +60,12 @@
       if (isPreview) { cliRegistered = true; cliNotice = "已写入（preview mock）"; }
       else {
         await XClawService.OctoCliRelogin(bot.id);
+        // The relogin path knows it just wrote the profile — flip state locally
+        // instead of round-tripping refreshCliStatus (which would re-parse
+        // config.json + re-read keychain to confirm what we already know).
+        cliRegistered = true;
+        cliRobotId = robotId;
         cliNotice = "已写入 octo-cli profile";
-        await refreshCliStatus();
       }
     } catch (e: any) { cliError = String(e?.message ?? e); }
     finally { cliBusy = false; }
@@ -72,8 +76,8 @@
       if (isPreview) { cliRegistered = false; cliNotice = "已删除（preview mock）"; }
       else {
         await XClawService.OctoCliLogout(bot.id);
+        cliRegistered = false;
         cliNotice = "已删除 octo-cli profile";
-        await refreshCliStatus();
       }
     } catch (e: any) { cliError = String(e?.message ?? e); }
     finally { cliBusy = false; }
@@ -100,7 +104,7 @@
         {#if !editBotId}
           <button class="iconbtn" onclick={() => (editBotId = true)} type="button">修改</button>
         {:else}
-          <button class="iconbtn" onclick={() => { editBotId = false; commitRobotId(); }} type="button">完成</button>
+          <button class="iconbtn" onclick={() => (editBotId = false)} type="button">完成</button>
         {/if}
       </div>
       <small>由「新增 Bot」向导从服务端拿回，手改可能与服务端实际 id 不一致 — 不要轻易动。</small>

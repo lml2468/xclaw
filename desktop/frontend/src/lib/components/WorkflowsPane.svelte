@@ -4,6 +4,7 @@
   // just the script list + editor for one bot. Writes through to disk.
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { confirm } from "../confirm.svelte";
+  import ErrorFooter from "./ErrorFooter.svelte";
 
   let { botId, isPreview = false }: { botId: string; isPreview?: boolean } = $props();
 
@@ -115,7 +116,7 @@
   {/if}
 </div>
 
-{#if error}<div class="err">⚠️ {error} <button class="dismiss" onclick={() => (error = "")} aria-label="关闭">✕</button></div>{/if}
+{#if error}<ErrorFooter {error} onclear={() => (error = "")} />{/if}
 
 <style>
   .pane { display: grid; grid-template-columns: 240px 1fr; gap: 14px; height: 100%; min-height: 360px; }
@@ -147,7 +148,4 @@
   .primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px color-mix(in srgb, var(--grad-a) 50%, transparent); }
   .primary:disabled { opacity: 0.45; cursor: default; }
   textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
-
-  .err { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; background: color-mix(in srgb, var(--danger) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--hairline)); color: var(--danger); padding: 8px 14px; border-radius: 8px; font-size: 12px; box-shadow: var(--shadow-pop); z-index: 1; }
-  .dismiss { border: none; background: none; color: var(--ink-soft); padding: 0 4px; font-size: 12px; }
 </style>

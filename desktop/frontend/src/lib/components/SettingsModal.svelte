@@ -29,6 +29,7 @@
 
   let bots = $state<BotConfig[]>([]);
   let sel = $state(0);
+  // svelte-ignore state_referenced_locally — `initialTab` is the one-shot seed; later changes to the prop are intentionally ignored (it's the URL/event-passed default, not a live binding).
   let activeTab = $state<TabKey>(initialTab);
   let dirty = $state(false);
   let busy = $state(false);
@@ -78,11 +79,8 @@
     sel = i;
     dirty = false;
   }
-  async function switchTab(t: TabKey) {
-    // Switching tabs within the same bot keeps unsaved edits — both basic and
-    // octo edit the same bot[sel] entry, so a save still captures everything.
-    activeTab = t;
-  }
+  // Switching tabs within the same bot keeps unsaved edits — both basic and
+  // octo edit the same bot[sel] entry, so a save still captures everything.
 
   // --- save ---
   async function save(restart: boolean) {
@@ -194,7 +192,7 @@
         {:else}
           <div class="seg" role="tablist" aria-label="设置分区">
             {#each TABS as t (t.key)}
-              <button role="tab" aria-selected={t.key === activeTab} class:on={t.key === activeTab} onclick={() => switchTab(t.key)}>{t.label}</button>
+              <button role="tab" aria-selected={t.key === activeTab} class:on={t.key === activeTab} onclick={() => (activeTab = t.key)}>{t.label}</button>
             {/each}
           </div>
 

@@ -415,7 +415,7 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 	cmd.Stdin = strings.NewReader(token)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("octo-cli auth login (%s): %v: %s", robotID, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("octo-cli auth login (%s): %w (output: %s)", robotID, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -439,7 +439,7 @@ func Logout(ctx context.Context, robotID string) error {
 		if strings.Contains(string(out), "no profile found") {
 			return nil
 		}
-		return fmt.Errorf("octo-cli auth logout (%s): %v: %s", robotID, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("octo-cli auth logout (%s): %w (output: %s)", robotID, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

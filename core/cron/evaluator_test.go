@@ -96,7 +96,7 @@ func TestIsOneShotSchedule(t *testing.T) {
 
 func TestComputeNextRunCron(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)
-	next, ok := computeNextRun("*/15 * * * *", true, now)
+	next, ok := computeNextRun("*/15 * * * *", now)
 	if !ok {
 		t.Fatal("expected a next run")
 	}
@@ -116,7 +116,7 @@ func TestComputeNextRunOneShot(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.UTC)
 
 	future := "2999-01-01T00:00:00Z"
-	next, ok := computeNextRun(future, false, now)
+	next, ok := computeNextRun(future, now)
 	if !ok {
 		t.Fatal("future one-shot should return its instant")
 	}
@@ -125,18 +125,18 @@ func TestComputeNextRunOneShot(t *testing.T) {
 		t.Errorf("one-shot next = %v, want %v", next, want)
 	}
 
-	if _, ok := computeNextRun("2000-01-01T00:00:00Z", false, now); ok {
+	if _, ok := computeNextRun("2000-01-01T00:00:00Z", now); ok {
 		t.Error("past one-shot should return none")
 	}
 }
 
 func TestComputeNextRunInvalid(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)
-	if _, ok := computeNextRun("bogus expr here now", true, now); ok {
+	if _, ok := computeNextRun("bogus expr here now", now); ok {
 		t.Error("invalid cron should return none")
 	}
 	// Impossible schedule (Feb 31) must terminate the scan and return none.
-	if _, ok := computeNextRun("0 0 31 2 *", true, now); ok {
+	if _, ok := computeNextRun("0 0 31 2 *", now); ok {
 		t.Error("Feb 31 should return none")
 	}
 }
@@ -179,7 +179,7 @@ func TestParseOneShotStrict(t *testing.T) {
 }
 
 func TestComputeNextRunRejectsRolloverOneShot(t *testing.T) {
-	if _, ok := computeNextRun("2026-13-13T00:00:00Z", false, time.Now()); ok {
+	if _, ok := computeNextRun("2026-13-13T00:00:00Z", time.Now()); ok {
 		t.Error("computeNextRun must use strict one-shot parsing")
 	}
 }

@@ -175,10 +175,10 @@ func TestMissingTokenAllowed(t *testing.T) {
 	}
 }
 
-func TestDriverEnvWith(t *testing.T) {
+func TestDriverEnvInjectedTokens(t *testing.T) {
 	r := Resolved{Agent: AgentConfig{GatewayBaseURL: "https://gw.example/v1"}}
 	// Injected token is used, regardless of the (empty) config value.
-	env := r.DriverEnvWith("sk_injected")
+	env := r.DriverEnv("sk_injected", "")
 	var sawToken, sawBase bool
 	for _, e := range env {
 		if e == "ANTHROPIC_AUTH_TOKEN=sk_injected" {
@@ -192,7 +192,7 @@ func TestDriverEnvWith(t *testing.T) {
 		t.Fatalf("env missing entries: token=%v base=%v (%v)", sawToken, sawBase, env)
 	}
 	// Empty token omits the auth var.
-	for _, e := range r.DriverEnvWith("") {
+	for _, e := range r.DriverEnv("", "") {
 		if e == "ANTHROPIC_AUTH_TOKEN=" {
 			t.Fatal("empty token must not emit ANTHROPIC_AUTH_TOKEN")
 		}

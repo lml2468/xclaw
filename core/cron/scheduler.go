@@ -129,7 +129,7 @@ func (m *Manager) Create(p CreateParams) (Task, error) {
 		recurring = *p.Recurring
 	}
 	now := m.now()
-	next, ok := computeNextRun(p.Schedule, recurring, now)
+	next, ok := computeNextRun(p.Schedule, now)
 	if !ok {
 		if oneShot {
 			return Task{}, fmt.Errorf("one-shot time is in the past or invalid")
@@ -256,7 +256,7 @@ func (m *Manager) Tick() {
 			fires = append(fires, Fire{Task: task})
 			task.LastRun = nowMS
 			if task.Recurring {
-				if next, ok := computeNextRun(task.Schedule, true, now); ok {
+				if next, ok := computeNextRun(task.Schedule, now); ok {
 					task.NextRun = unixMS(next)
 					survivors = append(survivors, task)
 				} else {

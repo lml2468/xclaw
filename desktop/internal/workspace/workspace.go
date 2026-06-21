@@ -46,7 +46,7 @@ func Dir() string {
 	return filepath.Join(home, ".xclaw")
 }
 
-func validSlug(s string) bool { return safepath.ValidSlug(s) }
+
 
 // Node is a file or directory in the workspace tree. Path is relative to the
 // workspace root, forward-slashed; the root node has Path "". Children is nil for
@@ -79,7 +79,7 @@ type FileContent struct {
 // so at most one exists; DM wins a pathological tie). When neither exists yet (no
 // turn has run), exists is false and dir is the DM candidate path.
 func resolveRoot(botID, sessionKey string) (dir string, exists bool, err error) {
-	if !validSlug(botID) {
+	if !safepath.ValidSlug(botID) {
 		return "", false, fmt.Errorf("invalid bot id %q", botID)
 	}
 	base := filepath.Join(Dir(), botID, "workspace")

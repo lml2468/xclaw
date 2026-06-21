@@ -103,7 +103,7 @@ func Enable() error {
 	uid := strconv.Itoa(os.Getuid())
 	_ = exec.Command("launchctl", "bootout", "gui/"+uid, path).Run()
 	if out, err := exec.Command("launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %v: %s", err, string(out))
+		return fmt.Errorf("launchctl bootstrap: %w (output: %s)", err, string(out))
 	}
 	return nil
 }

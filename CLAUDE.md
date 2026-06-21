@@ -206,9 +206,11 @@ logic, so swapping the GUI never touches `core/`.
   zero cgo; injected at runtime, **never** written to config.json).
 - **Frontend** (`frontend/src`): `lib/store.svelte.ts` is the single reducer —
   it folds `xclaw:event` envelopes into bots/sessions/messages and owns the
-  rAF typewriter/coalescing. Components in `lib/components/` (Rail · Conversations
-  · Transcript · Bubble · Composer · ConfigEditor · SkillsPanel · WorkflowsPanel ·
-  WorkspacePanel · FilePreview · TokenUsage · Avatar); tokens in `lib/styles/theme.css`.
+  rAF typewriter/coalescing. Components in `lib/components/` (Sidebar · Transcript ·
+  Bubble · Composer · SettingsModal + 4 panes (BasicInfo · OctoIntegration · Skills ·
+  Workflows) · TokenUsage · WorkspacePanel · FilePreview · Confirm · ErrorFooter ·
+  Avatar); the global `lib/confirm.svelte.ts` mounts `<Confirm>` programmatically;
+  tokens in `lib/styles/theme.css`.
 - **Workspace sidebar** (`WorkspacePanel`): a chat-header toggle button opens an
   inline (NOT modal — no scrim) right-hand column inside `.content`, showing the
   selected session's sandbox file tree. Selecting a file opens `FilePreview` as a
@@ -224,19 +226,25 @@ logic, so swapping the GUI never touches `core/`.
   (`sandbox.SessionDirName`) and using whichever dir exists. Read-only + sandboxed:
   never follows symlinks, skips `.claude/`, caps depth/entries/file-size (1 MiB for
   text, 8 MiB for base64 images/PDFs).
-- **Edit Bots / Manage Skills / Manage Workflows / Token Usage are sibling modals**
-  (`ConfigEditor` · `SkillsPanel` · `WorkflowsPanel` · `TokenUsage`), all opened over
-  the console from the rail gear menu (and tray) via `xclaw:open-editor` / `-skills` /
-  `-workflows` / `-usage` events — same scrim + centered card + header/✕ chrome (keep
-  them visually consistent). SkillsPanel/WorkflowsPanel are **per-bot**: a bot
-  picker in the header, a "本 Bot 技能/工作流" section listing the bot's own
-  assets with create/edit/delete (skills also let you add/remove files within a
-  bundle) — changes take effect on the next turn, no RestartCore. There is no
-  shared marketplace; every bot owns its own assets under
-  `~/.xclaw/<id>/.claude/{skills,workflows}/`. ConfigEditor has no skill /
-  workflow checklist. TokenUsage is read-only:
-  per-bot cumulative input/output/cached
-  tokens + cost + turns, plus an all-bots total, from the privileged `usage.stats`
+- **Top-level modals** (the only two): **SettingsModal** (per-bot settings —
+  opens via the sidebar gear or the tray's `Settings…`, emits `xclaw:open-settings`
+  with a `{tab}` payload) and **TokenUsage** (read-only usage table — opens via
+  the sidebar's chart-bar button or the tray's `Token Usage…`, emits
+  `xclaw:open-usage`). They are mutually exclusive (`App.svelte` enforces).
+- **SettingsModal**: left rail = bot list + `+ 新增 Bot` (opens the Add-bot wizard
+  inline — `OctoAddBot` provisions on octo-server from a uk_ key, falls back to a
+  manual blank shell). Right pane = 4 segmented tabs: **基础信息**
+  (`BasicInfoPane`: Bot ID, model, gateway URL/Token, env vars, SOUL.md, AGENTS.md,
+  delete-bot), **Octo 集成** (`OctoIntegrationPane`: API URL, bf_ token, OCTO_BOT_ID,
+  connection status, octo-cli profile status + 重新登录/登出 actions),
+  **技能** (`SkillsPane`: per-bot bundles under `~/.xclaw/<id>/.claude/skills/`),
+  **工作流** (`WorkflowsPane`: per-bot `*.js` under `~/.xclaw/<id>/.claude/workflows/`).
+  Basic + Octo edits flip a single `dirty` flag surfaced in the footer's
+  保存/保存并重启; Skills + Workflows write through to disk immediately. Reserved
+  env keys (currently `OCTO_BOT_ID`) live in `lib/reservedEnv.ts` so BasicInfo
+  hides them and Octo re-injects them without a string-literal contract drift.
+- **TokenUsage** is per-bot cumulative input/output/cached tokens + cost + turns,
+  plus an all-bots total, from the privileged `usage.stats`
   control command (backed by core/store's `token_usage` table, accumulated each
   turn_done in the gateway; persists across restarts). NOTE: `window.confirm/alert` are
   no-ops in the Wails webview — use an in-app dialog for any confirmation.

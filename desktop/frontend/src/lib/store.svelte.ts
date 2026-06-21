@@ -180,25 +180,27 @@ class Store {
     this.selectedKey = "console";
   }
   // --- derived selectors ---
+  // Each is a Svelte 5 $derived: recomputed once per dependency change and
+  // cached for every read in between, instead of the `get`-accessor pattern
+  // which re-runs the body on every component access.
 
-  get currentBot(): Bot | null {
-    return this.bots.find((b) => b.id === this.selectedBotId) ?? null;
-  }
-  get botSessions(): Session[] {
-    return this.sessions
+  currentBot = $derived<Bot | null>(this.bots.find((b) => b.id === this.selectedBotId) ?? null);
+
+  botSessions = $derived<Session[]>(
+    this.sessions
       .filter((s) => s.botId === this.selectedBotId)
-      .sort((a, b) => b.lastActivity - a.lastActivity);
-  }
-  get currentSession(): Session | null {
-    return this.sessions.find((s) => s.botId === this.selectedBotId && s.key === this.selectedKey) ?? null;
-  }
+      .sort((a, b) => b.lastActivity - a.lastActivity),
+  );
+
+  currentSession = $derived<Session | null>(
+    this.sessions.find((s) => s.botId === this.selectedBotId && s.key === this.selectedKey) ?? null,
+  );
+
   // Only the Console session is writable from the desktop. Every other session
   // (DM / Group) originates from Octo IM — the human counterpart lives there, so
   // the desktop is an observation surface only. The Composer is hidden when this
   // is false; send() additionally no-ops as defense in depth.
-  get isConsole(): boolean {
-    return this.selectedKey === CONSOLE_UID || this.selectedKey === "console";
-  }
+  isConsole = $derived<boolean>(this.selectedKey === CONSOLE_UID || this.selectedKey === "console");
 
   // --- commands ---
 

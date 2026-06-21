@@ -264,13 +264,17 @@ func (c *RESTClient) GetChannelMessages(ctx context.Context, channelID string, c
 			if json.Unmarshal(m.Payload, &s) == nil {
 				if len(s) <= maxHistoricalPayloadBase64Len {
 					if dec, derr := base64.StdEncoding.DecodeString(s); derr == nil {
-						_ = json.Unmarshal(dec, &pl) // leave pl zero on failure
+						if err := json.Unmarshal(dec, &pl); err != nil {
+							fmt.Fprintf(os.Stderr, "[octo] getChannelMessages base64-payload JSON decode: %v\n", err)
+						}
 					}
 				} else {
 					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages dropping oversized payload (%d base64 chars)\n", len(s))
 				}
 			} else {
-				_ = json.Unmarshal(m.Payload, &pl) // object payload
+				if err := json.Unmarshal(m.Payload, &pl); err != nil {
+					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages object-payload JSON decode: %v\n", err)
+				}
 			}
 		}
 		hm := HistoricalMessage{

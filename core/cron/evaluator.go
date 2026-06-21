@@ -243,11 +243,7 @@ const maxScanMinutes = 366 * 24 * 60
 //
 //   - one-shot ISO: its instant if still in the future, else none.
 //   - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
-//
-// recurring is accepted for symmetry with the store; cron exprs are inherently
-// recurring and the flag does not affect the computation.
-func computeNextRun(schedule string, recurring bool, from time.Time) (time.Time, bool) {
-	_ = recurring
+func computeNextRun(schedule string, from time.Time) (time.Time, bool) {
 	if isOneShotSchedule(schedule) {
 		t, ok := parseOneShot(schedule)
 		if !ok {

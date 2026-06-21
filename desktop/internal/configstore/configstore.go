@@ -192,7 +192,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
 	for _, b := range bots {
-		if !validSlug(b.ID) {
+		if !safepath.ValidSlug(b.ID) {
 			return fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", b.ID)
 		}
 		if err := validURL(b.APIURL); err != nil {
@@ -325,7 +325,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		keep[b.ID] = true
 	}
 	for _, id := range removedIDs {
-		if keep[id] || !validSlug(id) {
+		if keep[id] || !safepath.ValidSlug(id) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(botDir(id), "data")); err != nil {
@@ -371,7 +371,6 @@ func writeBotFile(id, name, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-func validSlug(s string) bool { return safepath.ValidSlug(s) }
 
 func validURL(s string) error {
 	if strings.HasPrefix(s, "https://") {

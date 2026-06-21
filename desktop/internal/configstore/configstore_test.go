@@ -238,3 +238,62 @@ func TestSaveClearsFieldsOnExistingBot(t *testing.T) {
 		t.Errorf("AGENTS.md should be removed on subsequent blank save, err=%v", err)
 	}
 }
+
+// TestSaveNeverWritesTokensToDisk is the regression for a credential-disclosure
+// hazard: BotConfig still carries `json:"octoToken"` / `json:"gatewayToken"`
+// tags (the headless daemon also reads from these fields), so a future refactor
+// that forgets to strip them before MarshalIndent would silently leak both
+// tokens into ~/.xclaw/config.json. This test asserts the on-disk JSON contains
+// neither the raw token values nor the field names after Save.
+func TestSaveNeverWritesTokensToDisk(t *testing.T) {
+	setup(t)
+	const octoSecret = "bf_test_octo_leak_canary"
+	const gwSecret = "sk_test_gateway_leak_canary"
+	bots := []BotConfig{{
+		ID:           "alpha",
+		APIURL:       "https://octo.example",
+		Model:        "claude-opus-4-8",
+		OctoToken:    octoSecret,
+		GatewayToken: gwSecret,
+		Env:          map[string]string{"OCTO_BOT_ID": "alpha_bot"},
+	}}
+	if err := Save(bots, nil); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	raw, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	disk := string(raw)
+	for _, banned := range []string{
+		octoSecret,    // raw bf_ value
+		gwSecret,      // raw sk_ value
+		`"octoToken"`, // JSON tag — even an empty-valued field shouldn't appear
+		`"gatewayToken"`,
+	} {
+		if filepathContains(disk, banned) {
+			t.Fatalf("config.json must not contain %q — Save leaked it:\n%s", banned, disk)
+		}
+	}
+
+	// Sanity: after Save+Load round-trip, the keychain restores the tokens.
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].OctoToken != octoSecret || loaded[0].GatewayToken != gwSecret {
+		t.Fatalf("tokens didn't survive the keychain round-trip: %+v", loaded)
+	}
+}
+
+// filepathContains is a tiny indirection so the helper reads as a substring
+// match without importing strings just for one call.
+func filepathContains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}

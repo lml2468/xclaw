@@ -36,59 +36,67 @@ const (
 
 // AgentEvent is the single normalized currency between any driver and the
 // gateway. Drivers translate their agent's native protocol into these.
+//
+// AgentEvent has NO JSON tags by design: it never crosses a wire boundary.
+// The control bus uses the camelCase types in core/control/wire (mapped from
+// AgentEvent in control/sink.go), and the IM connector reads typed Go fields
+// directly. Adding json tags here would advertise a contract this struct
+// doesn't own (and the snake_case style would diverge from the wire's
+// camelCase).
 type AgentEvent struct {
-	Kind EventKind `json:"kind"`
+	Kind EventKind
 
 	// Text carries assistant/thinking text for KindTextDelta / KindThinking.
 	// The driver emits one event per complete content block (plain stream-json,
 	// no token-level partials), so consumers append text without de-duplication.
-	Text string `json:"text,omitempty"`
+	Text string
 
 	// SessionID is set on KindSessionStarted (used to resume next turn).
-	SessionID string `json:"session_id,omitempty"`
+	SessionID string
 
 	// Tool fields for KindToolUse / KindToolResult.
-	ToolName   string `json:"tool_name,omitempty"`
-	ToolParams string `json:"tool_params,omitempty"` // truncated one-liner, for progress UI
+	ToolName   string
+	ToolParams string // truncated one-liner, for progress UI
 
 	// Usage on KindTurnDone.
-	Usage *TokenUsage `json:"usage,omitempty"`
+	Usage *TokenUsage
 
 	// Err on KindError.
-	Err         string `json:"err,omitempty"`
-	Recoverable bool   `json:"recoverable,omitempty"`
+	Err         string
+	Recoverable bool
 	// ResumeInvalid marks a KindError caused by an unknown/stale resume id (the
 	// agent's stored session no longer exists, e.g. after the config dir
 	// changed). The gateway clears the resume mapping and retries fresh.
-	// Internal control signal — not serialized.
-	ResumeInvalid bool `json:"-"`
+	ResumeInvalid bool
 	// Transient marks a KindError caused by an upstream rate-limit / overload /
 	// usage-cap condition (HTTP 429/503/529, "overloaded", "usage limit
 	// reached", …) rather than a bug in the turn. The gateway surfaces a
 	// distinct "服务繁忙" reply for these so the user knows to retry later.
 	// RetryHint carries the human-readable reset window the agent reported
-	// ("resets at 3pm"), when one was present. Internal — not serialized.
-	Transient bool   `json:"-"`
-	RetryHint string `json:"-"`
+	// ("resets at 3pm"), when one was present.
+	Transient bool
+	RetryHint string
 
 	// Raw holds the original line for debugging / forward-compat.
-	Raw string `json:"-"`
+	Raw string
 }
 
 // TokenUsage is the per-turn token accounting, when the agent reports it.
+// Like AgentEvent, this carries no JSON tags — accounting flows out via
+// store.AddUsage + wire.UsageBody, not via direct serialization.
 type TokenUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens  int
+	OutputTokens int
 	// CachedInputTokens is the portion of InputTokens served (read) from the
 	// prompt cache (claude's cache_read_input_tokens) — cheap, cache hits.
-	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	CachedInputTokens int
 	// CacheCreationInputTokens is the input written into the prompt cache this
 	// turn (claude's cache_creation_input_tokens) — cache writes, distinct from
 	// reads (a write seeds the cache; a later read serves from it).
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreationInputTokens int
 	// CostUSD is the agent-reported turn cost (claude's total_cost_usd). Zero
 	// when unreported (e.g. subscription auth that omits cost).
-	CostUSD float64 `json:"cost_usd,omitempty"`
+	CostUSD float64
 }
 
 // Request is the agent-agnostic ask. Drivers map these onto their CLI flags.

@@ -83,6 +83,13 @@ type Connector struct {
 	// (BotRegisterResp.owner_uid). Used to gate owner-only features (cron).
 	onOwner func(ownerUID string)
 
+	// turnsWG tracks every in-flight drainTurns goroutine so the daemon can
+	// wait for them before closing the store. Without this barrier, SIGTERM
+	// fires `defer st.Close()` while a turn is still mid-flush —
+	// gateway.Handle's resume-id save / usage-add hit "database is closed",
+	// silently breaking resume continuity AND losing accounting.
+	turnsWG sync.WaitGroup
+
 	// reconnect/backoff
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
@@ -581,6 +588,7 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
 	c.mu.Unlock()
 
 	if start {
+		c.turnsWG.Add(1)
 		go c.drainTurns(key)
 	}
 }
@@ -588,7 +596,16 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
 // drainTurns runs queued turns for one session key in order, then retires the
 // queue. New arrivals during a turn are picked up before the worker exits, so a
 // burst is handled by a single worker with no lost messages.
+// WaitTurns blocks until every drainTurns goroutine spawned by this
+// connector has finished its queue. Call this on graceful shutdown AFTER
+// the Run-ctx is cancelled (which closes the WS read loop and stops new
+// turns from being enqueued) and BEFORE closing the store / gateway / driver.
+//
+// Idempotent: a connector that has never enqueued a turn returns immediately.
+func (c *Connector) WaitTurns() { c.turnsWG.Wait() }
+
 func (c *Connector) drainTurns(key string) {
+	defer c.turnsWG.Done()
 	for {
 		c.mu.Lock()
 		q := c.turnQueues[key]

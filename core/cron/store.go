@@ -90,11 +90,37 @@ func (s *Store) save(tasks []Task) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	return writeAtomic(s.path, data, 0o600)
+}
+
+// writeAtomic writes data to path via path+".tmp" + fsync + rename so a power
+// loss or process crash mid-write leaves either the old cron.json intact or a
+// fully committed new file — never a half-written one. Removes the .tmp on
+// any failure between WriteFile and Rename so the operator's data dir doesn't
+// accumulate stale .tmp files.
+func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	tmp := path + ".tmp"
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Load returns the bot's tasks ([] when the file is absent). Thread-safe.

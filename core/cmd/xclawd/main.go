@@ -29,6 +29,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/control/wire"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/im/octo"
@@ -119,7 +120,7 @@ func main() {
 		if token == "" {
 			fatal("-octo-api set but no token (use -octo-token or XCLAW_OCTO_TOKEN)")
 		}
-		_ = sec.Set(secretKindOcto, token)
+		_ = sec.Set(wire.SecretKindOcto, token)
 		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, sec.OctoToken))
 		sinks = append(sinks, connector)
 	}
@@ -133,13 +134,22 @@ func main() {
 	}
 
 	if srv != nil {
-		srv.SetHandler(makeCommandHandler(ctx, gw, st, drv, sec, srv, started))
+		handler, target := makeCommandHandler(ctx, gw, st, drv, sec, srv, started)
+		srv.SetHandler(handler)
 		configureBusAuth(srv, *authStdin) // arm the capability-token gate before serving
+		// Wait for control-bus turns to finish before defer st.Close fires.
+		// Defers are LIFO and this defer registers BEFORE serveControlBus's
+		// cleanup, so the order on shutdown is: cancel ctx → close listener
+		// (serveControlBus) → wait for in-flight session.send (here) →
+		// st.Close (the earlier defer at top of function).
+		defer target.turnsWG.Wait()
 		defer serveControlBus(srv, *controlSock)()
 	}
 
 	if connector != nil {
 		connector.SetGateway(gw)
+		// Wait for any in-flight drainTurns workers before st.Close fires.
+		defer connector.WaitTurns()
 		go func() {
 			if err := connector.Run(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "octo connector: %v\n", err)
@@ -281,7 +291,11 @@ func (m multiSink) OnReply(key, text string) {
 // makeCommandHandler builds the single-bot control-bus dispatcher. All command
 // logic lives in the shared makeHandler; this only supplies the fixed target,
 // the synthetic one-bot roster, and the broadcast hook.
-func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Store, drv agent.Driver, sec *secretStore, srv *control.Server, started time.Time) control.CommandHandler {
+//
+// Returns the handler AND the shared target so the caller can block on
+// target.turnsWG before closing the store on shutdown (turns in flight under
+// session.send would otherwise race the deferred st.Close).
+func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Store, drv agent.Driver, sec *secretStore, srv *control.Server, started time.Time) (control.CommandHandler, *botTarget) {
 	target := &botTarget{gateway: gw, store: st, secrets: sec}
 	var broadcast func(string, any)
 	if srv != nil {
@@ -298,5 +312,5 @@ func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Stor
 		},
 		resolve:   func(string) (*botTarget, error) { return target, nil },
 		broadcast: broadcast,
-	})
+	}), target
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/lml2468/xclaw/core/control/wire"
 	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
@@ -18,12 +19,15 @@ import (
 // app so existing Keychain entries carry over on macOS).
 const service = "com.xclaw.tokens"
 
-// Kind is a token category. The account key is "<botID>/<kind>".
-type Kind string
+// Kind is a token category. The account key is "<botID>/<kind>". Aliased to
+// wire.SecretKind so the desktop, the control bus, and the daemon all use one
+// canonical type (was a separate `type Kind string` that duplicated wire's
+// string literals).
+type Kind = wire.SecretKind
 
 const (
-	OctoToken    Kind = "octoToken"
-	GatewayToken Kind = "gatewayToken"
+	OctoToken    = wire.SecretKindOcto
+	GatewayToken = wire.SecretKindGateway
 )
 
 // account returns the per-(botID,kind) keyring account key. It refuses any

@@ -264,11 +264,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	if err != nil {
 		return err
 	}
-	tmp := Path() + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, Path()); err != nil {
+	if err := writeAtomic(Path(), append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 
@@ -446,4 +442,34 @@ func firstDuplicateOctoBotID(bots []BotConfig) string {
 		seen[rid] = true
 	}
 	return ""
+}
+
+// writeAtomic writes data to path via path+".tmp" + fsync + rename so a power
+// loss or process crash mid-write leaves either the old file intact or a fully
+// committed new file — never a half-written one. The defer also removes the
+// .tmp on any failure between WriteFile and Rename so a stale .tmp doesn't
+// accumulate in the operator's ~/.xclaw directory.
+func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	tmp := path + ".tmp"
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

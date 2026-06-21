@@ -24,8 +24,10 @@ func TestCronControlHandlers(t *testing.T) {
 	mgr := cron.NewManager(store, owner, func() time.Time { return clk })
 
 	reg := newBotRegistry(nil)
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr})
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "nocron"}}) // cron == nil
+	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	nocron := &botRuntime{cfg: config.Resolved{BotID: "nocron"}} // cron == nil
+	reg.add(b1)
+	reg.add(nocron)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 
 	call := func(typ string, body any) (any, error) {
@@ -89,7 +91,8 @@ func TestCronControlHandlersNoOwner(t *testing.T) {
 	mgr := cron.NewManager(store, "", nil) // empty owner = unresolved
 
 	reg := newBotRegistry(nil)
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr})
+	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	reg.add(b1)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 
 	raw, _ := json.Marshal(control.CronCreateBody{BotID: "b1", Schedule: "0 9 * * *", Prompt: "p"})

@@ -14,6 +14,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/control/wire"
 	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
@@ -53,6 +54,12 @@ type botRuntime struct {
 	store   *store.Store
 	secrets *secretStore  // in-memory tokens (seeded from cfg, updated by secret.inject)
 	cron    *cron.Manager // nil when agent.cron is disabled
+
+	// target is the per-bot control-handler target, owned for the runtime's
+	// lifetime so the embedded turnsWG is shared across all session.send
+	// goroutines for this bot (a fresh botTarget per resolve() would give
+	// each goroutine its own WaitGroup and defeat the shutdown barrier).
+	target *botTarget
 
 	mu        sync.Mutex
 	connected bool
@@ -236,8 +243,8 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// Per-bot secret store: seed from the config file (the headless fallback),
 	// then let secret.inject (from the GUI's Keychain) override at runtime.
 	sec := &secretStore{}
-	_ = sec.Set(secretKindOcto, cfg.OctoToken)
-	_ = sec.Set(secretKindGateway, cfg.Agent.GatewayToken)
+	_ = sec.Set(wire.SecretKindOcto, cfg.OctoToken)
+	_ = sec.Set(wire.SecretKindGateway, cfg.Agent.GatewayToken)
 
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
@@ -310,7 +317,15 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
-	return connector.Run(ctx)
+	err = connector.Run(ctx)
+	// Shutdown ordering matters: Run has returned because ctx was cancelled,
+	// but drainTurns goroutines + control-bus session.send goroutines may
+	// still be inside gateway.Handle, mid-write to the store. Wait for them
+	// BEFORE the deferred st.Close() fires (defers are LIFO, so the function
+	// returns through Wait first → st.Close last).
+	connector.WaitTurns()
+	rtBot.target.turnsWG.Wait()
+	return err
 }
 
 // fireCronTask delivers one due cron task through the full turn pipeline. It
@@ -357,7 +372,18 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot == nil {
 				return nil, fmt.Errorf("unknown bot %q", botID)
 			}
-			return &botTarget{id: bot.cfg.BotID, gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
+			// Lazy-allocate the shared target so tests that build a
+			// minimal botRuntime by hand don't have to remember to set it.
+			if bot.target == nil {
+				bot.target = &botTarget{
+					id:      bot.cfg.BotID,
+					gateway: bot.gateway,
+					store:   bot.store,
+					secrets: bot.secrets,
+				}
+			}
+			bot.target.cron = bot.cron // late-bound when cron starts
+			return bot.target, nil
 		},
 		broadcast: func(eventType string, body any) {
 			if reg.srv != nil {

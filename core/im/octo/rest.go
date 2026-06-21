@@ -122,7 +122,10 @@ func validateWSURL(rawWSURL, rawAPIURL string) error {
 	if wu.Hostname() == "" {
 		return fmt.Errorf("ws_url has no host")
 	}
-	if wu.Hostname() != au.Hostname() {
+	// EqualFold so a case-drift between apiURL ("api.example") and the
+	// server-returned ws_url ("API.example") doesn't false-positive on
+	// legitimate deployments; DNS itself is case-insensitive.
+	if !strings.EqualFold(wu.Hostname(), au.Hostname()) {
 		return fmt.Errorf("ws_url host %q does not match api_url host %q (cross-host redirect of credentialed handshake refused)", wu.Hostname(), au.Hostname())
 	}
 	return nil

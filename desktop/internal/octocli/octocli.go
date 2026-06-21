@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -471,24 +472,17 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 // SaveConfig UI error toast. The redactor strips any whitespace-delimited
 // token-shaped fragment (bf_, uk_, sk_, sk-, ANTHROPIC_*=…) and clamps the
 // result to 256 chars.
+// tokenShapedRE matches any token-prefix substring (anywhere, not just at a
+// whitespace boundary) so glued forms — `Authorization=bf_xxx`, `token:bf_x`,
+// `"bf_x"`, `[bf_x]`, even `\x1b[31mbf_x` — get redacted. The trailing class
+// matches the safe set octo-server / claude / anthropic tokens use; `\b`
+// anchors prevent dropping legitimate URL paths that happen to contain
+// `bf_`/`sk_` as part of a longer identifier.
+var tokenShapedRE = regexp.MustCompile(`(?i)(bf_|uk_|sk_|sk-|ANTHROPIC_)[A-Za-z0-9_\-]+`)
+
 func redactChildOutput(out []byte) string {
 	s := strings.TrimSpace(string(out))
-	// Token-shaped substrings. Conservative: replace the whole word with
-	// "<redacted>" rather than partial masking.
-	words := strings.Fields(s)
-	for i, w := range words {
-		stripped := strings.TrimFunc(w, func(r rune) bool {
-			return r == '"' || r == '\'' || r == ',' || r == '.' || r == ':' || r == ';' || r == '(' || r == ')'
-		})
-		if strings.HasPrefix(stripped, "bf_") ||
-			strings.HasPrefix(stripped, "uk_") ||
-			strings.HasPrefix(stripped, "sk_") ||
-			strings.HasPrefix(stripped, "sk-") ||
-			strings.HasPrefix(stripped, "ANTHROPIC_") {
-			words[i] = "<redacted>"
-		}
-	}
-	s = strings.Join(words, " ")
+	s = tokenShapedRE.ReplaceAllString(s, "<redacted>")
 	const maxLen = 256
 	if len(s) > maxLen {
 		s = s[:maxLen] + "…"

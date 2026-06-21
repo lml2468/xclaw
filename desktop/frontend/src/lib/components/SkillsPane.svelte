@@ -138,7 +138,7 @@
     {/each}
     {#if skills.length === 0}<div class="muted">该 Bot 还没有技能</div>{/if}
     <div class="new">
-      <input placeholder="新建技能名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createOwn()} />
+      <input placeholder="新建技能名称" aria-label="新建技能名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createOwn()} />
       <button class="add" onclick={createOwn} disabled={!newName.trim()}>+ 新建技能</button>
     </div>
   </aside>

@@ -97,7 +97,7 @@
     {/each}
     {#if wfs.length === 0}<div class="muted">该 Bot 还没有工作流</div>{/if}
     <div class="new">
-      <input placeholder="新建工作流名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createOwn()} />
+      <input placeholder="新建工作流名称" aria-label="新建工作流名称" bind:value={newName} onkeydown={(e) => e.key === "Enter" && createOwn()} />
       <button class="add" onclick={createOwn} disabled={!newName.trim()}>+ 新建工作流</button>
     </div>
   </aside>

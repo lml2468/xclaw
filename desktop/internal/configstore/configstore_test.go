@@ -310,3 +310,29 @@ func filepathContains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestSaveRejectsDuplicateOctoBotID is the regression for round-4 R3: two bots
+// must not share an OCTO_BOT_ID. They would otherwise share an octo-cli disk
+// profile, and deleting one bot's profile would silently break the other's
+// auth on its next agent spawn.
+func TestSaveRejectsDuplicateOctoBotID(t *testing.T) {
+	setup(t)
+	err := Save([]BotConfig{
+		{ID: "a", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+		{ID: "b", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+	}, nil)
+	if err == nil {
+		t.Fatal("Save with duplicate OCTO_BOT_ID must be rejected")
+	}
+	if !filepathContains(err.Error(), "OCTO_BOT_ID") {
+		t.Fatalf("error should name the offending field: %v", err)
+	}
+	// Distinct robot ids — and bots without OCTO_BOT_ID at all — must continue to work.
+	if err := Save([]BotConfig{
+		{ID: "a", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+		{ID: "b", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27xyz"}},
+		{ID: "c", APIURL: "https://x.example"},
+	}, nil); err != nil {
+		t.Fatalf("distinct OCTO_BOT_IDs should save cleanly: %v", err)
+	}
+}

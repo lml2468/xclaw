@@ -58,3 +58,76 @@ documented* limitations before exposing a bot to untrusted users:
 If you find a way to defeat the prompt-injection defenses, escape the sandbox in
 a way the docs claim is prevented, or leak secrets through events/logs, that is
 in scope — please report it.
+
+## Hardening since v0.1
+
+These changes have landed in the four post-v0.1 audit rounds. They are not
+"new features" — they close concrete vectors operators should know about when
+choosing what version to deploy:
+
+- **Credentialed handshake host-pinning** (`core/im/octo/rest.go`). The
+  server-returned `ws_url` is now validated against the operator-configured
+  `apiUrl` before the connector dials: `wss://` required (or `ws://` only when
+  `apiUrl` is itself loopback), and the WS hostname must equal the API hostname
+  (case-insensitive). Without this, a compromised or MitM'd octo-server could
+  return `ws://attacker/` and the WS dialer would accept plaintext + arbitrary
+  host, leaking the bot's IMToken in the CONNECT frame.
+- **Add-bot POST refuses redirects** (`desktop/internal/octoapi/octoapi.go`).
+  The wizard's `POST /v1/user/bots` (which carries the operator's `uk_` User
+  API Key as a bearer) now refuses any `3xx`. Go strips `Authorization` only
+  on a cross-*host* redirect — a same-host or sibling-subdomain `302` would
+  otherwise leak the key. `serverMsg` additionally strips control chars + caps
+  length before the error reaches the UI toast.
+- **Octo-cli download SSRF guard** (`desktop/internal/octocli/octocli.go`).
+  Replaces `http.DefaultClient` with a dialer that rejects connections to
+  private/loopback/link-local/CGN ranges. GitHub asset URLs redirect through
+  S3/Fastly; a poisoned DNS or compromised mirror could otherwise redirect to
+  `169.254.169.254` (cloud metadata) or a private internal address.
+- **Wire-protocol DoS sentinels** (`core/im/octo/wire.go`). The frame parser
+  now exports `ErrUnknownPacketType`, `ErrVarintTooLong`, `ErrFrameBodyTooLarge`,
+  `ErrSocketClosed`, and the PKCS7 padding sentinels so downstream operators
+  can `errors.Is`-match on the failure mode for metrics/alerting. The 8 MiB
+  body cap + 4-byte varint cap are unchanged; only the error API was firmed up.
+- **Token redaction on child-process output**
+  (`desktop/internal/octocli/octocli.go`). Any `bf_*` / `uk_*` / `sk_*` /
+  `sk-*` / `ANTHROPIC_*` substring in error output bubbled up from `octo-cli`
+  is replaced with `<redacted>` before logs / UI. Octo-cli doesn't currently
+  echo tokens — this is defense-in-depth against a future regression.
+- **First-write atomicity for SOUL.md/AGENTS.md**
+  (`desktop/internal/configstore/configstore.go`). Template scaffolding now
+  uses `O_CREATE|O_EXCL|O_WRONLY`. The prior Stat-then-write derivation of
+  "first time" was a TOCTOU: an agent that planted `SOUL.md` between our Stat
+  and our write would have been silently overwritten. Blanking the field on
+  an existing bot is now a NO-OP rather than a silent delete.
+- **Slug validation in the secrets package**
+  (`desktop/internal/secrets/secrets.go`). `Set`/`Get`/`Delete` now reject any
+  `botID` that fails `safepath.ValidSlug`. The slug rule also rejects leading
+  `.` so a bot id can't collide with dotfiles under `~/.xclaw/`. Without this
+  fence, a future caller passing an attacker-supplied id like `"../other"`
+  would have written/read another bot's credential namespace.
+- **OCTO_BOT_ID uniqueness enforced**
+  (`desktop/internal/configstore/configstore.go`). Two bots sharing an
+  `OCTO_BOT_ID` would share an `octo-cli` disk profile; deleting one would
+  silently break the other's auth on its next agent spawn. Save now rejects
+  the duplicate at write time.
+- **Atomic config/cron writes with fsync** (`writeAtomic` in both
+  `desktop/internal/configstore` and `core/cron`). `config.json` and
+  `cron.json` are written via `O_CREATE|O_EXCL` + `Sync` + `Rename`, and the
+  `.tmp` is removed on any failure between write and rename — so a power loss
+  or process crash mid-write leaves either the old file or a fully committed
+  new file, never a half-written one.
+- **In-flight turn shutdown barrier** (`core/im/octo/connector.go` +
+  `core/cmd/xclawd/*.go`). The daemon now waits for every `drainTurns` and
+  `session.send` goroutine to finish before closing the store on SIGTERM.
+  Previously the deferred `st.Close()` could fire while a turn was still
+  mid-flush, producing `"database is closed"` errors that broke resume
+  continuity and lost usage accounting silently.
+- **Disk perm tightening**. Per-bot skills/workflows files are now `0o600`
+  (they are executable code the agent CLI loads on next spawn); octo-cli
+  download `.tmp` + `.prev` rollback are `0o700` (the prior `0o755` was
+  world-executable during the brief window between write and rename).
+- **Reproducible builds**. `xclawd` is cross-compiled with `-trimpath
+  -buildvcs=false` so binaries don't embed the operator's `$HOME` /
+  module-cache absolute paths or the local VCS-dirty flag.
+- **CI coverage**. `govulncheck` runs on both the `core` and `desktop`
+  modules now (was core-only); `go test -race` runs on both Linux and macOS.

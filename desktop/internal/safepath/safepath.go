@@ -16,10 +16,14 @@ import (
 var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ValidSlug reports whether s is a safe single path segment: non-empty, not "."
-// or "..", and only letters/digits/dot/underscore/dash (so it can't contain a
-// path separator or traversal).
+// or "..", does not begin with "." (no dotfile collisions inside ~/.xclaw/),
+// and only letters/digits/dot/underscore/dash (so it can't contain a path
+// separator or traversal).
 func ValidSlug(s string) bool {
-	return s != "" && s != "." && s != ".." && slugRe.MatchString(s)
+	if s == "" || s == "." || s == ".." || strings.HasPrefix(s, ".") {
+		return false
+	}
+	return slugRe.MatchString(s)
 }
 
 // ResolveLexical validates that rel is a clean relative path inside root and

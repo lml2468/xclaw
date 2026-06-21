@@ -222,10 +222,10 @@ func (x *XClawService) injectSecrets(client *control.Client) {
 	}
 	for _, id := range ids {
 		if t := secrets.Get(id, secrets.OctoToken); t != "" {
-			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: string(secrets.OctoToken), Value: t})
+			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.OctoToken, Value: t})
 		}
 		if t := secrets.Get(id, secrets.GatewayToken); t != "" {
-			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: string(secrets.GatewayToken), Value: t})
+			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.GatewayToken, Value: t})
 		}
 	}
 }

@@ -224,16 +224,15 @@ class Store {
   // loadUsage fetches token usage for every bot over a range (since = Unix
   // seconds; 0 = all time). Responses fold into bot.usage[since]. Called by the
   // Token Usage window on open and whenever the range changes. The returned
-  // Promise resolves once every per-bot UsageStats request has come back
-  // (the daemon replies synchronously over the control bus) — the modal
-  // awaits this so its spinner reflects real load progress, not an
-  // immediately-resolved no-op.
+  // Promise resolves once every per-bot UsageStats request has settled — note
+  // allSettled (not all): a single failed bot must not blank every other
+  // bot's number, and the modal's spinner must clear instead of hanging.
   loadUsage(since: number = 0): Promise<unknown[]> {
     if (this.preview) {
       this.seedUsageRange(since);
       return Promise.resolve([]);
     }
-    return Promise.all(this.bots.map((b) => XClawService.UsageStats(b.id, since)));
+    return Promise.allSettled(this.bots.map((b) => XClawService.UsageStats(b.id, since)));
   }
 
   // Preview-only: synthesize a range's usage by scaling the all-time (since=0)

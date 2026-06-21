@@ -11,14 +11,14 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     const el = node as Element;
     const href = (el.getAttribute("href") ?? "").trim();
     // Allow only safe schemes / fragments / SAME-PAGE absolute paths.
-    // A bare leading slash that starts with `//` is the protocol-relative
-    // form (`//evil.com`) which in a remote-rendered context becomes
-    // attacker-origin XHR/navigation — reject. The webview today resolves
-    // it harmlessly to `wails://…` but the rule is defense-in-depth for
-    // any future rendering surface.
+    // Scheme tests require `://` (or `:` for mailto: with an addr) so a
+    // weird input like `https:javascript:alert(1)` doesn't match the prior
+    // `^https?:` prefix-only check. Bare leading-slash that starts with
+    // `//` is protocol-relative (`//evil.com`) — reject. Mailto must
+    // carry at least one char after the colon so `mailto:` alone is no-op.
     const safe =
-      /^https?:/i.test(href) ||
-      /^mailto:/i.test(href) ||
+      /^https?:\/\/[^\s]/i.test(href) ||
+      /^mailto:[^\s]/i.test(href) ||
       href.startsWith("#") ||
       (href.startsWith("/") && !href.startsWith("//"));
     if (href && !safe) {

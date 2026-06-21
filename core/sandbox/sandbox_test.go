@@ -11,10 +11,15 @@ var hexName = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func TestHashDeterministicAndKindScoped(t *testing.T) {
 	dm := SessionCtx{Kind: KindDM, SessionKey: "x"}
+	dm2 := SessionCtx{Kind: KindDM, SessionKey: "x"} // distinct value, same fields
 	grp := SessionCtx{Kind: KindGroup, SessionKey: "x"}
 
-	if hashKey(dm.partitionKey()) != hashKey(dm.partitionKey()) {
-		t.Fatal("hash not deterministic")
+	// Two distinct SessionCtx values with the same fields must hash equal.
+	// (Comparing hashKey(x) != hashKey(x) was tautological — the compiler
+	// can't reach the failure branch.) Using two separately-constructed
+	// values exercises the partitionKey/hashKey path on independent input.
+	if hashKey(dm.partitionKey()) != hashKey(dm2.partitionKey()) {
+		t.Fatal("hash not deterministic across equal SessionCtx values")
 	}
 	if hashKey(dm.partitionKey()) == hashKey(grp.partitionKey()) {
 		t.Fatal("kind must scope the hash: dm:x and group:x collided")

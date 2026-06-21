@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/lml2468/xclaw/core/control"
@@ -23,6 +24,13 @@ type botTarget struct {
 	store   *store.Store
 	secrets *secretStore
 	cron    *cron.Manager // nil when agent.cron is disabled for this bot
+
+	// turnsWG tracks every in-flight session.send goroutine so the daemon
+	// can wait for them before closing the store. The Octo connector tracks
+	// its own queue via Connector.WaitTurns; this is the symmetric guard for
+	// turns initiated over the control bus (Console GUI). Without it,
+	// SIGTERM races the goroutine into the store-close path.
+	turnsWG sync.WaitGroup
 }
 
 // handlerDeps adapts single-bot vs multi-bot wiring to one command dispatcher.
@@ -92,7 +100,9 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
+			t.turnsWG.Add(1)
 			go func() {
+				defer t.turnsWG.Done()
 				d, herr := t.gateway.Handle(ctx, router.InboundMessage{
 					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: b.Text,
 				})

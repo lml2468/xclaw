@@ -53,9 +53,9 @@
     <legend>环境变量</legend>
     {#each rows as row, i (row)}
       <div class="envrow">
-        <input class="k" bind:value={row.k} oninput={commitEnv} placeholder="KEY" />
+        <input class="k" bind:value={row.k} oninput={commitEnv} placeholder="KEY" aria-label="环境变量名" />
         <span>=</span>
-        <input class="v" bind:value={row.v} oninput={commitEnv} placeholder="value" />
+        <input class="v" bind:value={row.v} oninput={commitEnv} placeholder="value" aria-label="环境变量值" />
         <button class="del" onclick={() => { rows = rows.filter((_, x) => x !== i); commitEnv(); }} aria-label="删除">−</button>
       </div>
     {/each}

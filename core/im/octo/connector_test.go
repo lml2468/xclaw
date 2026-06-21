@@ -131,4 +131,3 @@ func TestSettingByteBits(t *testing.T) {
 		t.Fatal("topic bit3")
 	}
 }
-

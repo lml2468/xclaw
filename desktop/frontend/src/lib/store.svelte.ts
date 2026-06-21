@@ -117,11 +117,29 @@ class Store {
   selectedKey = $state<string | null>(null);
   health = $state("");
   lastError = $state("");
+  // Track the exact text the user dismissed via the ✕ button so the
+  // reconnect storm (bridge.status events firing every retry while the
+  // daemon is down) doesn't re-pin the same banner on the next tick.
+  // Round 16 H5: round-15's ✕ cleared once; the next bridge.status with
+  // an identical detail unconditionally re-wrote lastError. Tracking the
+  // last-dismissed text + suppressing duplicate writes makes the dismiss
+  // sticky for the lifetime of that error condition. A different detail
+  // (e.g. daemon comes back, then a new failure) clears the suppression.
+  private dismissedError = $state("");
 
   // clearLastError dismisses the global error banner. Bound to Transcript's
   // ✕ button so a transient envelope failure doesn't pin a red bar above
   // the chat for the rest of the session (round 15 FE #3).
-  clearLastError() { this.lastError = ""; }
+  clearLastError() {
+    this.dismissedError = this.lastError;
+    this.lastError = "";
+  }
+  // setError centralizes lastError writes so we can suppress a repeat of
+  // a just-dismissed text (round 16 H5).
+  private setError(text: string) {
+    if (text === this.dismissedError) return;
+    this.lastError = text;
+  }
   connected = $state(false);
   // True in preview mode (XCLAW_PREVIEW / ?preview): seeded mock data, no daemon,
   // so we skip the control-bus fetches (SessionsList/History).
@@ -148,7 +166,7 @@ class Store {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("[store] fold failed", err);
-        this.lastError = "[fold] " + msg;
+        this.setError("[fold] " + msg);
       }
     });
     // Prime.
@@ -488,7 +506,7 @@ class Store {
         // present) rather than the bare literal "error" — the prior code
         // surfaced the word "error" alone, which gives the user nothing.
         const scope = env.body?.scope ? `[${env.body.scope}] ` : "";
-        this.lastError = scope + (env.body?.message ?? "网关返回未知错误（无详情）");
+        this.setError(scope + (env.body?.message ?? "网关返回未知错误（无详情）"));
         break;
       }
       case "bridge.status": {
@@ -496,7 +514,12 @@ class Store {
         // Lets the UI show "reconnecting" instead of silently freezing when the
         // daemon drops, and clear it when the bus comes back.
         this.connected = !!env.body?.connected;
-        if (!this.connected && env.body?.detail) this.lastError = env.body.detail;
+        if (this.connected) {
+          // Daemon reachable again — drop any dismissal so a fresh failure
+          // later can re-pin its banner.
+          this.dismissedError = "";
+        }
+        if (!this.connected && env.body?.detail) this.setError(env.body.detail);
         break;
       }
     }
@@ -551,10 +574,15 @@ class Store {
     s.loaded = true; // mark fetched even when empty, so we don't refetch on every open
     // Round 15 FE #1: previously we silently dropped server history when
     // the user had typed before the lazy History response landed. Now
-    // merge — keep any local-only messages (those whose ts is newer than
-    // the latest persisted row) on top of the persisted ones, preserving
-    // order. Local user messages get a brand-new id so there's no
-    // collision against a server-issued one.
+    // merge — keep any local-only messages on top of the persisted rows,
+    // preserving order.
+    // Round 16 FE #3: dedupe by (role, text, ts) tuple instead of a
+    // strict ts > cutoff comparison. The persisted-row ts and the local
+    // user-message ts collide at second granularity (both use
+    // Date.now()/1000), so a strict `>` was dropping the most recent
+    // user message every time the boundary lined up. The tuple compare
+    // matches when the server has acknowledged the message, otherwise
+    // keeps the local copy.
     const persisted = rows.map((r) => ({
       id: newId(), role: r.role as Role, text: r.content, ts: r.ts, streaming: false,
     }));
@@ -562,8 +590,8 @@ class Store {
       s.messages = persisted;
       return;
     }
-    const cutoff = persisted.length ? persisted[persisted.length - 1].ts : 0;
-    const localOnly = s.messages.filter((m) => m.ts > cutoff);
+    const seen = new Set(persisted.map((m) => `${m.role}\x00${m.text}\x00${Math.round(m.ts)}`));
+    const localOnly = s.messages.filter((m) => !seen.has(`${m.role}\x00${m.text}\x00${Math.round(m.ts)}`));
     s.messages = persisted.concat(localOnly);
   }
 
@@ -605,7 +633,7 @@ class Store {
         s.awaiting = false;
         s.awaitingSince = 0;
         s.proc = emptyProc();
-        this.lastError = "[turn] 长时间未收到响应，已取消等待 — 请重试或检查网关";
+        this.setError("[turn] 长时间未收到响应，已取消等待 — 请重试或检查网关");
       }
     }
   }

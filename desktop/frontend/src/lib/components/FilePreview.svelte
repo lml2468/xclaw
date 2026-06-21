@@ -58,16 +58,22 @@
     load(b, k, p);
   });
 
+  // Generation counter discards stale fetches — switching files quickly
+  // would otherwise let a slower (older) WorkspaceFile response clobber
+  // `file` with the wrong content (round 16 FE #2).
+  let loadGen = 0;
   async function load(b: string | null, k: string | null, p: string) {
+    const gen = ++loadGen;
     if (isPreview) {
       file = mockFiles[p] ?? ({ path: p, content: "(no preview)", encoding: "utf8", mime: "text/plain", truncated: false, size: 0 } as FileContent);
       return;
     }
     if (!b || !k) return;
     try {
-      file = await XClawService.WorkspaceFile(b, k, p);
+      const fc = await XClawService.WorkspaceFile(b, k, p);
+      if (gen === loadGen) file = fc;
     } catch (e) {
-      error = errMsg(e);
+      if (gen === loadGen) error = errMsg(e);
     }
   }
 

@@ -7,7 +7,9 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -86,10 +88,12 @@ func descriptionIn(root, name string) string {
 	if err != nil {
 		return ""
 	}
-	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+	f, err := safepath.OpenNoFollow(p)
+	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(p)
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return ""
 	}
@@ -104,10 +108,17 @@ func readIn(root, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("refusing to read symlink: %q", name)
+	// Round 16 H2: race-free symlink refusal via O_NOFOLLOW (round 15 used
+	// Lstat-before-Read which races vs an agent rename).
+	f, err := safepath.OpenNoFollow(p)
+	if err != nil {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+			return "", fmt.Errorf("refusing to read symlink: %q", name)
+		}
+		return "", err
 	}
-	b, err := os.ReadFile(p)
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
 	}
@@ -122,7 +133,16 @@ func writeIn(root, name, content string) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(content), 0o600)
+	// Round 16 Go #3: was os.WriteFile — followed leaf symlinks. WriteNoFollow
+	// refuses the symlink at open time so an agent-planted
+	// `bundle/foo.js → ~/.zshrc` can't be clobbered by an operator save.
+	if err := safepath.WriteNoFollow(p, []byte(content), 0o600); err != nil {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+			return fmt.Errorf("refusing to write through symlink: %q", name)
+		}
+		return err
+	}
+	return nil
 }
 
 func createIn(root, name string) error {

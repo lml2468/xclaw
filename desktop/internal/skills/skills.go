@@ -10,7 +10,9 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,12 +114,14 @@ func descriptionIn(root, name string) string {
 		return ""
 	}
 	full := filepath.Join(dir, "SKILL.md")
-	// Round 15 Sec H3: refuse if SKILL.md is a symlink — its target's
-	// description would otherwise surface in the GUI from anywhere on disk.
-	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+	// Round 16 H2: use safepath.OpenNoFollow for race-free symlink refusal
+	// (round 15 used Lstat-before-Read which races vs an agent rename).
+	f, err := safepath.OpenNoFollow(full)
+	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(full)
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return ""
 	}
@@ -172,16 +176,20 @@ func readFileIn(root, name, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Round 15 Sec H3: resolveInSkill checks the PARENT chain via
-	// AssertNoSymlinkEscape (dirOnly:true) but leaves the leaf unchecked,
-	// so a `~/.xclaw/<id>/.claude/skills/foo/leak.md → /etc/passwd`
-	// symlink would have its target's contents returned via the GUI.
-	// Refuse a symlink final-component explicitly. Tiny TOCTOU window vs
-	// an agent racing rename — acceptable, the agent already has Bash.
-	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("refusing to read symlink: %q", rel)
+	// Round 16 H2: replaced round-15's racy Lstat-before-Read with an
+	// O_NOFOLLOW open via safepath.OpenNoFollow, closing the TOCTOU
+	// window where an agent with Bash could swap the regular file for a
+	// symlink between our Lstat and the os.ReadFile. ErrSymlinkLeaf is
+	// translated to the same user-facing refusal message.
+	f, err := safepath.OpenNoFollow(full)
+	if err != nil {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+			return "", fmt.Errorf("refusing to read symlink: %q", rel)
+		}
+		return "", err
 	}
-	b, err := os.ReadFile(full)
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
 	}
@@ -196,7 +204,18 @@ func writeFileIn(root, name, rel, content string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(full, []byte(content), 0o600)
+	// Round 16 Go #1 / Sec H2: bare os.WriteFile would follow a symlink at
+	// the final component and clobber whatever it pointed at (an agent with
+	// Bash plants `bundle/SKILL.md → ~/.zshrc`, next GUI save overwrites
+	// .zshrc). WriteNoFollow refuses the leaf symlink atomically at open
+	// time.
+	if err := safepath.WriteNoFollow(full, []byte(content), 0o600); err != nil {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+			return fmt.Errorf("refusing to write through symlink: %q", rel)
+		}
+		return err
+	}
+	return nil
 }
 
 func deleteFileIn(root, name, rel string) error {
@@ -219,7 +238,17 @@ func createIn(root, name string) error {
 		return err
 	}
 	tmpl := fmt.Sprintf("---\nname: %s\ndescription: One line on when the agent should use this skill.\n---\n\n# %s\n\nDescribe what this skill does and how to use it.\n", name, name)
-	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(tmpl), 0o644)
+	// Round 16 Go #2: bare os.WriteFile would follow a symlink at the
+	// SKILL.md leaf, letting an agent that planted the symlink before our
+	// MkdirAll clobber its target. WriteNoFollow refuses the symlink
+	// atomically at open time.
+	if err := safepath.WriteNoFollow(filepath.Join(dir, "SKILL.md"), []byte(tmpl), 0o644); err != nil {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+			return fmt.Errorf("refusing to write through symlink in new skill %q", name)
+		}
+		return err
+	}
+	return nil
 }
 
 // ---- Per-bot skills (~/.xclaw/<id>/.claude/skills) ----

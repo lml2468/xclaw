@@ -40,16 +40,21 @@
       class:user={isUser}
       oncontextmenu={(e) => {
         // Hijack right-click ONLY when the user clicked outside any
-        // interactive child (link, image, code block, table, …). A bare
-        // `e.preventDefault()` on the bubble was stealing native context
-        // menus on agent-rendered links, leaving no way to "open in new
-        // tab" or "copy link address" (round 15 FE #2). Walk the path
-        // and bail if any ancestor up to the bubble is a tag whose
-        // native menu actually matters.
+        // interactive child (link, image, code block, table, form
+        // control, …). A bare `e.preventDefault()` on the bubble was
+        // stealing native context menus on agent-rendered links,
+        // leaving no way to "open in new tab" or "copy link address"
+        // (round 15 FE #2). Walk the path and bail if any ancestor up
+        // to the bubble is a tag whose native menu actually matters.
+        // Round 16 H4: extended to cover DETAILS/SUMMARY/INPUT/SELECT/
+        // TEXTAREA/LABEL/UL/OL/LI/BLOCKQUOTE/H1-6 since DOMPurify's
+        // default whitelist passes those and an agent-emitted form
+        // control would otherwise steal Paste/Copy.
         const t = e.target as HTMLElement | null;
         const limit = e.currentTarget as HTMLElement;
+        const BAIL = /^(A|IMG|CODE|PRE|BUTTON|TABLE|TD|TH|SVG|DETAILS|SUMMARY|INPUT|SELECT|TEXTAREA|LABEL|UL|OL|LI|BLOCKQUOTE|H[1-6])$/;
         for (let n = t; n && n !== limit; n = n.parentElement) {
-          if (/^(A|IMG|CODE|PRE|BUTTON|TABLE|TD|TH|SVG)$/.test(n.tagName)) return;
+          if (BAIL.test(n.tagName)) return;
         }
         e.preventDefault();
         copy();

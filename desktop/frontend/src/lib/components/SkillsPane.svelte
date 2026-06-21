@@ -33,19 +33,29 @@
 
   $effect(() => { botId; sel = null; files = []; activeFile = null; content = ""; dirty = false; load(); });
 
+  // Generation counter discards stale list responses — switching bots
+  // quickly used to let an older BotSkillsList response clobber `skills`
+  // with the prior bot's entries (round 16 FE #2). The bot id captured
+  // at call time is also compared so a switch DURING load is robust.
+  let loadGen = 0;
   async function load() {
+    const gen = ++loadGen;
+    const capturedBot = botId;
     error = "";
     try {
+      let next: SkillInfo[];
       if (isPreview) {
-        skills = Object.entries(mockBot[botId] ?? {}).map(([name, fs]) => ({
+        next = Object.entries(mockBot[capturedBot] ?? {}).map(([name, fs]) => ({
           name, description: descOf(fs["SKILL.md"] ?? ""), files: Object.keys(fs).length,
         }));
       } else {
-        skills = ((await XClawService.BotSkillsList(botId)) ?? []) as SkillInfo[];
+        next = ((await XClawService.BotSkillsList(capturedBot)) ?? []) as SkillInfo[];
       }
+      if (gen !== loadGen || capturedBot !== botId) return;
+      skills = next;
       if (skills.length && !skills.find((s) => s.name === sel)) selectSkill(skills[0].name);
       else if (!skills.length) { sel = null; files = []; activeFile = null; content = ""; }
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (gen === loadGen) error = errMsg(e); }
   }
 
   function descOf(skillmd: string): string {

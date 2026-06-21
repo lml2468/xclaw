@@ -34,6 +34,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/desktop/internal/octoapi"
 )
 
 const repo = "Mininglamp-OSS/octo-cli"
@@ -537,6 +538,14 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 	if robotID == "" {
 		return fmt.Errorf("octocli.Login: robotID is required")
 	}
+	// Round 16 Sec H1: octoapi.AddBot validated server-returned robot_id,
+	// but the operator-typed OCTO_BOT_ID env value reaches the same argv
+	// path via OctoCliRelogin / SaveConfig. A free-text "-config=/tmp/x"
+	// or "-h" here would be reinterpreted as a flag for `--bot-id`'s
+	// previous arg or for the command itself. Same regex; refuse early.
+	if !octoapi.ValidRobotID.MatchString(robotID) {
+		return fmt.Errorf("octocli.Login: robotID %q has illegal characters (must match %s)", robotID, octoapi.ValidRobotID.String())
+	}
 	if token == "" {
 		return fmt.Errorf("octocli.Login: token is required")
 	}
@@ -588,6 +597,13 @@ func redactChildOutput(out []byte) string {
 // run this on bot deletion without worrying about preconditions.
 func Logout(ctx context.Context, robotID string) error {
 	if robotID == "" {
+		return nil
+	}
+	// Round 16 Sec H1: same argv-smuggling guard as Login. A free-text
+	// OCTO_BOT_ID of "-config=/tmp/x" would flag-inject through the
+	// logout invocation too. Refuse early — there's nothing to log out
+	// of for an invalid id anyway.
+	if !octoapi.ValidRobotID.MatchString(robotID) {
 		return nil
 	}
 	bin := BinPath()

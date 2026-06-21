@@ -230,15 +230,15 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 		return fc, fmt.Errorf("not a file: %q", relPath)
 	}
 
-	// openNoFollow refuses a final-component symlink at open time, closing
-	// the TOCTOU window where an agent with Bash could swap the regular
-	// file for a symlink between our Lstat above and the open below (round
-	// 13 M2). Windows lacks O_NOFOLLOW, so the Windows shim falls back to
-	// os.Open after the Lstat guard — symlinks are rare in the typical
-	// Windows agent sandbox.
-	f, err := openNoFollow(full)
+	// safepath.OpenNoFollow refuses a final-component symlink at open
+	// time, closing the TOCTOU window where an agent with Bash could swap
+	// the regular file for a symlink between our Lstat above and the open
+	// below (round 13 M2 + round 16 promoted the helper to safepath so
+	// skills/workflows can reuse it). Windows lacks O_NOFOLLOW, so the
+	// Windows shim falls back to os.Open after the Lstat guard.
+	f, err := safepath.OpenNoFollow(full)
 	if err != nil {
-		if errors.Is(err, errSymlinkOpen) {
+		if errors.Is(err, safepath.ErrSymlinkLeaf) {
 			return fc, fmt.Errorf("refusing to read symlink: %q", relPath)
 		}
 		return fc, err

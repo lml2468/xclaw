@@ -39,17 +39,22 @@
     loadTree(b, k);
   });
 
+  // Generation counter discards stale fetches: switching sessions twice
+  // quickly used to leave the slower (older) WorkspaceTree response
+  // overwriting `tree` with the wrong session's files (round 16 FE #2).
+  let loadGen = 0;
   async function loadTree(b: string | null, k: string | null) {
+    const gen = ++loadGen;
     error = "";
     if (!b || !k) { tree = null; return; }
     loading = true;
     try {
-      tree = isPreview ? mockTree : await XClawService.WorkspaceTree(b, k);
+      const t = isPreview ? mockTree : await XClawService.WorkspaceTree(b, k);
+      if (gen === loadGen) tree = t;
     } catch (e) {
-      error = errMsg(e);
-      tree = null;
+      if (gen === loadGen) { error = errMsg(e); tree = null; }
     } finally {
-      loading = false;
+      if (gen === loadGen) loading = false;
     }
   }
 

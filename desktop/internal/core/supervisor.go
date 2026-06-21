@@ -37,13 +37,48 @@ func envWithOctoBin() []string {
 
 // SocketPath returns the control-bus socket path for this user. Kept short to
 // stay under the ~104-byte sockaddr_un limit. On Windows, AF_UNIX still wants a
-// filesystem path (Win10 1803+), placed in the temp dir.
+// filesystem path (Win10 1803+), placed in the temp dir, and os.Getuid()
+// returns -1 — so we derive a stable per-user suffix from USERNAME / USERPROFILE
+// instead (round 16 Go #6 — without this, every Windows user shared
+// `xclaw--1.sock` in the system temp dir, racing each other's daemon
+// startups).
 func SocketPath() string {
-	name := fmt.Sprintf("xclaw-%d.sock", os.Getuid())
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), name)
+		return filepath.Join(os.TempDir(), fmt.Sprintf("xclaw-%s.sock", windowsUserSuffix()))
 	}
-	return filepath.Join("/tmp", name)
+	return filepath.Join("/tmp", fmt.Sprintf("xclaw-%d.sock", os.Getuid()))
+}
+
+// windowsUserSuffix derives a short stable per-user token. USERNAME is the
+// conventional source; fall back to the basename of USERPROFILE; final
+// fallback is "anon" (still per-user via the temp dir's user prefix on
+// %LOCALAPPDATA%\Temp, but the prefix is explicit).
+func windowsUserSuffix() string {
+	if u := os.Getenv("USERNAME"); u != "" {
+		return sanitizeWinUser(u)
+	}
+	if p := os.Getenv("USERPROFILE"); p != "" {
+		return sanitizeWinUser(filepath.Base(p))
+	}
+	return "anon"
+}
+
+// sanitizeWinUser strips characters that would be illegal in a socket name
+// (anything not [A-Za-z0-9._-]), capping at 32 chars.
+func sanitizeWinUser(s string) string {
+	var b []byte
+	for i := 0; i < len(s) && len(b) < 32; i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+			b = append(b, c)
+		}
+	}
+	if len(b) == 0 {
+		return "anon"
+	}
+	return string(b)
 }
 
 // ConfigPath is the daemon's multi-bot config (~/.xclaw/config.json).

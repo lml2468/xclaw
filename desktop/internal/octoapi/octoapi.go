@@ -31,14 +31,16 @@ import (
 	"github.com/lml2468/xclaw/core/config"
 )
 
-// validRobotID is the strictest character class we can put on a value that's
+// ValidRobotID is the strictest character class we can put on a value that's
 // about to flow into argv. octo-cli accepts robot ids that are short alnum
 // tokens (e.g. "1234567890ab"); we additionally refuse leading `-` so a
 // hostile / MITM'd server can't slip a flag-shaped string into
 // `--bot-id <robotID>` and have octo-cli treat the value AS a flag
 // (--config=/tmp/x, --api-base-url=https://attacker, --help → 1-exit and skip
-// the actual login). Round 15 Sec H2 close.
-var validRobotID = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]{0,127}$`)
+// the actual login). Round 15 Sec H2 close. Exported in round 16 H1 so the
+// SAME check covers operator-typed values that flow through BasicInfo +
+// SaveConfig → octocli.Login.
+var ValidRobotID = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]{0,127}$`)
 
 // httpTimeout bounds the provisioning request.
 const httpTimeout = 30 * time.Second
@@ -159,7 +161,7 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 	// slug (round 15 Sec H2). bot_token is validated structurally too —
 	// it must start with the bf_ prefix; otherwise something is wrong on
 	// the server side and we'd persist a useless token.
-	if !validRobotID.MatchString(out.RobotID) {
+	if !ValidRobotID.MatchString(out.RobotID) {
 		return BotResult{}, fmt.Errorf("创建 Bot 失败：服务返回的 robot_id 含非法字符")
 	}
 	if !strings.HasPrefix(out.BotToken, "bf_") {

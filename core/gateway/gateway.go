@@ -621,7 +621,12 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			case agent.KindTurnDone:
 				// Accumulate this turn's token usage into the bot's persistent
 				// total (best-effort: a write failure must not fail the turn).
-				if ev.Usage != nil {
+				// Round 16 Go #4: skip when termErr was set earlier in this
+				// turn (the parser emits KindError before KindTurnDone for an
+				// is_error=true result, e.g. max_turns) — billing tokens +
+				// bumping the turns counter for a turn the user is told failed
+				// over-attributes both metrics.
+				if termErr == "" && ev.Usage != nil {
 					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
 						fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
 					}

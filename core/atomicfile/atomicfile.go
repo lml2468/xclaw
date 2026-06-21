@@ -28,6 +28,29 @@ var tmpCounter uint64
 // writer in another process can't be mistaken for an orphan.
 const orphanTmpAge = 24 * time.Hour
 
+// reapInterval throttles the orphan-reap dir scan: at most one scan per
+// process per hour, no matter how often Write is called. Without this, every
+// write (e.g. cron.json after each task fire) did an O(dir-entries) ReadDir
+// in the hot path, AND an agent with bash that planted millions of
+// `<base>.tmp.junk` siblings could DoS subsequent writes (round 16 H3).
+// `lastReapNS` is the unix-nano timestamp of the last reap attempt, accessed
+// only via atomics so reap-eligibility is racy-but-cheap (extra reap is
+// harmless; missed reap recovers next hour).
+const reapInterval = time.Hour
+
+var lastReapNS atomic.Int64
+
+// shouldReap returns true if at least reapInterval has elapsed since the last
+// attempt AND atomically claims the slot for this caller. Returns false if
+// another goroutine raced and won.
+func shouldReap(now time.Time) bool {
+	prior := lastReapNS.Load()
+	if now.UnixNano()-prior < int64(reapInterval) {
+		return false
+	}
+	return lastReapNS.CompareAndSwap(prior, now.UnixNano())
+}
+
 // randSuffix returns a short hex token from crypto/rand so the tmp filename
 // is unpredictable to a local-read attacker (round 15 Sec M2). Without this,
 // the tmp name was `path.tmp.<pid>.<counter>` — pid is observable via /proc
@@ -68,18 +91,33 @@ func Write(path string, data []byte, perm os.FileMode) (err error) {
 	// here we collect siblings whose names match our prefix-pattern AND
 	// whose mtime is older than orphanTmpAge (24h). Failure to scan never
 	// blocks the real write.
-	tmpPrefix := filepath.Base(path) + ".tmp."
-	if entries, derr := os.ReadDir(filepath.Dir(path)); derr == nil {
-		cutoff := time.Now().Add(-orphanTmpAge)
-		for _, e := range entries {
-			if !strings.HasPrefix(e.Name(), tmpPrefix) {
-				continue
+	//
+	// Round 16 H3: gated behind shouldReap (at most once per hour per
+	// process) AND capped at maxReapScan entries so an agent that planted
+	// millions of `<base>.tmp.junk` siblings in an agent-writable dir
+	// (e.g. ~/.xclaw/<id>/.claude/skills/<bundle>/) can't turn every
+	// operator-side save into an O(N) stall.
+	const maxReapScan = 512
+	now := time.Now()
+	if shouldReap(now) {
+		tmpPrefix := filepath.Base(path) + ".tmp."
+		if entries, derr := os.ReadDir(filepath.Dir(path)); derr == nil {
+			cutoff := now.Add(-orphanTmpAge)
+			scanned := 0
+			for _, e := range entries {
+				scanned++
+				if scanned > maxReapScan {
+					break
+				}
+				if !strings.HasPrefix(e.Name(), tmpPrefix) {
+					continue
+				}
+				info, ierr := e.Info()
+				if ierr != nil || info.ModTime().After(cutoff) {
+					continue
+				}
+				_ = os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
 			}
-			info, ierr := e.Info()
-			if ierr != nil || info.ModTime().After(cutoff) {
-				continue
-			}
-			_ = os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
 		}
 	}
 

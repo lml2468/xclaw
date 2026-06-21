@@ -46,7 +46,18 @@ type socketConn struct {
 	closed bool
 
 	decryptFails map[string]int
+
+	// recentMsgIDs is a bounded set of recently-seen messageIDs used to drop
+	// duplicates the server resends after a missed recvack — both when the dup
+	// flag explicitly says so (WuKongIM RECV header bit 0) AND on the fallback
+	// path where a reconnect causes the server to replay the unacked tail
+	// without setting dup. Bounded ring (insertion order) so a long-lived
+	// connection doesn't grow it unbounded.
+	recentMsgIDs    map[string]struct{}
+	recentMsgOrder  []string
 }
+
+const recentMsgIDsCap = 512
 
 const (
 	wsPingInterval     = 60 * time.Second
@@ -59,7 +70,27 @@ func newSocketConn(wsURL, uid, token string, onMessage func(BotMessage), onError
 		wsURL: wsURL, uid: uid, token: token,
 		onMessage: onMessage, onError: onError,
 		decryptFails: make(map[string]int),
+		recentMsgIDs: make(map[string]struct{}, recentMsgIDsCap),
 	}
+}
+
+// rememberMsgID records id in the recent set; returns true if it was already
+// present (a duplicate that the caller should skip after acking).
+func (s *socketConn) rememberMsgID(id string) (seen bool) {
+	if id == "" {
+		return false
+	}
+	if _, ok := s.recentMsgIDs[id]; ok {
+		return true
+	}
+	if len(s.recentMsgOrder) >= recentMsgIDsCap {
+		drop := s.recentMsgOrder[0]
+		s.recentMsgOrder = s.recentMsgOrder[1:]
+		delete(s.recentMsgIDs, drop)
+	}
+	s.recentMsgIDs[id] = struct{}{}
+	s.recentMsgOrder = append(s.recentMsgOrder, id)
+	return false
 }
 
 // connect dials the WS, runs the handshake, and starts the read + ping loops.
@@ -297,6 +328,20 @@ func (s *socketConn) onRecv(header byte, body []byte) {
 	}
 	delete(s.decryptFails, idStr)
 	_ = s.writeRaw(encodeRecvack(messageID, messageSeq))
+
+	// Drop duplicates the server resends. Two signals catch this:
+	//   1. RECV header bit 0 (dup flag) — WuKongIM sets it on retransmits.
+	//   2. recentMsgIDs ring — catches reconnect replays where the server
+	//      doesn't bother setting the flag.
+	// Either way we still ack (so the server stops retrying) but skip forwarding
+	// to the gateway, which would otherwise fire a second (third, …) turn for
+	// one user message — the symptom of #146.
+	if headerFlags(header)&0x01 == 1 {
+		return
+	}
+	if s.rememberMsgID(idStr) {
+		return
+	}
 
 	if s.onMessage != nil {
 		s.onMessage(BotMessage{

@@ -5,7 +5,10 @@
 #   zsh scripts/package-desktop.sh                 # current macOS arch, ad-hoc signed
 #   XCLAW_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
 #   XCLAW_UNIVERSAL=1 …                            # mac universal (arm64+amd64)
-#   XCLAW_NOTARY_PROFILE=my-profile …             # notarize (needs a Developer ID cert)
+#   XCLAW_NOTARY_PROFILE=my-profile …              # notarize via keychain profile (local dev)
+#   XCLAW_NOTARY_KEY_PATH=/path/AuthKey.p8 …       # notarize via App Store Connect API key (CI)
+#     XCLAW_NOTARY_KEY_ID=ABCD1234EF                  + key id
+#     XCLAW_NOTARY_ISSUER=12345678-...                + issuer uuid
 #
 # macOS is the fully-supported target here. The Go daemon is zero-cgo and
 # cross-compiles to win/linux too (built below for CI), but the Wails GUI binary
@@ -21,6 +24,9 @@ app_name="xclaw"
 bundle="$desktop/bin/${app_name}.app"
 sign_identity="${XCLAW_SIGN_IDENTITY:-}"
 notary_profile="${XCLAW_NOTARY_PROFILE:-}"
+notary_key_path="${XCLAW_NOTARY_KEY_PATH:-}"
+notary_key_id="${XCLAW_NOTARY_KEY_ID:-}"
+notary_issuer="${XCLAW_NOTARY_ISSUER:-}"
 universal="${XCLAW_UNIVERSAL:-}"
 entitlements="$desktop/build/darwin/entitlements.plist"
 
@@ -31,11 +37,12 @@ echo "▸ cross-compiling xclawd (zero-cgo)…"
 build_xclawd() { # $1=GOOS $2=GOARCH $3=out
   ( cd "$core" && CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -ldflags "-s -w" -o "$3" ./cmd/xclawd )
 }
-# Daemon binaries for all three platforms (CI picks these up for win/linux).
+# Daemon binaries for all four platforms (CI picks these up for win/linux).
 build_xclawd darwin  arm64 "$out/xclawd-darwin-arm64"
 build_xclawd darwin  amd64 "$out/xclawd-darwin-amd64"
 build_xclawd windows amd64 "$out/xclawd-windows-amd64.exe"
 build_xclawd linux   amd64 "$out/xclawd-linux-amd64"
+build_xclawd linux   arm64 "$out/xclawd-linux-arm64"
 lipo -create -output "$out/xclawd" "$out/xclawd-darwin-arm64" "$out/xclawd-darwin-amd64"
 echo "  ✓ xclawd (mac universal + win/linux in $out)"
 
@@ -108,9 +115,22 @@ echo "▸ zipping → $out/XClaw.zip"
 rm -f "$out/XClaw.zip"
 ditto -c -k --keepParent "$bundle" "$out/XClaw.zip"
 
-if [[ -n "$sign_identity" && -n "$notary_profile" ]]; then
+# Notarize via either a stored keychain profile (local dev, set up with
+# `xcrun notarytool store-credentials`) or an App Store Connect API key trio
+# (CI: a .p8 + key id + issuer uuid, with the key file dropped on disk just for
+# this run). On success we staple the ticket and re-zip — the stapled .app
+# survives offline first-launch Gatekeeper checks.
+notarize_args=()
+if [[ -n "$sign_identity" ]]; then
+  if [[ -n "$notary_key_path" && -n "$notary_key_id" && -n "$notary_issuer" ]]; then
+    notarize_args=(--key "$notary_key_path" --key-id "$notary_key_id" --issuer "$notary_issuer")
+  elif [[ -n "$notary_profile" ]]; then
+    notarize_args=(--keychain-profile "$notary_profile")
+  fi
+fi
+if (( ${#notarize_args[@]} > 0 )); then
   echo "▸ notarizing…"
-  xcrun notarytool submit "$out/XClaw.zip" --keychain-profile "$notary_profile" --wait
+  xcrun notarytool submit "$out/XClaw.zip" "${notarize_args[@]}" --wait
   xcrun stapler staple -v "$bundle"
   rm -f "$out/XClaw.zip"
   ditto -c -k --keepParent "$bundle" "$out/XClaw.zip"

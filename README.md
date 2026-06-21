@@ -113,12 +113,21 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/xclawd ./cmd/xclawd
 
 ```bash
 # Builds XClaw.app (+ .zip), embeds the signed xclawd + octo-cli inside-out.
-# Ad-hoc by default; pass an identity to Developer-sign, a profile to notarize.
+# Ad-hoc by default; pass an identity to Developer-sign, a profile (or an App
+# Store Connect API key trio) to notarize.
 XCLAW_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
 ```
 
 Windows/Linux GUIs build on their own OS (`cd desktop && wails3 task package`);
 the daemon already cross-compiles for all three.
+
+### Releases
+
+Tagged releases (push a `vX.Y.Z` tag) are built, codesigned with Developer ID,
+notarized, and published on the [Releases page](https://github.com/lml2468/xclaw/releases)
+with a universal macOS `.app.zip` + headless `xclawd` binaries for linux-amd64,
+linux-arm64, and windows-amd64. See [`docs/RELEASE.md`](docs/RELEASE.md) for
+the one-time secret setup and the release checklist.
 
 ## Configuration
 

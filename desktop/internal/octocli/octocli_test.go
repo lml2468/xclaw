@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -221,5 +223,37 @@ func TestLogoutNoOpOnAbsentBinary(t *testing.T) {
 	}
 	if err := Logout(context.Background(), ""); err != nil {
 		t.Errorf("Logout with empty robotID should be no-op, got %v", err)
+	}
+}
+
+func TestHasProfileMissingFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if HasProfile("any") {
+		t.Fatal("HasProfile must return false when config.json is missing")
+	}
+}
+
+func TestHasProfileFinds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := filepath.Join(home, ".octo-cli")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"profiles":{"bot_a":{"robot_id":"bot_a"},"bot_b":{"robot_id":"bot_b"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasProfile("bot_a") {
+		t.Error("HasProfile(\"bot_a\") = false, want true")
+	}
+	if HasProfile("bot_unknown") {
+		t.Error("HasProfile(\"bot_unknown\") = true, want false")
+	}
+	if HasProfile("") {
+		t.Error("empty robotID must always return false")
 	}
 }

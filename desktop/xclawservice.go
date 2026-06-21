@@ -16,6 +16,7 @@ import (
 	"github.com/lml2468/xclaw/desktop/internal/control"
 	"github.com/lml2468/xclaw/desktop/internal/core"
 	"github.com/lml2468/xclaw/desktop/internal/octoapi"
+	"github.com/lml2468/xclaw/desktop/internal/octocli"
 	"github.com/lml2468/xclaw/desktop/internal/secrets"
 	"github.com/lml2468/xclaw/desktop/internal/skills"
 	"github.com/lml2468/xclaw/desktop/internal/workflows"
@@ -311,6 +312,77 @@ func (x *XClawService) LoadConfig() ([]configstore.BotConfig, error) {
 // follows with RestartCore to apply.
 func (x *XClawService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
 	return configstore.Save(bots, removedIDs)
+}
+
+// --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---
+
+// OctoCliStatus is the per-bot octo-cli registration state surfaced to the
+// Octo-integration pane: registered iff ~/.octo-cli/config.json has an entry
+// for the bot's OCTO_BOT_ID. RobotID is included so the UI can show what we
+// looked up (and reveal mismatches between config and what's actually in env).
+type OctoCliStatus struct {
+	Registered bool   `json:"registered"`
+	RobotID    string `json:"robotId"`
+}
+
+// OctoCliStatus reports whether the bot's octo-cli profile is registered.
+// Reads config.json directly; no octo-cli spawn needed (cheap for a UI poll).
+func (x *XClawService) OctoCliStatus(botID string) (OctoCliStatus, error) {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return OctoCliStatus{}, err
+	}
+	return OctoCliStatus{Registered: octocli.HasProfile(robotID), RobotID: robotID}, nil
+}
+
+// OctoCliRelogin re-writes the disk profile for the bot from the keychain'd
+// bf_ token. Used to repair a missing/stale profile from the Octo-integration
+// pane without forcing the operator to re-save the whole config.
+func (x *XClawService) OctoCliRelogin(botID string) error {
+	robotID, token, apiURL, err := loadOctoBinding(botID)
+	if err != nil {
+		return err
+	}
+	if robotID == "" {
+		return fmt.Errorf("bot %q has no OCTO_BOT_ID in env", botID)
+	}
+	if token == "" {
+		return fmt.Errorf("bot %q has no bf_ token in keychain — set it via the Octo 集成 tab and re-save", botID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return octocli.Login(ctx, robotID, token, apiURL)
+}
+
+// OctoCliLogout clears the bot's disk profile. The keychain'd bf_ token is
+// left alone — re-login can restore the profile from it.
+func (x *XClawService) OctoCliLogout(botID string) error {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return err
+	}
+	if robotID == "" {
+		return nil // nothing to log out of
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return octocli.Logout(ctx, robotID)
+}
+
+// loadOctoBinding returns the bot's (robotID, bf_token, apiURL) by reading
+// configstore (which folds in the keychain token).
+func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
+	bots, lerr := configstore.Load()
+	if lerr != nil {
+		return "", "", "", lerr
+	}
+	for _, b := range bots {
+		if b.ID != botID {
+			continue
+		}
+		return b.Env["OCTO_BOT_ID"], b.OctoToken, b.APIURL, nil
+	}
+	return "", "", "", fmt.Errorf("bot %q not found", botID)
 }
 
 // OctoAddBot provisions a new bot on octo-server using the operator's User API

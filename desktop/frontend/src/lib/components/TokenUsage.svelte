@@ -2,9 +2,8 @@
   import { store, type BotUsage } from "../store.svelte";
   import { onMount } from "svelte";
   import { modal } from "../actions/modal";
-  import SettingsHeader from "./SettingsHeader.svelte";
 
-  let { onclose, onedit, onskills, onworkflows }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onworkflows?: () => void } = $props();
+  let { onclose }: { onclose: () => void } = $props();
 
   // Range selector. `since` is Unix seconds at a LOCAL-midnight bound (0 = all
   // time), computed from the user's own calendar so "today" matches their tz.
@@ -117,16 +116,17 @@
 <div class="scrim" onclick={onclose} role="presentation">
   <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
   <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量" tabindex="-1">
-    <SettingsHeader active="usage" {onclose} onnav={(fn) => { onclose(); fn(); }} {onedit} {onskills} {onworkflows}>
-      {#snippet children()}
-        <span class="spin" class:on={loading} aria-hidden="true"></span>
-        <div class="range" role="tablist" aria-label="时间范围">
-          {#each RANGES as r (r.key)}
-            <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
-          {/each}
-        </div>
-      {/snippet}
-    </SettingsHeader>
+    <header>
+      <h2>Token 用量</h2>
+      <span class="spin" class:on={loading} aria-hidden="true"></span>
+      <span class="hspacer"></span>
+      <div class="range" role="tablist" aria-label="时间范围">
+        {#each RANGES as r (r.key)}
+          <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
+        {/each}
+      </div>
+      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
+    </header>
 
     <div class="body">
       {#if bots.length === 0}
@@ -190,6 +190,14 @@
 <style>
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
+
+  header { display: flex; align-items: center; gap: 12px; height: var(--header-h); padding: 0 18px 0 92px; -webkit-app-region: drag; border-bottom: 1px solid var(--border-soft, var(--hairline)); }
+  header h2 { font-size: 17px; font-weight: 600; margin: 0; }
+  header .hspacer { flex: 1; }
+  header .range, header .range button, header .x { -webkit-app-region: no-drag; }
+  header .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; transition: background .14s ease, color .14s ease; }
+  header .x:hover { background: var(--ink-bg-hover); color: var(--ink); }
+  header .x:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   /* Time-range selector (lives in the shared header via the children snippet). */
   .range { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }

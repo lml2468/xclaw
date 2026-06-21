@@ -443,3 +443,28 @@ func Logout(ctx context.Context, robotID string) error {
 	}
 	return nil
 }
+
+// HasProfile reports whether ~/.octo-cli/config.json has an entry for robotID.
+// We read the JSON directly instead of shelling out to `octo-cli auth list` —
+// 10x faster for a UI poll, and a missing binary is just "no" not an error.
+// The encrypted credentials file (credentials.enc) is separate; config.json
+// is the index that lists which profiles exist.
+func HasProfile(robotID string) bool {
+	if robotID == "" {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	cfgPath := filepath.Join(home, ".octo-cli", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return false // missing file → no profiles registered
+	}
+	var cfg struct {
+		Profiles map[string]json.RawMessage `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	_, ok := cfg.Profiles[robotID]
+	return ok
+}

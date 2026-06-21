@@ -126,17 +126,13 @@ func setupSystemTray() {
 
 	menu := app.NewMenu()
 	menu.Add("Open Console").OnClick(func(*application.Context) { openConsole() })
-	menu.Add("Edit Bots…").OnClick(func(*application.Context) {
+	menu.Add("Settings…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-editor")
+		app.Event.Emit("xclaw:open-settings", "basic")
 	})
-	menu.Add("Manage Skills…").OnClick(func(*application.Context) {
+	menu.Add("Token Usage…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-skills")
-	})
-	menu.Add("Manage Workflows…").OnClick(func(*application.Context) {
-		openConsole()
-		app.Event.Emit("xclaw:open-workflows")
+		app.Event.Emit("xclaw:open-usage")
 	})
 	menu.AddSeparator()
 	menu.Add("Restart Core").OnClick(func(*application.Context) {

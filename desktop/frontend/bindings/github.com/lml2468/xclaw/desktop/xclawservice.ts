@@ -34,6 +34,10 @@ import * as workflows$0 from "./internal/workflows/models.js";
 // @ts-ignore: Unused imports
 import * as workspace$0 from "./internal/workspace/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * BotSkillCreate scaffolds a new per-bot skill bundle.
  */
@@ -189,6 +193,33 @@ export function OctoAddBot(apiURL: string, apiKey: string, name: string): $Cance
 }
 
 /**
+ * OctoCliLogout clears the bot's disk profile. The keychain'd bf_ token is
+ * left alone — re-login can restore the profile from it.
+ */
+export function OctoCliLogout(botID: string): $CancellablePromise<void> {
+    return $Call.ByID(1486321187, botID);
+}
+
+/**
+ * OctoCliRelogin re-writes the disk profile for the bot from the keychain'd
+ * bf_ token. Used to repair a missing/stale profile from the Octo-integration
+ * pane without forcing the operator to re-save the whole config.
+ */
+export function OctoCliRelogin(botID: string): $CancellablePromise<void> {
+    return $Call.ByID(756879125, botID);
+}
+
+/**
+ * OctoCliStatus reports whether the bot's octo-cli profile is registered.
+ * Reads config.json directly; no octo-cli spawn needed (cheap for a UI poll).
+ */
+export function OctoCliStatus(botID: string): $CancellablePromise<$models.OctoCliStatus> {
+    return $Call.ByID(3212560983, botID).then(($result: any) => {
+        return $$createType8($result);
+    });
+}
+
+/**
  * Reset clears a session's resume mapping (start fresh).
  */
 export function Reset(botID: string, uid: string): $CancellablePromise<void> {
@@ -244,7 +275,7 @@ export function UsageStats(botID: string, since: number): $CancellablePromise<vo
  */
 export function WorkspaceFile(botID: string, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
     return $Call.ByID(2447146625, botID, sessionKey, relPath).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType9($result);
     });
 }
 
@@ -254,7 +285,7 @@ export function WorkspaceFile(botID: string, sessionKey: string, relPath: string
  */
 export function WorkspaceTree(botID: string, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
     return $Call.ByID(710539635, botID, sessionKey).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType11($result);
     });
 }
 
@@ -267,6 +298,7 @@ const $$createType4 = $Create.Array($$createType3);
 const $$createType5 = configstore$0.BotConfig.createFrom;
 const $$createType6 = $Create.Array($$createType5);
 const $$createType7 = octoapi$0.BotResult.createFrom;
-const $$createType8 = workspace$0.FileContent.createFrom;
-const $$createType9 = workspace$0.Node.createFrom;
-const $$createType10 = $Create.Nullable($$createType9);
+const $$createType8 = $models.OctoCliStatus.createFrom;
+const $$createType9 = workspace$0.FileContent.createFrom;
+const $$createType10 = workspace$0.Node.createFrom;
+const $$createType11 = $Create.Nullable($$createType10);

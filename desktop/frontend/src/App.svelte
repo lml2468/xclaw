@@ -8,19 +8,32 @@
   import Transcript from "./lib/components/Transcript.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Composer from "./lib/components/Composer.svelte";
-  import ConfigEditor from "./lib/components/ConfigEditor.svelte";
+  import SettingsModal from "./lib/components/SettingsModal.svelte";
   import TrafficLights from "./lib/components/TrafficLights.svelte";
-  import SkillsPanel from "./lib/components/SkillsPanel.svelte";
-  import WorkflowsPanel from "./lib/components/WorkflowsPanel.svelte";
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
   import TokenUsage from "./lib/components/TokenUsage.svelte";
   import { confirm } from "./lib/confirm.svelte";
 
   let composer = $state<Composer>();
-  let showEditor = $state(new URLSearchParams(location.search).has("editor"));
-  let showSkills = $state(new URLSearchParams(location.search).has("skills"));
-  let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
+
+  // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows]
+  // (or the legacy ?editor/?skills/?workflows for backward-compat in preview URLs).
+  type SettingsTab = "basic" | "octo" | "skills" | "workflows";
+  function initialSettingsState(): { show: boolean; tab: SettingsTab } {
+    const p = new URLSearchParams(location.search);
+    if (p.has("settings")) {
+      const t = p.get("settings");
+      return { show: true, tab: (["basic","octo","skills","workflows"].includes(t ?? "") ? t : "basic") as SettingsTab };
+    }
+    if (p.has("editor")) return { show: true, tab: "basic" };
+    if (p.has("skills")) return { show: true, tab: "skills" };
+    if (p.has("workflows")) return { show: true, tab: "workflows" };
+    return { show: false, tab: "basic" };
+  }
+  const initialSettings = initialSettingsState();
+  let showSettings = $state(initialSettings.show);
+  let settingsTab = $state<SettingsTab>(initialSettings.tab);
   let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
@@ -73,20 +86,22 @@
   }
   try { window.addEventListener("keydown", onKey, true); document.addEventListener("keydown", onKey, true); } catch {}
 
-  // Tray / gear menu open these as modals over the console (guarded: the Wails
-  // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
-  // openModal enforces mutual exclusivity so a tray event can't stack two
-  // full-screen modals on top of each other.
-  function openModal(which: "editor" | "skills" | "workflows" | "usage") {
-    showEditor = which === "editor";
-    showSkills = which === "skills";
-    showWorkflows = which === "workflows";
-    showUsage = which === "usage";
+  // Tray opens the unified Settings modal at a specific tab, or the standalone
+  // Token Usage modal. Mutual exclusion: only one top-level modal at a time.
+  function openSettings(tab: SettingsTab = "basic") {
+    settingsTab = tab;
+    showSettings = true;
+    showUsage = false;
   }
-  try { Events.On("xclaw:open-editor", () => openModal("editor")); } catch {}
-  try { Events.On("xclaw:open-skills", () => openModal("skills")); } catch {}
-  try { Events.On("xclaw:open-workflows", () => openModal("workflows")); } catch {}
-  try { Events.On("xclaw:open-usage", () => openModal("usage")); } catch {}
+  function openUsage() {
+    showUsage = true;
+    showSettings = false;
+  }
+  try { Events.On("xclaw:open-settings", (e: any) => {
+    const tab = (e?.data?.tab ?? e?.data ?? "basic") as SettingsTab;
+    openSettings(["basic","octo","skills","workflows"].includes(tab) ? tab : "basic");
+  }); } catch {}
+  try { Events.On("xclaw:open-usage", () => openUsage()); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 
@@ -104,7 +119,8 @@
 {/if}
 <div class="shell">
   <Sidebar
-    onedit={() => (showEditor = true)}
+    onedit={() => openSettings("basic")}
+    onusage={openUsage}
     onpalette={() => (showPalette = true)}
     {collapsed}
   />
@@ -157,23 +173,17 @@
 {#if showPalette}
   <CommandPalette
     onclose={() => (showPalette = false)}
-    onedit={() => (showEditor = true)}
-    onskills={() => (showSkills = true)}
-    onworkflows={() => (showWorkflows = true)}
-    onusage={() => (showUsage = true)}
+    onedit={() => openSettings("basic")}
+    onskills={() => openSettings("skills")}
+    onworkflows={() => openSettings("workflows")}
+    onusage={openUsage}
   />
 {/if}
-{#if showEditor}
-  <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
-{/if}
-{#if showSkills}
-  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
-{/if}
-{#if showWorkflows}
-  <WorkflowsPanel onclose={() => (showWorkflows = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
+{#if showSettings}
+  <SettingsModal onclose={() => (showSettings = false)} initialTab={settingsTab} />
 {/if}
 {#if showUsage}
-  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
+  <TokenUsage onclose={() => (showUsage = false)} />
 {/if}
 
 <style>

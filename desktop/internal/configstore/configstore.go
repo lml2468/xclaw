@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/desktop/internal/octocli"
 	"github.com/lml2468/xclaw/desktop/internal/safepath"
@@ -264,7 +265,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(Path(), append(raw, '\n'), 0o600); err != nil {
+	if err := atomicfile.Write(Path(), append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 
@@ -378,14 +379,17 @@ func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	return err
 }
 
+// validURL delegates to the canonical SSRF policy (config.IsAllowedURL) used
+// by core/config.Load itself. The prior HasPrefix-based check accepted
+// lookalike hosts like `http://localhost.evil.com` and `http://127.0.0.1.attacker.tld`
+// — same hazard round 3 closed in desktop/internal/octoapi for the wizard's
+// POST. Two places hand-rolling the same policy is the drift we're trying to
+// stop; reuse the canonical check.
 func validURL(s string) error {
-	if strings.HasPrefix(s, "https://") {
-		return nil
+	if !config.IsAllowedURL(s) {
+		return fmt.Errorf("use https:// (or http://localhost)")
 	}
-	if strings.HasPrefix(s, "http://localhost") || strings.HasPrefix(s, "http://127.0.0.1") {
-		return nil
-	}
-	return fmt.Errorf("use https:// (or http://localhost)")
+	return nil
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -442,34 +446,4 @@ func firstDuplicateOctoBotID(bots []BotConfig) string {
 		seen[rid] = true
 	}
 	return ""
-}
-
-// writeAtomic writes data to path via path+".tmp" + fsync + rename so a power
-// loss or process crash mid-write leaves either the old file intact or a fully
-// committed new file — never a half-written one. The defer also removes the
-// .tmp on any failure between WriteFile and Rename so a stale .tmp doesn't
-// accumulate in the operator's ~/.xclaw directory.
-func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
-	tmp := path + ".tmp"
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmp)
-		}
-	}()
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err = f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

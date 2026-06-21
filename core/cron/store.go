@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"github.com/lml2468/xclaw/core/atomicfile"
 )
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a
@@ -43,6 +45,13 @@ type Task struct {
 	CreatedAt int64 `json:"createdAt"`
 	// LastRun is the Unix ms of the last fire, or 0 if never fired.
 	LastRun int64 `json:"lastRun,omitempty"`
+	// LastFiredKey is the wall-clock "YYYY-MM-DDTHH:MM" of the most recent
+	// fire, in the scheduler's local time. Used by computeNextRun to skip
+	// a re-fire of the same wall-clock minute, which would otherwise happen
+	// on DST fall-back (wall-clock 01:00-01:59 occurs twice in absolute time
+	// — a "30 1 * * *" task would fire at wall-01:30 of both passes). Empty
+	// when the task has never fired or pre-dates this field.
+	LastFiredKey string `json:"lastFiredKey,omitempty"`
 	// NextRun is the Unix ms of the next fire (the scheduler's due check), or 0
 	// if none (an inert/exhausted task).
 	NextRun int64 `json:"nextRun,omitempty"`
@@ -90,37 +99,7 @@ func (s *Store) save(tasks []Task) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.path, data, 0o600)
-}
-
-// writeAtomic writes data to path via path+".tmp" + fsync + rename so a power
-// loss or process crash mid-write leaves either the old cron.json intact or a
-// fully committed new file — never a half-written one. Removes the .tmp on
-// any failure between WriteFile and Rename so the operator's data dir doesn't
-// accumulate stale .tmp files.
-func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
-	tmp := path + ".tmp"
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmp)
-		}
-	}()
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err = f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(s.path, data, 0o600)
 }
 
 // Load returns the bot's tasks ([] when the file is absent). Thread-safe.

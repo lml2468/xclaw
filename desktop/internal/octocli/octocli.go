@@ -469,15 +469,15 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 // concrete risk: octo-cli (or any helper invoked here in future) could echo a
 // bearer token in a verbose-mode error path — currently it does not, but a
 // regression would otherwise plumb the token straight into our logs and the
-// SaveConfig UI error toast. The redactor strips any whitespace-delimited
-// token-shaped fragment (bf_, uk_, sk_, sk-, ANTHROPIC_*=…) and clamps the
-// result to 256 chars.
-// tokenShapedRE matches any token-prefix substring (anywhere, not just at a
-// whitespace boundary) so glued forms — `Authorization=bf_xxx`, `token:bf_x`,
-// `"bf_x"`, `[bf_x]`, even `\x1b[31mbf_x` — get redacted. The trailing class
-// matches the safe set octo-server / claude / anthropic tokens use; `\b`
-// anchors prevent dropping legitimate URL paths that happen to contain
-// `bf_`/`sk_` as part of a longer identifier.
+// SaveConfig UI error toast. The redactor masks any token-shaped substring
+// (greedy — see tokenShapedRE) and clamps the result to 256 chars.
+// tokenShapedRE matches any token-prefix substring anywhere in the input —
+// NOT word-boundary-anchored — so glued forms (`Authorization=bf_xxx`,
+// `token:bf_x`, `"bf_x"`, `[bf_x]`, ANSI-wrapped `\x1b[31mbf_x`) all redact.
+// The greedy posture is deliberate: defense-in-depth against an octo-cli
+// stderr regression that echoes a bearer. The trade-off is over-redaction
+// of paths like `/api/bf_lookup/...` — acceptable in an error-toast / log
+// context since over-redaction never leaks; the only cost is debuggability.
 var tokenShapedRE = regexp.MustCompile(`(?i)(bf_|uk_|sk_|sk-|ANTHROPIC_)[A-Za-z0-9_\-]+`)
 
 func redactChildOutput(out []byte) string {

@@ -128,7 +128,29 @@ func validateWSURL(rawWSURL, rawAPIURL string) error {
 	if !strings.EqualFold(wu.Hostname(), au.Hostname()) {
 		return fmt.Errorf("ws_url host %q does not match api_url host %q (cross-host redirect of credentialed handshake refused)", wu.Hostname(), au.Hostname())
 	}
+	// Port equality (with scheme-default fallback): without this, a compromised
+	// server could return wss://api.example:9443/ws when apiURL is
+	// https://api.example (port 443) and the handshake would proceed against an
+	// attacker-controlled port on the same hostname. Defense-in-depth.
+	if portFor(wu) != portFor(au) {
+		return fmt.Errorf("ws_url port %q does not match api_url port %q (credentialed handshake refused)", portFor(wu), portFor(au))
+	}
 	return nil
+}
+
+// portFor returns u's explicit port, or the scheme default (443 for https/wss,
+// 80 for http/ws). Empty Port() means "use the default" per net/url.
+func portFor(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "https", "wss":
+		return "443"
+	case "http", "ws":
+		return "80"
+	}
+	return ""
 }
 
 // SendMessageResult mirrors SendMessageResult (types.ts). message_id is decoded

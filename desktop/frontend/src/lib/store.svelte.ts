@@ -8,6 +8,14 @@ import { XClawService } from "../../bindings/github.com/lml2468/xclaw/desktop";
 // which a concurrent IM turn could otherwise hijack.
 const CONSOLE_UID = "gui-user";
 
+// TURN_MAX_MS caps how long a session may sit with awaiting=true with no
+// terminal event before the sweeper clears it. Picked > the daemon's worst
+// realistic turn (multi-minute deep-research streaming) but < any user
+// patience for "is this still alive?" — 8 min is the dispatchTimeoutSec
+// default plus a small slack. TURN_SWEEP_MS is the poll cadence.
+const TURN_MAX_MS = 8 * 60 * 1000;
+const TURN_SWEEP_MS = 30 * 1000;
+
 export type Role = "user" | "assistant" | "tool";
 
 export interface Message {
@@ -45,6 +53,12 @@ export interface Session {
   title: string;
   messages: Message[];
   awaiting: boolean;  // a turn is in flight (show typing indicator)
+  // awaitingSince is the Date.now() of the most recent turnStart for this
+  // session; a max-age sweep clears `awaiting` (and surfaces a synthetic
+  // error) when no terminal event has arrived in TURN_MAX_MS. Without this,
+  // a daemon crash / control-socket drop mid-turn left the typing indicator
+  // hanging forever and the only escape was sending another message.
+  awaitingSince: number;
   proc: ProcState;    // live process info for the status box (not in the transcript)
   inputTokens: number;
   outputTokens: number;
@@ -117,6 +131,13 @@ class Store {
     // Prime.
     XClawService.Health();
     XClawService.BotsList();
+    // Stuck-turn sweeper: if no terminal event (turnDone / session.reply /
+    // error) arrives within TURN_MAX_MS of a turnStart, clear `awaiting`
+    // and surface a synthetic error. Without this, a daemon crash /
+    // control-socket drop mid-turn left the typing indicator hanging
+    // forever and the only escape was sending another message (which
+    // simply flipped awaiting=true again, masking the dead turn).
+    setInterval(() => this.sweepStuckTurns(), TURN_SWEEP_MS);
   }
 
   // seedPreview populates a mock roster + transcript for visual iteration and
@@ -141,7 +162,7 @@ class Store {
       return;
     }
     const s: Session = {
-      botId: "main", key: "console", title: "Console", awaiting: true,
+      botId: "main", key: "console", title: "Console", awaiting: true, awaitingSince: Date.now(),
       proc: {
         active: true,
         // Process for the in-flight turn: thinking + tool calls only. The
@@ -171,7 +192,7 @@ class Store {
     ];
     for (const [key, title, prev, ago] of hist) {
       this.sessions.push({
-        botId: "main", key, title, messages: [], awaiting: false, proc: emptyProc(),
+        botId: "main", key, title, messages: [], awaiting: false, awaitingSince: 0, proc: emptyProc(),
         inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0,
         lastActivity: Date.now() - ago, preview: prev,
       });
@@ -283,6 +304,7 @@ class Store {
     const s = this.ensureSession(botId, key);
     s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000, streaming: false });
     s.awaiting = true;
+    s.awaitingSince = Date.now();
     s.lastActivity = Date.now();
     this.selectedKey = key;
     XClawService.Send(botId, CONSOLE_UID, text);
@@ -351,7 +373,7 @@ class Store {
       case "session.activity": {
         const s = this.route(env);
         if (!s) break;
-        if (env.body.kind === "turnStart") { s.awaiting = true; s.proc = emptyProc(); s.proc.active = true; }
+        if (env.body.kind === "turnStart") { s.awaiting = true; s.awaitingSince = Date.now(); s.proc = emptyProc(); s.proc.active = true; }
         else if (env.body.kind === "thinking") {
           // Thinking is process → status strip. Coalesce consecutive markers.
           s.proc.active = true;
@@ -406,7 +428,12 @@ class Store {
         break;
       }
       case "error": {
-        this.lastError = env.body?.message ?? "error";
+        // Daemon error envelopes carry .message; older / odd shapes might
+        // not. Fall back to an actionable string (with scope hint when
+        // present) rather than the bare literal "error" — the prior code
+        // surfaced the word "error" alone, which gives the user nothing.
+        const scope = env.body?.scope ? `[${env.body.scope}] ` : "";
+        this.lastError = scope + (env.body?.message ?? "网关返回未知错误（无详情）");
         break;
       }
       case "bridge.status": {
@@ -437,7 +464,7 @@ class Store {
   private ensureSession(botId: string, key: string): Session {
     let s = this.sessions.find((x) => x.botId === botId && x.key === key);
     if (!s) {
-      s = { botId, key, title: prettyTitle(key), messages: [], awaiting: false, proc: emptyProc(), inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, lastActivity: Date.now() };
+      s = { botId, key, title: prettyTitle(key), messages: [], awaiting: false, awaitingSince: 0, proc: emptyProc(), inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, lastActivity: Date.now() };
       this.sessions.push(s);
     }
     // Surface an arriving conversation when nothing is selected yet (first
@@ -488,6 +515,21 @@ class Store {
       this.selectedKey = this.initialKey();
     }
     if (this.selectedKey) this.loadHistory(this.selectedKey);
+  }
+
+  // sweepStuckTurns clears awaiting on any session whose turnStart is older
+  // than TURN_MAX_MS without a terminal event. Surfaces a synthetic error
+  // so the user knows the turn didn't just hang silently.
+  private sweepStuckTurns() {
+    const now = Date.now();
+    for (const s of this.sessions) {
+      if (s.awaiting && s.awaitingSince > 0 && now - s.awaitingSince > TURN_MAX_MS) {
+        s.awaiting = false;
+        s.awaitingSince = 0;
+        s.proc = emptyProc();
+        this.lastError = "[turn] 长时间未收到响应，已取消等待 — 请重试或检查网关";
+      }
+    }
   }
 }
 

@@ -110,12 +110,20 @@ choosing what version to deploy:
   `OCTO_BOT_ID` would share an `octo-cli` disk profile; deleting one would
   silently break the other's auth on its next agent spawn. Save now rejects
   the duplicate at write time.
-- **Atomic config/cron writes with fsync** (`writeAtomic` in both
-  `desktop/internal/configstore` and `core/cron`). `config.json` and
-  `cron.json` are written via `O_CREATE|O_EXCL` + `Sync` + `Rename`, and the
+- **Atomic config/cron writes with fsync** (`core/atomicfile.Write`, called by
+  both `desktop/internal/configstore` and `core/cron`). `config.json` and
+  `cron.json` are written via `O_CREATE|O_TRUNC` + `Sync` + `Rename`, and the
   `.tmp` is removed on any failure between write and rename — so a power loss
   or process crash mid-write leaves either the old file or a fully committed
-  new file, never a half-written one.
+  new file, never a half-written one. **Limitation**: parent-directory `fsync`
+  is omitted (industry-typical for application-level atomic writes); a power
+  loss between rename and the next dirent flush could in principle resurrect
+  the old file. SOUL.md / AGENTS.md *scaffolding* uses `O_CREATE|O_EXCL` so an
+  agent-planted file is never overwritten on first save.
+- **Cron task prompts are stored in plaintext** at `~/.xclaw/<id>/cron.json`
+  (`0o600`, parent dir `0o755`). Operator-trusted content tier; same caveat as
+  tokens-in-config above. If you grant `cron.create` to an authenticated peer,
+  treat the resulting prompts as plaintext-at-rest.
 - **In-flight turn shutdown barrier** (`core/im/octo/connector.go` +
   `core/cmd/xclawd/*.go`). The daemon now waits for every `drainTurns` and
   `session.send` goroutine to finish before closing the store on SIGTERM.

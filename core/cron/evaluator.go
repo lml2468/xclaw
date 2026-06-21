@@ -244,6 +244,17 @@ const maxScanMinutes = 366 * 24 * 60
 //   - one-shot ISO: its instant if still in the future, else none.
 //   - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
 func computeNextRun(schedule string, from time.Time) (time.Time, bool) {
+	return computeNextRunSkipping(schedule, from, "")
+}
+
+// computeNextRunSkipping is computeNextRun plus a "skip this wall-clock minute"
+// guard. Used by the scheduler after firing a recurring task to skip the
+// just-fired wall-clock minute — without which a DST fall-back ambiguous hour
+// would fire the same minute twice (the second absolute-time pass through
+// wall-01:30 would match the same cron expr that just fired at the first).
+// skipKey is a "YYYY-MM-DDTHH:MM" formatted in the cursor's local zone, or ""
+// to disable the skip (the create-path call).
+func computeNextRunSkipping(schedule string, from time.Time, skipKey string) (time.Time, bool) {
 	if isOneShotSchedule(schedule) {
 		t, ok := parseOneShot(schedule)
 		if !ok {
@@ -261,12 +272,19 @@ func computeNextRun(schedule string, from time.Time) (time.Time, bool) {
 	// Start at the next whole minute boundary after from, in the clock's zone.
 	cursor := from.Truncate(time.Minute).Add(time.Minute)
 	for range maxScanMinutes {
-		if parsed.matches(cursor) {
+		if parsed.matches(cursor) && fireKey(cursor) != skipKey {
 			return cursor, true
 		}
 		cursor = cursor.Add(time.Minute)
 	}
 	return time.Time{}, false // impossible schedule
+}
+
+// fireKey returns the wall-clock "YYYY-MM-DDTHH:MM" identifying a fire
+// occurrence. Two distinct absolute times can share a key during DST fall-back;
+// that's precisely the ambiguity computeNextRunSkipping is built to dedup.
+func fireKey(t time.Time) string {
+	return t.Format("2006-01-02T15:04")
 }
 
 // ValidateSchedule reports whether schedule is a parseable cron expr or a

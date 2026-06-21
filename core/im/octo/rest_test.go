@@ -225,7 +225,14 @@ func TestValidateWSURL(t *testing.T) {
 		ok            bool
 	}{
 		{"wss to same host", "wss://api.example/ws", "https://api.example", true},
-		{"ws to loopback dev", "ws://127.0.0.1:9090/ws", "http://127.0.0.1:8080", true},
+		// Dev mode: same loopback host AND same port (port equality is part
+		// of the new defense-in-depth check; a real dev deployment terminates
+		// REST and WS on the same listener).
+		{"ws to loopback dev", "ws://127.0.0.1:8080/ws", "http://127.0.0.1:8080", true},
+		// Same loopback host but a DIFFERENT port: refused. A compromised
+		// dev server could otherwise redirect the credentialed handshake to
+		// an attacker-controlled port on localhost.
+		{"reject same-host different-port", "ws://127.0.0.1:9090/ws", "http://127.0.0.1:8080", false},
 		{"reject plaintext over https api", "ws://api.example/ws", "https://api.example", false},
 		{"reject cross-host (sibling subdomain hop)", "wss://logger.example/ws", "https://api.example", false},
 		{"reject bogus scheme", "http://api.example/ws", "https://api.example", false},

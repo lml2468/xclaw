@@ -257,3 +257,67 @@ func TestHasProfileFinds(t *testing.T) {
 		t.Error("empty robotID must always return false")
 	}
 }
+
+// TestRedactChildOutput exercises the security-path regex that masks
+// bf_/uk_/sk_/sk-/ANTHROPIC_ token-shaped substrings before they reach
+// logs or the desktop's error toast. The redactor is the only thing
+// standing between an octo-cli stderr regression and a logged credential.
+func TestRedactChildOutput(t *testing.T) {
+	cases := []struct {
+		name, in string
+		wantHas  []string // substrings expected in output
+		wantNot  []string // substrings that must NOT appear
+	}{
+		{
+			name:    "bare token",
+			in:      "auth login: bf_secret_abc123",
+			wantNot: []string{"bf_secret_abc123"},
+		},
+		{
+			name:    "equals-glued (Authorization=)",
+			in:      "request failed: Authorization=bf_secret_xyz",
+			wantNot: []string{"bf_secret_xyz"},
+		},
+		{
+			name:    "quoted",
+			in:      `error: header "bf_quoted_token" rejected`,
+			wantNot: []string{"bf_quoted_token"},
+		},
+		{
+			name:    "colon-glued",
+			in:      "header token:sk-ant-api03-NOTREAL",
+			wantNot: []string{"sk-ant-api03-NOTREAL"},
+		},
+		{
+			name:    "ANSI-wrapped",
+			in:      "\x1b[31mANTHROPIC_API_KEY=sk_secret\x1b[0m",
+			wantNot: []string{"sk_secret"}, // ANTHROPIC_ + sk_ both should be masked
+		},
+		{
+			name:    "non-token content preserved",
+			in:      "normal message no secrets here at all",
+			wantHas: []string{"normal", "message", "no secrets"},
+			wantNot: []string{"<redacted>"},
+		},
+		{
+			name:    "length cap with ellipsis",
+			in:      "x" + string(make([]byte, 400)),
+			wantHas: []string{"…"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactChildOutput([]byte(tc.in))
+			for _, want := range tc.wantHas {
+				if !strings.Contains(got, want) {
+					t.Errorf("output %q missing expected %q", got, want)
+				}
+			}
+			for _, leak := range tc.wantNot {
+				if strings.Contains(got, leak) {
+					t.Errorf("output %q leaked %q (should have been masked)", got, leak)
+				}
+			}
+		})
+	}
+}

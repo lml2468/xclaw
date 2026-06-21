@@ -267,8 +267,14 @@ func (m *Manager) Tick() {
 			// (which drives a full turn) does not run while we hold the store mutex.
 			fires = append(fires, Fire{Task: task})
 			task.LastRun = nowMS
+			// Record the fire's wall-clock key so computeNextRunSkipping won't
+			// re-schedule the SAME wall-clock minute on a DST fall-back (when
+			// wall-clock 01:00-01:59 happens twice in absolute time — the second
+			// pass would otherwise match the same cron expr that just fired).
+			firedKey := fireKey(now)
+			task.LastFiredKey = firedKey
 			if task.Recurring {
-				if next, ok := computeNextRun(task.Schedule, now); ok {
+				if next, ok := computeNextRunSkipping(task.Schedule, now, firedKey); ok {
 					task.NextRun = unixMS(next)
 					survivors = append(survivors, task)
 				} else {

@@ -357,14 +357,17 @@ func readBotFile(id, name string) string {
 }
 
 // writeOrScaffoldBotFile is the safe write path for SOUL.md / AGENTS.md:
-//   - non-empty content → unconditional 0o600 overwrite (explicit operator save)
+//   - non-empty content → atomic 0o600 overwrite via atomicfile.Write so a
+//     crash mid-write can't leave the operator-trusted prompt half-written
+//     (round 15 Go #3 — was os.WriteFile previously, the only call in this
+//     package not routed through the atomicfile helper);
 //   - empty content     → scaffold tmpl atomically via O_CREATE|O_EXCL|O_WRONLY,
 //     a no-op when the file already exists. Closes a Stat-then-write TOCTOU
 //     where an agent that planted SOUL.md between our Stat and our write
 //     would have been silently overwritten.
 func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	if strings.TrimSpace(content) != "" {
-		return os.WriteFile(filepath.Join(botDir(id), name), []byte(content), 0o600)
+		return atomicfile.Write(filepath.Join(botDir(id), name), []byte(content), 0o600)
 	}
 	path := filepath.Join(botDir(id), name)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -374,9 +377,15 @@ func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 		}
 		return err
 	}
-	defer f.Close()
-	_, err = f.WriteString(tmpl)
-	return err
+	// Both Close + WriteString errors matter — return whichever surfaces
+	// first so a slow-disk Close failure (ENOSPC, EIO) doesn't leave a
+	// truncated template silently behind a "success" return.
+	_, werr := f.WriteString(tmpl)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 // validURL delegates to the canonical SSRF policy (config.IsAllowedURL) used

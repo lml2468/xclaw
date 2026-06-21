@@ -80,18 +80,19 @@ func listIn(root string) ([]SkillInfo, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		// Symlink check FIRST — Lstat reports the link itself, so
+		// info.IsDir() is false for a symlink-to-dir, which would hit the
+		// generic stray-file continue below before ever reaching the
+		// explicit symlink branch (round 15 Arch #1 found the round-14
+		// branch was unreachable). Refusing symlinks explicitly here makes
+		// the intent clear and protects against a future change that
+		// relaxes the IsDir gate.
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		info, statErr := os.Lstat(filepath.Join(root, name))
 		if statErr != nil || !info.IsDir() {
 			continue // stray file or unreadable — not a skill
-		}
-		// Refuse symlinked dirs — a `.claude/skills/foo` symlink pointing
-		// elsewhere would let descriptionIn read SKILL.md from anywhere on
-		// disk and surface its first line in the GUI. The dir is operator-
-		// owned, so the threat surface is small, but the rest of the package
-		// (safepath.AssertNoSymlinkEscape in resolveInSkill) is meticulous
-		// about this — match the standard (round 14 G #6).
-		if info.Mode()&os.ModeSymlink != 0 {
-			continue
 		}
 		files, _ := filesIn(root, name)
 		out = append(out, SkillInfo{
@@ -110,7 +111,13 @@ func descriptionIn(root, name string) string {
 	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	full := filepath.Join(dir, "SKILL.md")
+	// Round 15 Sec H3: refuse if SKILL.md is a symlink — its target's
+	// description would otherwise surface in the GUI from anywhere on disk.
+	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return ""
+	}
+	b, err := os.ReadFile(full)
 	if err != nil {
 		return ""
 	}
@@ -164,6 +171,15 @@ func readFileIn(root, name, rel string) (string, error) {
 	full, err := resolveInSkill(root, name, rel)
 	if err != nil {
 		return "", err
+	}
+	// Round 15 Sec H3: resolveInSkill checks the PARENT chain via
+	// AssertNoSymlinkEscape (dirOnly:true) but leaves the leaf unchecked,
+	// so a `~/.xclaw/<id>/.claude/skills/foo/leak.md → /etc/passwd`
+	// symlink would have its target's contents returned via the GUI.
+	// Refuse a symlink final-component explicitly. Tiny TOCTOU window vs
+	// an agent racing rename — acceptable, the agent already has Bash.
+	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refusing to read symlink: %q", rel)
 	}
 	b, err := os.ReadFile(full)
 	if err != nil {

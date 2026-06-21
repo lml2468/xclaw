@@ -117,6 +117,11 @@ class Store {
   selectedKey = $state<string | null>(null);
   health = $state("");
   lastError = $state("");
+
+  // clearLastError dismisses the global error banner. Bound to Transcript's
+  // ✕ button so a transient envelope failure doesn't pin a red bar above
+  // the chat for the rest of the session (round 15 FE #3).
+  clearLastError() { this.lastError = ""; }
   connected = $state(false);
   // True in preview mode (XCLAW_PREVIEW / ?preview): seeded mock data, no daemon,
   // so we skip the control-bus fetches (SessionsList/History).
@@ -544,8 +549,22 @@ class Store {
     const s = this.sessions.find((x) => x.botId === bid && x.key === key);
     if (!s) return;
     s.loaded = true; // mark fetched even when empty, so we don't refetch on every open
-    if (s.messages.length) return;
-    s.messages = rows.map((r) => ({ id: newId(), role: r.role as Role, text: r.content, ts: r.ts, streaming: false }));
+    // Round 15 FE #1: previously we silently dropped server history when
+    // the user had typed before the lazy History response landed. Now
+    // merge — keep any local-only messages (those whose ts is newer than
+    // the latest persisted row) on top of the persisted ones, preserving
+    // order. Local user messages get a brand-new id so there's no
+    // collision against a server-issued one.
+    const persisted = rows.map((r) => ({
+      id: newId(), role: r.role as Role, text: r.content, ts: r.ts, streaming: false,
+    }));
+    if (s.messages.length === 0) {
+      s.messages = persisted;
+      return;
+    }
+    const cutoff = persisted.length ? persisted[persisted.length - 1].ts : 0;
+    const localOnly = s.messages.filter((m) => m.ts > cutoff);
+    s.messages = persisted.concat(localOnly);
   }
 
   // applySessionsList folds the persisted session roster (newest first) into the

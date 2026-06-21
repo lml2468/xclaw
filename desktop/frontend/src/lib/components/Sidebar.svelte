@@ -16,9 +16,18 @@
   // error toasts, etc.); the prior "now/5m/2h/3d" was the one English
   // helper that drifted (round 11 F3). Kept the same compact one-token
   // shape that fits the .time slot.
+  //
+  // Reactive `now` (round 15 FE #4) so labels tick over time — a row
+  // shown "刚刚" five minutes ago re-renders as "5 分钟前" without
+  // needing an unrelated state change. Updated once a minute.
+  let now = $state(Date.now());
+  $effect(() => {
+    const id = setInterval(() => { now = Date.now(); }, 60_000);
+    return () => clearInterval(id);
+  });
   function relTime(ms: number): string {
     if (!ms) return "";
-    const d = (Date.now() - ms) / 1000;
+    const d = (now - ms) / 1000;
     if (d < 60) return "刚刚";
     if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
     if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;

@@ -38,7 +38,22 @@
     <div
       class="bubble"
       class:user={isUser}
-      oncontextmenu={(e) => { e.preventDefault(); copy(); }}
+      oncontextmenu={(e) => {
+        // Hijack right-click ONLY when the user clicked outside any
+        // interactive child (link, image, code block, table, …). A bare
+        // `e.preventDefault()` on the bubble was stealing native context
+        // menus on agent-rendered links, leaving no way to "open in new
+        // tab" or "copy link address" (round 15 FE #2). Walk the path
+        // and bail if any ancestor up to the bubble is a tag whose
+        // native menu actually matters.
+        const t = e.target as HTMLElement | null;
+        const limit = e.currentTarget as HTMLElement;
+        for (let n = t; n && n !== limit; n = n.parentElement) {
+          if (/^(A|IMG|CODE|PRE|BUTTON|TABLE|TD|TH|SVG)$/.test(n.tagName)) return;
+        }
+        e.preventDefault();
+        copy();
+      }}
       role="article"
     >
       {#if copied}<span class="copied" aria-live="polite">已复制</span>{/if}

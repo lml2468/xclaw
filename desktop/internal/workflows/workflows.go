@@ -64,6 +64,13 @@ func listIn(root string) ([]Info, error) {
 		if strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".js") || e.IsDir() {
 			continue
 		}
+		// Round 15 Arch #7 / Sec H3 mirror: refuse symlinks in the workflow
+		// listing. A workflow.js → /etc/passwd link would otherwise have
+		// its target surfaced via descriptionIn + BotRead. Matches the
+		// round-14 skills discipline.
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		name := strings.TrimSuffix(n, ".js")
 		out = append(out, Info{
 			Name:        name,
@@ -77,6 +84,9 @@ func listIn(root string) ([]Info, error) {
 func descriptionIn(root, name string) string {
 	p, err := pathIn(root, name)
 	if err != nil {
+		return ""
+	}
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return ""
 	}
 	b, err := os.ReadFile(p)
@@ -93,6 +103,9 @@ func readIn(root, name string) (string, error) {
 	p, err := pathIn(root, name)
 	if err != nil {
 		return "", err
+	}
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refusing to read symlink: %q", name)
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {

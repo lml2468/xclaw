@@ -135,12 +135,23 @@ const awaitTokenPoll = 2 * time.Second
 const defaultTypingInterval = 5 * time.Second
 
 // OnStatus registers a connection-state callback (used by the daemon's bot
-// registry to surface per-bot status over the control bus).
-func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) { c.onStatus = fn }
+// supervisor + control-bus). The setter takes c.mu so a late caller can't
+// race notifyStatus reading the field (round 15 Go #2). In practice runBot
+// wires this before connector.Run, but tests / future callers may not.
+func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onStatus = fn
+}
 
 // OnOwner registers a callback invoked with the bot owner uid after each
 // (re)registration. The owner uid gates owner-only features (cron create/delete).
-func (c *Connector) OnOwner(fn func(ownerUID string)) { c.onOwner = fn }
+// Same lock discipline as OnStatus (round 15 Go #2).
+func (c *Connector) OnOwner(fn func(ownerUID string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onOwner = fn
+}
 
 // EnqueueCron enqueues a cron-fired turn onto the per-session worker so it
 // serializes with real inbound on the same key (round 8 F1-Arch). The
@@ -169,14 +180,20 @@ func (c *Connector) EnqueueCron(sessionKey, channelID string, channelType Channe
 }
 
 func (c *Connector) setStatus(connected bool, lastErr string) {
-	if c.onStatus != nil {
-		c.onStatus(connected, lastErr)
+	c.mu.Lock()
+	fn := c.onStatus
+	c.mu.Unlock()
+	if fn != nil {
+		fn(connected, lastErr)
 	}
 }
 
 func (c *Connector) notifyOwner(ownerUID string) {
-	if c.onOwner != nil && ownerUID != "" {
-		c.onOwner(ownerUID)
+	c.mu.Lock()
+	fn := c.onOwner
+	c.mu.Unlock()
+	if fn != nil && ownerUID != "" {
+		fn(ownerUID)
 	}
 }
 

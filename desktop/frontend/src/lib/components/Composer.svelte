@@ -10,7 +10,12 @@
   export function setDraft(text: string) {
     draft = text;
     ta?.focus();
-    autogrow();
+    // Wait for Svelte to commit the new bind:value before measuring
+    // ta.scrollHeight — running autogrow synchronously here measured the
+    // OLD textarea content, so a long EmptyState prompt landed at 1 row
+    // until the next keystroke (round 15 FE #5). Matches the send()
+    // pattern below.
+    requestAnimationFrame(autogrow);
   }
   function autogrow() {
     if (!ta) return;

@@ -287,6 +287,23 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithMediaAuth(connector.MediaAuth())
 	connector.SetGateway(gw)
 
+	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
+	// tasks through the gateway as synthetic CronFire messages. The owner uid that
+	// gates create/delete is resolved from the bot registration (owner_uid).
+	// Declared at this scope so the post-Run shutdown chain below can Wait on it,
+	// and so it can be wired into botRuntime/target BEFORE reg.add — that way
+	// the resolve() handler doesn't have to lock-free write `bot.target.cron`
+	// on every call, which raced concurrent control commands (round 15 Go #1).
+	var cm *cron.Manager
+	if cfg.Agent.Cron {
+		cm = cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
+		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
+		cm.OnFire(func(f cron.Fire) {
+			fireCronTask(connector, f.Task)
+		})
+		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
+	}
+
 	// Eager-init the per-bot control-handler target so its embedded turnsWG is
 	// pinned for runBot's shutdown barrier (round 13 F1/F2): the lazy-init in
 	// resolve() left target nil for bots that no control-bus command ever
@@ -295,10 +312,11 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// resolver still races on first call (two control commands could both see
 	// nil), which would silently split session.send goroutines across two
 	// targets — one outside the wait barrier. Setting it here ensures a single
-	// target shared by every codepath.
+	// target shared by every codepath. cron is also wired in upfront so the
+	// resolve()-side per-call write was racing concurrent reads (round 15 #1).
 	rtBot := &botRuntime{
-		cfg: cfg, gateway: gw, store: st, secrets: sec,
-		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec},
+		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
+		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
 	}
 	if reg != nil {
 		reg.add(rtBot)
@@ -310,19 +328,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		}
 	})
 
-	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
-	// tasks through the gateway as synthetic CronFire messages. The owner uid that
-	// gates create/delete is resolved from the bot registration (owner_uid).
-	// Declared at this scope so the post-Run shutdown chain below can Wait on it.
-	var cm *cron.Manager
-	if cfg.Agent.Cron {
-		cm = cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
-		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
-		cm.OnFire(func(f cron.Fire) {
-			fireCronTask(connector, f.Task)
-		})
-		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
-		rtBot.cron = cm
+	if cm != nil {
 		cm.Start()
 		// Note: NO `defer cm.Stop()` here. The explicit shutdown chain below
 		// stops the scheduler BEFORE the connector/store drain so a late tick
@@ -408,18 +414,19 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot.gateway == nil && bot.info().LastError != "" {
 				return nil, fmt.Errorf("bot %q failed to start: %s", botID, bot.info().LastError)
 			}
-			// runBot eager-initializes target (round 13 F1/F2); this
-			// fallback covers tests that build a minimal botRuntime by hand
-			// without going through runBot. Production never sees nil here.
+			// runBot eager-initializes target AND cron (round 13 F1/F2 +
+			// round 15 Go #1); this fallback covers tests that build a
+			// minimal botRuntime by hand without going through runBot.
+			// Production never sees nil here.
 			if bot.target == nil {
 				bot.target = &botTarget{
 					id:      bot.cfg.BotID,
 					gateway: bot.gateway,
 					store:   bot.store,
 					secrets: bot.secrets,
+					cron:    bot.cron,
 				}
 			}
-			bot.target.cron = bot.cron // late-bound when cron starts
 			return bot.target, nil
 		},
 		broadcast: func(eventType string, body any) {

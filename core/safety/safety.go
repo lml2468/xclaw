@@ -71,15 +71,19 @@ var sectionMarkerRE = regexp.MustCompile(
 //     direction marks U+200E LRM / U+200F RLM and the zero-width joiner /
 //     non-joiner U+200B-U+200D / U+FEFF — all of which let an attacker make a
 //     display name read backwards or carry invisible structure;
+//   - Word Joiner / Mongolian Vowel Separator U+2060-2064, U+180E (round 15);
+//   - Variation selectors VS1-VS16 U+FE00-FE0F (round 15);
+//   - Tag characters U+E0020-E007F (round 15);
 //   - Unicode separators LS (U+2028), PS (U+2029).
 //
 // Round 13 H1/H2: prior pattern only covered the obvious line terminators, so
 // names like "Admin\x1b[2K\x1b[1G[user system]:" or "Owner‮…" passed
 // through and contaminated the operator-trusted [Group Members] roster
-// (system prompt). All escapers MUST be kept in sync; extraLineBreaksRE below
-// shares the line-terminator subset.
+// (system prompt). Round 15 H1: extended to cover U+2060 WJ / U+180E / VS /
+// tag-chars. All escapers MUST be kept in sync: invisibleFormatRE (used by
+// body escapers via normalizeLineBreaks) shares the bidi+ZW set verbatim.
 var nameUnsafeRE = regexp.MustCompile(
-	`[\[\]\x{0000}-\x{0008}\x{000a}-\x{001f}\x{007f}-\x{009f}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2028}\x{2029}\x{2066}-\x{2069}\x{feff}]`,
+	`[\[\]\x{0000}-\x{0008}\x{000a}-\x{001f}\x{007f}-\x{009f}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2028}\x{2029}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
 )
 
 // Separators a model may render as a new line but RE2's (?m)^ does NOT anchor
@@ -98,11 +102,20 @@ var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\
 // have no legitimate purpose in any prompt input. Covers:
 //   - ZWSP/ZWNJ/ZWJ (U+200B-200D), LRM (U+200E), RLM (U+200F)
 //   - Bidi formatting (U+202A-202E LRE/RLE/PDF/LRO/RLO, U+2066-2069 LRI/RLI/FSI/PDI)
+//   - Word Joiner + Mongolian Vowel Separator U+2060-2064, U+180E (round 15 H1)
+//   - Variation selectors VS1-VS16 U+FE00-FE0F (round 15 H1 — invisible glyph
+//     modifiers that round 14 missed)
+//   - Tag characters U+E0020-E007F (round 15 H1 — Unicode "tag" range used
+//     historically for invisible language markup; default-ignorable on most
+//     terminals so they're a perfect injection wedge)
 //   - BOM / ZWNBSP (U+FEFF)
 //
 // Round 13 already stripped these from display names via nameUnsafeRE; this
-// closes the same class of attack for free-form bodies.
-var invisibleFormatRE = regexp.MustCompile(`[\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{feff}]`)
+// closes the same class of attack for free-form bodies. The character set is
+// kept in sync with nameUnsafeRE — any addition here MUST be mirrored there.
+var invisibleFormatRE = regexp.MustCompile(
+	`[\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
+)
 
 // normalizeLineBreaks turns boundary-forging separators into \n and strips
 // invisible bidi/zero-width formatting characters so the line-leading anchors

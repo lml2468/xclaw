@@ -208,7 +208,11 @@ class Store {
     // folds into sessions[] so history survives restarts.
     if (!this.preview) XClawService.SessionsList(id);
     const sessions = this.botSessions;
-    this.selectedKey = sessions[0]?.key ?? null;
+    // Default to the newest persisted session; if the bot has none yet (e.g.
+    // a freshly-added bot whose only writable surface is the Console), land on
+    // the Console so the user can start typing immediately instead of seeing
+    // the IM-empty "loading" fallback for a key that doesn't exist.
+    this.selectedKey = sessions[0]?.key ?? CONSOLE_UID;
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
 
@@ -470,10 +474,12 @@ class Store {
       s.lastActivity = existed ? Math.max(s.lastActivity, persisted) : persisted;
       s.preview = r.preview ?? "";
     }
-    // First roster after connect: if nothing is selected yet, open the newest.
+    // First roster after connect: if nothing is selected yet, open the newest
+    // — falling back to Console for a bot whose persisted roster is empty so
+    // the chat lands on a writable surface instead of the IM-empty fallback.
     if (this.selectedKey == null) {
       const first = this.botSessions[0];
-      if (first) this.selectedKey = first.key;
+      this.selectedKey = first?.key ?? CONSOLE_UID;
     }
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }

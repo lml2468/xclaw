@@ -86,7 +86,12 @@ func (c *frozenClock) advance(d time.Duration) {
 
 func newManager(t *testing.T, owner string, clk *frozenClock) *Manager {
 	t.Helper()
-	return NewManager(tempStore(t), owner, clk.now)
+	m := NewManager(tempStore(t), owner, clk.now)
+	// Production fires onFire on its own goroutine so a long turn doesn't
+	// block subsequent Ticks; tests need sync dispatch so `Tick();
+	// checkFireCount()` works without a poll-wait.
+	m.fireSync = true
+	return m
 }
 
 func TestCreateOwnerGate(t *testing.T) {
@@ -332,4 +337,54 @@ func TestOwnerUIDConcurrentAccess(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// TestTickDoesNotBlockOnSlowFire is the regression for the round-7 F3 bug:
+// Tick used to call onFire inline, so a long-running turn for one task would
+// starve subsequent ticks (the timer's channel only buffers one tick). Now
+// onFire runs on its own goroutine. With fireSync=false (production
+// behavior), a fire callback that blocks for 200 ms must NOT prevent Tick
+// from returning promptly so the next tick window stays open.
+func TestTickDoesNotBlockOnSlowFire(t *testing.T) {
+	clk := &frozenClock{t: time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)}
+	m := newManager(t, "o", clk)
+	m.fireSync = false // exercise the production dispatch path
+
+	fireStarted := make(chan struct{}, 1)
+	fireRelease := make(chan struct{})
+	m.OnFire(func(f Fire) {
+		fireStarted <- struct{}{}
+		<-fireRelease // hold the goroutine open
+	})
+	if _, err := m.Create(CreateParams{
+		Schedule: "* * * * *", Prompt: "slow", Coords: SessionCoords{ChannelID: "c1", ChannelType: 2, FromUID: "o"}, RequestUID: "o",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	clk.advance(time.Minute) // task now due
+
+	// Tick must return within a generous budget even though the fire goroutine
+	// is still blocked. Generous = 500 ms; production timer cadence is 1 min,
+	// so this is a 120× safety margin.
+	done := make(chan struct{})
+	go func() {
+		m.Tick()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// good — Tick returned without waiting for the fire goroutine
+	case <-time.After(500 * time.Millisecond):
+		close(fireRelease)
+		t.Fatal("Tick blocked on slow fire — should have dispatched and returned immediately")
+	}
+	// Confirm the fire goroutine actually started (catches a regression where
+	// the dispatch was accidentally lost).
+	select {
+	case <-fireStarted:
+	case <-time.After(500 * time.Millisecond):
+		close(fireRelease)
+		t.Fatal("dispatched fire goroutine never ran")
+	}
+	close(fireRelease)
 }

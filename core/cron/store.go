@@ -45,13 +45,6 @@ type Task struct {
 	CreatedAt int64 `json:"createdAt"`
 	// LastRun is the Unix ms of the last fire, or 0 if never fired.
 	LastRun int64 `json:"lastRun,omitempty"`
-	// LastFiredKey is the wall-clock "YYYY-MM-DDTHH:MM" of the most recent
-	// fire, in the scheduler's local time. Used by computeNextRun to skip
-	// a re-fire of the same wall-clock minute, which would otherwise happen
-	// on DST fall-back (wall-clock 01:00-01:59 occurs twice in absolute time
-	// — a "30 1 * * *" task would fire at wall-01:30 of both passes). Empty
-	// when the task has never fired or pre-dates this field.
-	LastFiredKey string `json:"lastFiredKey,omitempty"`
 	// NextRun is the Unix ms of the next fire (the scheduler's due check), or 0
 	// if none (an inert/exhausted task).
 	NextRun int64 `json:"nextRun,omitempty"`

@@ -114,6 +114,9 @@
       {#each kids(node) as c (c.path)}
         {@render row(c, depth + 1)}
       {/each}
+      {#if node.children.length === 0}
+        <div class="empty-leaf" style="padding-left:{8 + (depth + 1) * 14}px">空目录</div>
+      {/if}
     {/if}
   {:else}
     <button class="node file" class:sel={node.path === activePath} style="padding-left:{8 + depth * 14 + 14}px" onclick={() => onopen(node.path)}>
@@ -174,6 +177,7 @@
   .ico svg { width: 15px; height: 15px; }
   .node.file.sel .ico { color: var(--accent-strong, var(--accent)); }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-leaf { font-size: 12px; color: var(--ink-faint); padding: 4px 8px; font-style: italic; }
   @media (prefers-reduced-motion: reduce) {
     .skel-row { animation: none; }
     .icon.spin svg { animation-duration: 1.6s; }

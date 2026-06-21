@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
 )
 
@@ -287,18 +288,12 @@ func installBinary(srcPath string, data []byte) error {
 		}
 		data = b
 	}
-	tmp := BinPath() + ".tmp"
-	// 0o700 (not 0o755) on the .tmp: the file is world-executable between the
-	// write and the rename, which is a brief but real window on a multi-user
-	// box. We re-chmod to 0o755 after Rename atomicizes the swap.
-	if err := os.WriteFile(tmp, data, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o700); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, BinPath())
+	// 0o700 on the temp + atomic rename via the shared helper (same write
+	// path as configstore / cron — was previously a hand-rolled
+	// temp+chmod+rename without fsync, a fourth copy of this pattern that
+	// drifted from the others; the round-6 atomicfile pkg was created
+	// exactly to retire this kind of duplication).
+	return atomicfile.Write(BinPath(), data, 0o700)
 }
 
 func download(ctx context.Context, url string) ([]byte, error) {

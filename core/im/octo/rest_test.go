@@ -251,3 +251,46 @@ func TestValidateWSURL(t *testing.T) {
 		})
 	}
 }
+
+// TestSendTextAsWithMsgNoUsesCallerID is the regression for the duplicate-IM
+// hazard rounds 1-7 chased: when sendReplySegment retried after a transient
+// failure, the old SendTextAs path generated a fresh client_msg_no per call,
+// defeating server-side dedup. The fix is the caller passing a stable id;
+// this test pins the contract that the caller's id reaches the wire body
+// unchanged across calls.
+func TestSendTextAsWithMsgNoUsesCallerID(t *testing.T) {
+	var seenIDs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		seenIDs = append(seenIDs, body["client_msg_no"].(string))
+		_ = json.NewEncoder(w).Encode(SendMessageResult{MessageID: "m", MessageSeq: 1})
+	}))
+	defer srv.Close()
+	c := NewRESTClient(srv.URL, tok("bf"))
+	// Two calls with the same caller-supplied id simulate retry; server must
+	// observe the same id both times (its dedup key).
+	const stable = "fixed-uuid-for-test"
+	if _, err := c.SendTextAsWithMsgNo(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, "", stable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendTextAsWithMsgNo(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, "", stable); err != nil {
+		t.Fatal(err)
+	}
+	if len(seenIDs) != 2 || seenIDs[0] != stable || seenIDs[1] != stable {
+		t.Fatalf("client_msg_no must be the caller-supplied id on every call, got %v", seenIDs)
+	}
+	// And the legacy SendTextAs path should still generate a fresh id per call
+	// (that's the contract for one-shot non-retried sends).
+	prev := len(seenIDs)
+	if _, err := c.SendTextAs(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendTextAs(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if seenIDs[prev] == seenIDs[prev+1] || seenIDs[prev] == stable {
+		t.Fatalf("SendTextAs should generate fresh ids, got %v", seenIDs[prev:])
+	}
+}

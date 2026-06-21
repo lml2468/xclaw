@@ -139,22 +139,27 @@ func (l *Loader) loadFile(id string) (string, bool) {
 		return "", false
 	}
 
-	// Fast path: unchanged since last read (mtime + size both match).
-	mod := st.ModTime().UnixNano()
-	if cached, ok := l.lookup(path); ok && cached.modTime == mod && cached.size == st.Size() {
-		return cached.content, cached.content != ""
-	}
-
 	// Defense-in-depth: refuse a group/world-writable file. Its contents are
 	// injected UNSANITIZED into the system prompt, so a file anyone-but-the-
 	// operator can write is an untrusted injection sink. This is NOT a substitute
 	// for proper OS perms — see the package header.
+	//
+	// Runs BEFORE the cache hot path: a `chmod 0666` that doesn't touch mtime
+	// would otherwise keep the previously-cached content live indefinitely
+	// (the perm check ran only on the slow path, so a stale cache hit
+	// silently bypassed the guard).
 	if st.Mode().Perm()&0o022 != 0 {
 		fmt.Fprintf(os.Stderr,
 			"[groupmd] refusing %s: file is group/world-writable (mode %04o). Make it writable only by the gateway user.\n",
 			path, st.Mode().Perm())
-		l.remember(path, cacheEntry{modTime: mod, size: st.Size()})
+		l.remember(path, cacheEntry{modTime: st.ModTime().UnixNano(), size: st.Size()})
 		return "", false
+	}
+
+	// Fast path: unchanged since last read (mtime + size both match).
+	mod := st.ModTime().UnixNano()
+	if cached, ok := l.lookup(path); ok && cached.modTime == mod && cached.size == st.Size() {
+		return cached.content, cached.content != ""
 	}
 
 	content := readCapped(path)

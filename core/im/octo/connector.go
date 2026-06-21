@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
@@ -882,9 +884,13 @@ func (c *Connector) OnReply(sessionKey string, text string) {
 
 // sendReplySegment sends one reply segment with a single bounded retry. The reply
 // is the turn's only user-visible output, so a transient send failure (network
-// blip) shouldn't silently lose it; one retry covers the common case without
-// risking duplicate delivery on a slow-but-eventually-successful send.
+// blip) shouldn't silently lose it; one retry covers the common case. The
+// client_msg_no is generated ONCE up-front and reused on retry so server-side
+// dedup (keyed on client_msg_no) actually suppresses duplicate delivery — a
+// fresh uuid per attempt defeated the dedup whenever a 5xx/timeout/TCP-reset
+// happened AFTER the server committed but BEFORE the response reached us.
 func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string, entities []MentionEntity, mentionAll bool) error {
+	msgNo := uuid.NewString()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
@@ -893,7 +899,7 @@ func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string
 				return lastErr // shutting down — don't keep retrying
 			}
 		}
-		if _, err := c.rest.SendTextAs(c.ctx(), tgt.channelID, tgt.channelType, text, uids, entities, mentionAll, tgt.onBehalfOf); err != nil {
+		if _, err := c.rest.SendTextAsWithMsgNo(c.ctx(), tgt.channelID, tgt.channelType, text, uids, entities, mentionAll, tgt.onBehalfOf, msgNo); err != nil {
 			lastErr = err
 			continue
 		}

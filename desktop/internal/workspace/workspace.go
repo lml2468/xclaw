@@ -126,7 +126,12 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 	})
 
-	var nodes []*Node
+	// Initialize as an empty (non-nil) slice so JSON marshals an EMPTY but
+	// readable directory as `[]` instead of `null`. The frontend uses null to
+	// mean "not expandable" (depth-cap / .claude / symlink leaf); without
+	// this an empty dir was indistinguishable from a depth-capped one and
+	// the chevron silently disappeared.
+	nodes := []*Node{}
 	for _, e := range entries {
 		if *count >= maxEntries {
 			break

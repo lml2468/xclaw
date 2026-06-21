@@ -200,7 +200,23 @@ func (c *RESTClient) SendText(ctx context.Context, channelID string, channelType
 // relay). When onBehalfOf is non-empty, the server presents the message as the
 // grantor speaking (api-fetch.ts sendMessage `on_behalf_of`). An empty string
 // is identical to SendText.
+//
+// Generates a fresh client_msg_no per call — appropriate for a single,
+// one-shot send. Callers that retry MUST instead route through
+// SendTextAsWithMsgNo with a stable id, otherwise a network blip after the
+// server commits but before the response reaches us produces a duplicate
+// delivery (octo-server dedup is keyed on client_msg_no).
 func (c *RESTClient) SendTextAs(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionEntities []MentionEntity, mentionAll bool, onBehalfOf string) (SendMessageResult, error) {
+	return c.SendTextAsWithMsgNo(ctx, channelID, channelType, content, mentionUIDs, mentionEntities, mentionAll, onBehalfOf, uuid.NewString())
+}
+
+// SendTextAsWithMsgNo is SendTextAs with a caller-supplied client_msg_no for
+// idempotent retry. Server dedup is keyed on this id, so a retry MUST reuse
+// the original id — otherwise a transient post-commit failure (TCP reset,
+// 502, timeout that hits AFTER the server committed but BEFORE the response
+// landed) produces a successful retry with a new id and the user sees the
+// message twice. clientMsgNo MUST be non-empty.
+func (c *RESTClient) SendTextAsWithMsgNo(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionEntities []MentionEntity, mentionAll bool, onBehalfOf, clientMsgNo string) (SendMessageResult, error) {
 	payload := map[string]any{
 		"type":    int(MsgText),
 		"content": content,
@@ -222,7 +238,7 @@ func (c *RESTClient) SendTextAs(ctx context.Context, channelID string, channelTy
 		"channel_id":    channelID,
 		"channel_type":  int(channelType),
 		"payload":       payload,
-		"client_msg_no": uuid.NewString(),
+		"client_msg_no": clientMsgNo,
 	}
 	if onBehalfOf != "" {
 		body["on_behalf_of"] = onBehalfOf

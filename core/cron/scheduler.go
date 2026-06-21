@@ -59,6 +59,12 @@ type Manager struct {
 	timer  *time.Ticker
 	stopCh chan struct{}
 	onFire func(Fire)
+
+	// fireSync, when true, makes Tick invoke onFire on the caller goroutine
+	// instead of dispatching to a new goroutine. Tests flip this so
+	// `Tick(); checkFireCount()` works without a poll-wait. Production
+	// always leaves it false so a slow turn never blocks subsequent ticks.
+	fireSync bool
 }
 
 // NewManager builds a cron Manager. ownerUID gates create/delete (empty disables
@@ -267,13 +273,14 @@ func (m *Manager) Tick() {
 			// (which drives a full turn) does not run while we hold the store mutex.
 			fires = append(fires, Fire{Task: task})
 			task.LastRun = nowMS
-			// Record the fire's wall-clock key so computeNextRunSkipping won't
-			// re-schedule the SAME wall-clock minute on a DST fall-back (when
-			// wall-clock 01:00-01:59 happens twice in absolute time — the second
-			// pass would otherwise match the same cron expr that just fired).
-			firedKey := fireKey(now)
-			task.LastFiredKey = firedKey
 			if task.Recurring {
+				// Compute the just-fired wall-clock key inline (not persisted —
+				// at-most-once semantics, and a restart between Update-commit and
+				// the next due Tick simply sees the already-advanced NextRun).
+				// The skip prevents computeNextRunSkipping from re-scheduling the
+				// SAME wall-clock minute on DST fall-back, where wall-clock
+				// 01:00-01:59 happens twice in absolute time.
+				firedKey := fireKey(now)
 				if next, ok := computeNextRunSkipping(task.Schedule, now, firedKey); ok {
 					task.NextRun = unixMS(next)
 					survivors = append(survivors, task)
@@ -300,7 +307,18 @@ func (m *Manager) Tick() {
 				m.label, f.Task.ID, f.Task.Schedule, int(late.Minutes()))
 		}
 		if m.onFire != nil {
-			m.safeFire(f)
+			// Dispatch on its own goroutine so a long-running turn doesn't
+			// block subsequent Tick calls (the timer's channel only buffers
+			// one tick, so blocking here serialized every task in the bot
+			// behind the slowest one — a daily 09:00 stack with one 8-min
+			// task would fire the other four 8 min late). The gateway
+			// already serializes per-session, so two recurring tasks in
+			// the same session still queue cleanly.
+			if m.fireSync {
+				m.safeFire(f)
+			} else {
+				go m.safeFire(f)
+			}
 		}
 	}
 }

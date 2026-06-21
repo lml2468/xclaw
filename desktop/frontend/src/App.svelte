@@ -15,7 +15,7 @@
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
   import TokenUsage from "./lib/components/TokenUsage.svelte";
-  import Confirm from "./lib/components/Confirm.svelte";
+  import { confirm } from "./lib/confirm.svelte";
 
   let composer = $state<Composer>();
   let showEditor = $state(new URLSearchParams(location.search).has("editor"));
@@ -25,7 +25,6 @@
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
   let collapsed = $state(false);
-  let confirmReset = $state(false);
   // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
@@ -90,6 +89,14 @@
   try { Events.On("xclaw:open-usage", () => openModal("usage")); } catch {}
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
+
+  async function resetSession() {
+    if (!store.currentSession) return;
+    const msg = store.isConsole
+      ? "重置 Console 会话？将清空 resume id 与本地记录，下次发送从全新会话开始。"
+      : "重置此 IM 会话？将清空 resume id 与本地记录，对端下条消息将开启全新会话。";
+    if (await confirm({ message: msg, confirmLabel: "重置", danger: true })) store.reset();
+  }
 </script>
 
 {#if !collapsed}
@@ -116,7 +123,7 @@
           {/if}
           <span class="spacer"></span>
           {#if store.currentSession}
-            <button class="icon" style="--wails-draggable: no-drag;" title="重置会话（清空 resume id 与本地记录）" aria-label="重置会话" onclick={() => (confirmReset = true)}>
+            <button class="icon" style="--wails-draggable: no-drag;" title="重置会话（清空 resume id 与本地记录）" aria-label="重置会话" onclick={resetSession}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
             </button>
           {/if}
@@ -167,14 +174,6 @@
 {/if}
 {#if showUsage}
   <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
-{/if}
-{#if confirmReset && store.currentSession}
-  <Confirm
-    message={store.isConsole ? "重置 Console 会话？将清空 resume id 与本地记录，下次发送从全新会话开始。" : "重置此 IM 会话？将清空 resume id 与本地记录，对端下条消息将开启全新会话。"}
-    confirmLabel="重置"
-    danger
-    onresult={(ok) => { confirmReset = false; if (ok) store.reset(); }}
-  />
 {/if}
 
 <style>

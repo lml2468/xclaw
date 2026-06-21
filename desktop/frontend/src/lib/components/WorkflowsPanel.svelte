@@ -3,7 +3,9 @@
   import { store } from "../store.svelte";
   import { modal } from "../actions/modal";
   import SettingsHeader from "./SettingsHeader.svelte";
-  import Confirm from "./Confirm.svelte";
+  import BotPicker from "./BotPicker.svelte";
+  import ErrorFooter from "./ErrorFooter.svelte";
+  import { confirm } from "../confirm.svelte";
 
   let { onclose, onedit, onskills, onusage }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onusage?: () => void } = $props();
 
@@ -27,15 +29,8 @@
   let error = $state("");
   let newName = $state("");
 
-  // window.confirm() is a no-op in the Wails webview — use the shared <Confirm>.
-  type ConfirmReq = { msg: string; danger?: boolean; confirmLabel?: string; resolve: (v: boolean) => void };
-  let confirmState = $state<ConfirmReq | null>(null);
-  function ask(msg: string, opts?: { danger?: boolean; confirmLabel?: string }): Promise<boolean> {
-    return new Promise((resolve) => (confirmState = { msg, resolve, danger: opts?.danger, confirmLabel: opts?.confirmLabel }));
-  }
-  function answer(v: boolean) { confirmState?.resolve(v); confirmState = null; }
   async function leave(fn?: () => void) {
-    if (dirty && !(await ask("有未保存的改动,确认离开?", { confirmLabel: "离开" }))) return;
+    if (dirty && !(await confirm({ message: "有未保存的改动,确认离开?", confirmLabel: "离开" }))) return;
     onclose(); fn?.();
   }
 
@@ -72,7 +67,7 @@
   }
 
   async function switchBot(id: string) {
-    if (dirty && !(await ask("放弃未保存的改动?", { confirmLabel: "放弃", danger: true }))) return;
+    if (dirty && !(await confirm({ message: "放弃未保存的改动?", confirmLabel: "放弃", danger: true }))) return;
     botId = id; sel = null; content = ""; dirty = false;
     if (isPreview) loadBotPreview(); else await loadBot();
   }
@@ -83,7 +78,7 @@
   }
 
   async function select(name: string) {
-    if (dirty && !(await ask("放弃未保存的改动?", { confirmLabel: "放弃", danger: true }))) return;
+    if (dirty && !(await confirm({ message: "放弃未保存的改动?", confirmLabel: "放弃", danger: true }))) return;
     sel = name; error = "";
     try {
       content = isPreview ? (mockBot[botId ?? ""]?.[name] ?? "") : await XClawService.BotWorkflowRead(botId!, name);
@@ -112,7 +107,7 @@
   }
 
   async function removeBotWf(w: WfInfo) {
-    if (!(await ask(`删除「${w.name}」?`, { confirmLabel: "删除", danger: true }))) return;
+    if (!(await confirm({ message: `删除「${w.name}」?`, confirmLabel: "删除", danger: true }))) return;
     try {
       if (isPreview) { delete mockBot[botId ?? ""][w.name]; loadBotPreview(); }
       else { await XClawService.BotWorkflowDelete(botId!, w.name); await loadBot(); }
@@ -125,14 +120,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
   <div class="modal" use:modal={{ onclose: () => leave() }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="工作流" tabindex="-1">
     <SettingsHeader active="workflows" onclose={() => leave()} onnav={leave} {onedit} {onskills} {onusage}>
-      <label class="botpick">
-        <span>Bot</span>
-        <select value={botId} onchange={(e) => switchBot((e.currentTarget as HTMLSelectElement).value)}>
-          {#each (isPreview ? [{ id: "main" }, { id: "research" }] : store.bots) as b (b.id)}
-            <option value={b.id}>{b.id}</option>
-          {/each}
-        </select>
-      </label>
+      <BotPicker value={botId} bots={isPreview ? [{ id: "main" }, { id: "research" }] : store.bots} onpick={switchBot} />
     </SettingsHeader>
 
     <div class="body">
@@ -174,16 +162,7 @@
     </div>
 
     {#if error}
-      <footer class="errbar"><span class="err">⚠️ {error}</span><button class="dismiss" onclick={() => (error = "")} aria-label="清除">✕</button></footer>
-    {/if}
-
-    {#if confirmState}
-      <Confirm
-        message={confirmState.msg}
-        confirmLabel={confirmState.confirmLabel ?? "确认"}
-        danger={confirmState.danger ?? false}
-        onresult={answer}
-      />
+      <ErrorFooter {error} onclear={() => (error = "")} />
     {/if}
   </div>
 </div>
@@ -193,9 +172,6 @@
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
   .row:focus-visible, .rowmain:focus-visible, .add:focus-visible, .primary:focus-visible, .del:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
-
-  .botpick { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); -webkit-app-region: no-drag; }
-  .botpick select { background: color-mix(in srgb, var(--ink) 5%, var(--surface)); border: 1px solid var(--hairline); border-radius: 8px; padding: 5px 9px; color: var(--ink); font-size: 12px; font-family: var(--mono); outline: none; }
 
   .body { flex: 1; display: grid; grid-template-columns: 280px 1fr; overflow: hidden; }
   .list { border-right: 1px solid var(--hairline); padding: 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; background: color-mix(in srgb, var(--ink) 3%, transparent); }
@@ -227,11 +203,4 @@
   .primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px color-mix(in srgb, var(--grad-a) 50%, transparent); }
   .primary:disabled { opacity: 0.45; }
   textarea.code { flex: 1; resize: none; border: none; outline: none; background: var(--code-bg); color: var(--ink); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
-
-  .err { color: var(--danger); font-size: 12px; }
-  .errbar { display: flex; align-items: center; gap: 8px; padding: 8px 18px; border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
-  .errbar .err { flex: 1; }
-  .errbar .dismiss { width: 24px; height: 24px; display: grid; place-items: center; background: none; border: none; border-radius: 6px; color: var(--ink-soft); font-size: 11px; }
-  .errbar .dismiss:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
-  .errbar .dismiss:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 </style>

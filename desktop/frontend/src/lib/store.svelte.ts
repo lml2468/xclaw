@@ -207,13 +207,16 @@ class Store {
     // Pull this bot's full persisted session list (newest first); the response
     // folds into sessions[] so history survives restarts.
     if (!this.preview) XClawService.SessionsList(id);
-    const sessions = this.botSessions;
-    // Default to the newest persisted session; if the bot has none yet (e.g.
-    // a freshly-added bot whose only writable surface is the Console), land on
-    // the Console so the user can start typing immediately instead of seeing
-    // the IM-empty "loading" fallback for a key that doesn't exist.
-    this.selectedKey = sessions[0]?.key ?? CONSOLE_UID;
+    this.selectedKey = this.initialKey();
     if (this.selectedKey) this.loadHistory(this.selectedKey);
+  }
+
+  // initialKey is the key to land on when first opening a bot: its newest
+  // persisted session, or the Console for a fresh bot whose roster is empty
+  // (so the chat lands on a writable surface instead of the IM-empty
+  // "loading" fallback for a key that doesn't exist).
+  private initialKey(): string {
+    return this.botSessions[0]?.key ?? CONSOLE_UID;
   }
 
   // loadUsage fetches token usage for every bot over a range (since = Unix
@@ -475,11 +478,9 @@ class Store {
       s.preview = r.preview ?? "";
     }
     // First roster after connect: if nothing is selected yet, open the newest
-    // — falling back to Console for a bot whose persisted roster is empty so
-    // the chat lands on a writable surface instead of the IM-empty fallback.
+    // (or fall back to Console — see initialKey()).
     if (this.selectedKey == null) {
-      const first = this.botSessions[0];
-      this.selectedKey = first?.key ?? CONSOLE_UID;
+      this.selectedKey = this.initialKey();
     }
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }

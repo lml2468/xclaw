@@ -3,9 +3,9 @@
   import { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
-  import Confirm from "./Confirm.svelte";
   import SettingsHeader from "./SettingsHeader.svelte";
   import { modal } from "../actions/modal";
+  import { confirm } from "../confirm.svelte";
 
   let { onclose, onskills, onusage, onworkflows }: { onclose: () => void; onskills?: () => void; onusage?: () => void; onworkflows?: () => void } = $props();
 
@@ -15,30 +15,23 @@
   let saved = $state(false);
   let busy = $state(false);
   let dirty = $state(false);
-  // Pending navigation held behind the unsaved-changes confirm.
-  let pendingLeave = $state<null | (() => void)>(null);
-  // Pending bot removal held behind the destructive-action confirm.
-  let pendingRemove = $state<null | { idx: number; id: string }>(null);
 
   // Guarded navigation/close: if the form has unsaved edits, ask first.
-  function leave(fn?: () => void) {
-    const go = () => { onclose(); fn?.(); };
-    if (dirty) { pendingLeave = go; return; }
-    go();
+  async function leave(fn?: () => void) {
+    if (dirty && !(await confirm({ message: "有未保存的改动,确认离开?", confirmLabel: "离开" }))) return;
+    onclose();
+    fn?.();
   }
-  function resolveLeave(ok: boolean) {
-    const go = pendingLeave;
-    pendingLeave = null;
-    if (ok && go) go();
-  }
-  function askRemove(i: number) {
+  async function askRemove(i: number) {
     const b = bots[i]; if (!b) return;
-    pendingRemove = { idx: i, id: b.id || "(未命名)" };
-  }
-  function resolveRemove(ok: boolean) {
-    const p = pendingRemove;
-    pendingRemove = null;
-    if (ok && p) { removeBot(p.idx); dirty = true; }
+    const ok = await confirm({
+      message: `删除 Bot 「${b.id || "(未命名)"}」?此操作会从下次保存时移除其配置。`,
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    removeBot(i);
+    dirty = true;
   }
 
   const current = $derived(bots[sel] ?? null);
@@ -234,14 +227,6 @@
       <button onclick={() => save(false)} disabled={busy}>保存</button>
       <button class="primary" onclick={() => save(true)} disabled={busy}>保存并重启</button>
     </footer>
-
-    {#if pendingLeave}
-      <Confirm message="有未保存的改动,确认离开?" confirmLabel="离开" onresult={resolveLeave} />
-    {/if}
-
-    {#if pendingRemove}
-      <Confirm message={`删除 Bot 「${pendingRemove.id}」?此操作会从下次保存时移除其配置。`} confirmLabel="删除" danger onresult={resolveRemove} />
-    {/if}
 
     {#if wizardOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab) -->

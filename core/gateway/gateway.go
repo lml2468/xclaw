@@ -210,9 +210,13 @@ func (g *Gateway) WithMediaAuth(fn MediaAuth) *Gateway {
 
 // WithDispatchTimeout overrides the per-turn idle timeout (#141). The timer
 // resets on every AgentEvent, so a long turn with steady event flow is fine —
-// only N seconds of silence kills it. A value <=0 disables the bound. Default
-// 20 minutes.
+// only N seconds of silence kills it. A value <=0 is a no-op (keeps the
+// current default), so a caller can blindly pass a config value of zero
+// meaning "unset" without breaking the fluent chain. Default 20 minutes.
 func (g *Gateway) WithDispatchTimeout(d time.Duration) *Gateway {
+	if d <= 0 {
+		return g
+	}
 	g.dispatchTimeout = d
 	return g
 }
@@ -290,6 +294,48 @@ const (
 // runTurn can distinguish its own timeout from a caller cancellation via
 // context.Cause (M9).
 var errDispatchTimeout = errors.New("dispatch idle timeout")
+
+// idleGuard wraps the per-turn idle deadline plumbing. Reset on every event;
+// expired() reports whether OUR timer fired (vs a parent cancellation). When
+// the timeout is <=0 every method is a no-op so callers stay branch-free.
+type idleGuard struct {
+	timeout time.Duration
+	cancel  context.CancelCauseFunc
+	timer   *time.Timer
+}
+
+// newIdleGuard returns a child ctx and a guard. With timeout <=0 the guard is
+// inert (ctx unchanged, reset/stop/expired are no-ops).
+func newIdleGuard(parent context.Context, timeout time.Duration) (context.Context, *idleGuard) {
+	if timeout <= 0 {
+		return parent, &idleGuard{}
+	}
+	ctx, cancel := context.WithCancelCause(parent)
+	g := &idleGuard{timeout: timeout, cancel: cancel}
+	// time.AfterFunc fires once after the idle window; reset() Resets it. The
+	// closure captures `cancel` so an expiry tags the cancellation with our
+	// sentinel, letting expired() tell our own timeout apart from a parent
+	// cancellation (M9).
+	g.timer = time.AfterFunc(timeout, func() { cancel(errDispatchTimeout) })
+	return ctx, g
+}
+
+func (g *idleGuard) reset() {
+	if g.timer != nil {
+		g.timer.Reset(g.timeout)
+	}
+}
+
+func (g *idleGuard) stop() {
+	if g.timer != nil {
+		g.timer.Stop()
+		g.cancel(nil)
+	}
+}
+
+func (g *idleGuard) expired(ctx context.Context) bool {
+	return g.timer != nil && errors.Is(context.Cause(ctx), errDispatchTimeout)
+}
 
 // Observe caches a non-triggering group message into the group context so it
 // becomes background for a later @-mention turn. Call this for group messages
@@ -477,22 +523,8 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// long as events flow; only true silence kills it. On expiry we send an
 	// apology and return nil — the per-session lock then releases as runTurn
 	// returns.
-	turnCtx := ctx
-	resetIdle := func() {} // no-op when disabled
-	if g.dispatchTimeout > 0 {
-		var cancel context.CancelCauseFunc
-		turnCtx, cancel = context.WithCancelCause(ctx)
-		// time.AfterFunc fires once after the idle window; we Reset it on every
-		// event. The closure captures `cancel` so an expiry tags the cancellation
-		// with our sentinel (errDispatchTimeout), letting the post-loop check tell
-		// our own timeout apart from a parent cancellation (M9).
-		idle := time.AfterFunc(g.dispatchTimeout, func() { cancel(errDispatchTimeout) })
-		defer func() {
-			idle.Stop()
-			cancel(nil)
-		}()
-		resetIdle = func() { idle.Reset(g.dispatchTimeout) }
-	}
+	turnCtx, idle := newIdleGuard(ctx, g.dispatchTimeout)
+	defer idle.stop()
 
 	sysAppend := g.buildSystemPrompt(msg, rosterPrefix)
 	var reply strings.Builder
@@ -554,7 +586,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		for ev := range events {
 			// Reset the idle deadline on every event — a steady stream keeps the
 			// turn alive, only true silence kills it.
-			resetIdle()
+			idle.reset()
 			// A stale resume id (session not found, e.g. after the agent's config
 			// dir changed) dooms this attempt — swallow its events so the failed
 			// run never reaches the sink, then retry fresh below.
@@ -615,12 +647,12 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	// If the turn was cut short by the dispatch timeout (not the caller's own
-	// cancellation), apologize and release the lock. context.Cause returns our
-	// sentinel ONLY when turnCtx expired on its own deadline — a parent
-	// cancellation propagates the parent's cause instead, so this is unambiguous
-	// even if both fire near-simultaneously (M9).
-	if g.dispatchTimeout > 0 && errors.Is(context.Cause(turnCtx), errDispatchTimeout) {
-		fmt.Fprintf(os.Stderr, "[gateway] dispatch timed out after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
+	// cancellation), apologize and release the lock. The guard's expired()
+	// returns true ONLY when our idle timer fired (its cancel cause is our
+	// sentinel) — a parent cancellation propagates the parent's cause instead,
+	// so this is unambiguous even if both fire near-simultaneously (M9).
+	if idle.expired(turnCtx) {
+		fmt.Fprintf(os.Stderr, "[gateway] dispatch idle timeout after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
 		g.sink.OnReply(sessionKey, timeoutReply)
 		return nil
 	}

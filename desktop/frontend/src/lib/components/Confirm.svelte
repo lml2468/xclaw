@@ -10,7 +10,12 @@
   // a delegated handler runs AFTER an ancestor's directly-attached listener has
   // already fired during bubble, so stopPropagation from there would be too
   // late to prevent the outer modal's Esc → close from firing.
-  import { onMount, tick } from "svelte";
+  //
+  // Tab is trapped INSIDE the confirm too — relying on the browser's native Tab
+  // would hand focus to the outer modal's Tab trap, which cycles through the
+  // whole form behind the confirm; a subsequent Esc then fires from a node
+  // outside .cscrim and closes the modal instead of cancelling the confirm.
+  import { onMount } from "svelte";
   let { message, confirmLabel = "确认", cancelLabel = "取消", danger = false, onresult }:
     { message: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean; onresult: (ok: boolean) => void } = $props();
 
@@ -39,7 +44,7 @@
     const opener = (document.activeElement as HTMLElement) ?? null;
     const node = scrim;
     node?.addEventListener("keydown", onKey);
-    tick().then(() => primary?.focus());
+    primary?.focus();
     return () => {
       node?.removeEventListener("keydown", onKey);
       try { opener?.focus?.(); } catch (_) {}

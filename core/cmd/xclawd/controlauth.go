@@ -48,6 +48,7 @@ var privilegedControlCommands = []string{
 	"cron.create",
 	"cron.list",
 	"cron.delete",
+	"cron.update",
 }
 
 // maxTokenBytes caps the capability-token read so a misbehaving launcher can't

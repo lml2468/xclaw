@@ -20,6 +20,15 @@ export class BotConfig {
     "soul": string;
     "agents": string;
 
+    /**
+     * Cron mirrors agent.cron — surface-level toggle for the scheduled-task
+     * manager. False (the default) means the bot's cron Manager is never
+     * constructed, so the GUI's SchedulesPane shows an "启用并重启" banner
+     * instead of an actionable task list. Round-tripped through Save so the
+     * SchedulesPane toggle survives a config write.
+     */
+    "cron": boolean;
+
     /** Creates a new BotConfig instance. */
     constructor($$source: Partial<BotConfig> = {}) {
         if (!("id" in $$source)) {
@@ -48,6 +57,9 @@ export class BotConfig {
         }
         if (!("agents" in $$source)) {
             this["agents"] = "";
+        }
+        if (!("cron" in $$source)) {
+            this["cron"] = false;
         }
 
         Object.assign(this, $$source);

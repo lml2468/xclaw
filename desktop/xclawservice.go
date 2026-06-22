@@ -346,6 +346,14 @@ func (x *XClawService) CronDelete(botID, uid, id string) error {
 	return x.send("cron.delete", control.CronDeleteBody{BotID: botID, UID: uid, ID: id})
 }
 
+// CronUpdate mutates a scheduled task. The body's Enabled is a pointer so the
+// renderer's per-row enable/disable toggle can send an enabled-only update
+// (other fields zero) without re-validating the unchanged schedule on the
+// daemon — see core/cron Update's enabled-only fast path.
+func (x *XClawService) CronUpdate(body control.CronUpdateBody) error {
+	return x.send("cron.update", body)
+}
+
 // --- config (synchronous; touches config.json + credential store directly) ---
 
 // LoadConfig returns the editor view of every configured bot.
@@ -405,6 +413,26 @@ func (x *XClawService) OctoCliStatus(botID string) (OctoCliStatus, error) {
 		return OctoCliStatus{}, err
 	}
 	return OctoCliStatus{Registered: octocli.HasProfile(robotID), RobotID: robotID}, nil
+}
+
+// GroupsList enumerates the IM groups the bot is a member of, populated for
+// the scheduled-task target picker so the operator picks "this group" from
+// a dropdown instead of pasting a channelId. Synchronous (not fire-and-
+// forget over the control bus) because the renderer awaits it before
+// opening the create-task modal, same shape as OctoCliStatus.
+//
+// Returns an empty list (and no error) when the bot has no groups; returns
+// an error when octo-cli is not installed / not authenticated for this bot
+// so the GUI can surface a meaningful "log in first" message rather than
+// silently showing "no groups available".
+func (x *XClawService) GroupsList(botID string) ([]octocli.Group, error) {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return octocli.Groups(ctx, robotID)
 }
 
 // OctoCliRelogin re-writes the disk profile for the bot from the keychain'd

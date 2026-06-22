@@ -3,6 +3,7 @@
 
 export {
     CronCreateBody,
+    CronUpdateBody,
     Envelope,
     Kind
 } from "./models.js";

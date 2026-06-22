@@ -41,6 +41,12 @@ type BotConfig struct {
 	Env            map[string]string `json:"env"`
 	Soul           string            `json:"soul"`
 	Agents         string            `json:"agents"`
+	// Cron mirrors agent.cron — surface-level toggle for the scheduled-task
+	// manager. False (the default) means the bot's cron Manager is never
+	// constructed, so the GUI's SchedulesPane shows an "启用并重启" banner
+	// instead of an actionable task list. Round-tripped through Save so the
+	// SchedulesPane toggle survives a config write.
+	Cron bool `json:"cron"`
 }
 
 // Dir is ~/.xclaw.
@@ -159,9 +165,17 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 	if b.Agent != nil {
 		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
 		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
+		if b.Agent.Cron != nil {
+			bc.Cron = *b.Agent.Cron
+		} else if f.Agent != nil && f.Agent.Cron != nil {
+			bc.Cron = *f.Agent.Cron
+		}
 		maps.Copy(bc.Env, b.Agent.Env)
 	} else {
 		bc.Model, bc.GatewayBaseURL = topModel, topGW
+		if f.Agent != nil && f.Agent.Cron != nil {
+			bc.Cron = *f.Agent.Cron
+		}
 	}
 	if envInherit {
 		maps.Copy(bc.Env, topEnv)
@@ -251,6 +265,20 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		ag.GatewayToken = "" // keychain only
 		ag.Model = inheritStr(b.Model, topModel)
 		ag.GatewayBaseURL = inheritStr(b.GatewayBaseURL, topGW)
+		// Cron: only materialize per-bot override when it differs from the
+		// top-level default — keeps config.json uncluttered when the operator
+		// hasn't customized it, and a per-bot pointer (true OR false) properly
+		// overrides via mergeAgent.
+		var topCron bool
+		if f.Agent != nil && f.Agent.Cron != nil {
+			topCron = *f.Agent.Cron
+		}
+		if b.Cron != topCron {
+			cron := b.Cron
+			ag.Cron = &cron
+		} else {
+			ag.Cron = nil
+		}
 		if envEqual(b.Env, topEnv) {
 			ag.Env = nil // inherited from the top-level default; don't materialize it
 		} else {
@@ -451,7 +479,7 @@ func envEqual(a, b map[string]string) bool {
 
 func agentEmpty(a config.AgentConfig) bool {
 	return a.Model == "" && a.GatewayBaseURL == "" && a.GatewayToken == "" &&
-		len(a.Env) == 0 && !a.Cron && !a.ToolProgress
+		len(a.Env) == 0 && a.Cron == nil && !a.ToolProgress
 }
 
 func firstDuplicate(bots []BotConfig) string {

@@ -294,6 +294,129 @@ func (m *Manager) Delete(id, requestUID string) error {
 	return nil
 }
 
+// UpdateParams carries a full replacement of a task's mutable fields. ID
+// targets the row; CreatedBy/CreatedAt/LastRun are preserved by Update.
+// Enabled is a pointer so the GUI's per-row toggle can send enabled-only
+// changes by leaving Schedule/Prompt/Coords zero — the mutator detects an
+// "enabled-only" body and skips the full validation pass.
+type UpdateParams struct {
+	ID         string
+	Schedule   string
+	Prompt     string
+	Recurring  *bool
+	Coords     SessionCoords
+	Enabled    *bool
+	RequestUID string
+}
+
+// Update mutates an existing task atomically. Same owner-gate model as
+// Create/Delete: requester must equal current owner AND the task's CreatedBy
+// must also equal that owner (a task left over from a previous owner uid is
+// invisible/immutable). On a full update the schedule is re-validated and
+// NextRun is recomputed from m.now(); LastRun is preserved so the "last
+// fired" indicator survives an edit.
+//
+// "enabled-only" fast path: when every other field is zero except Enabled,
+// the mutator just flips the bit on the matching row — schedule validation
+// is skipped (the schedule didn't change). This keeps the per-row GUI
+// toggle cheap and prevents the spurious "schedule never matches" failure
+// you'd get if you echoed the current schedule back as part of the toggle.
+func (m *Manager) Update(p UpdateParams) (Task, error) {
+	owner := m.owner()
+	if owner == "" || p.RequestUID != owner {
+		return Task{}, fmt.Errorf("only the bot owner can update scheduled tasks")
+	}
+	if p.ID == "" {
+		return Task{}, fmt.Errorf("task id is required")
+	}
+	enabledOnly := p.Schedule == "" && p.Prompt == "" && p.Recurring == nil && p.Enabled != nil &&
+		p.Coords.ChannelID == "" && p.Coords.FromUID == "" && p.Coords.ChannelType == 0 && p.Coords.FromName == ""
+	// Validate full-update fields BEFORE the mutator so a bad request doesn't
+	// land in the store.Update call's IO path.
+	var nextRun int64
+	var recurring bool
+	// preserveCoords: a full update with empty coords means "leave the
+	// existing target binding alone" — the GUI's edit modal sends blank
+	// channel/from fields for "I'm only editing schedule/prompt" intent.
+	// Without this the handler would silently rebind every DM task to
+	// the owner's self-DM on any unrelated edit. Detected as: ChannelID
+	// AND FromUID both empty AND ChannelType zero (= no explicit target
+	// shape in the body).
+	preserveCoords := p.Coords.ChannelID == "" && p.Coords.FromUID == "" && p.Coords.ChannelType == 0
+	if !enabledOnly {
+		oneShot := isOneShotSchedule(p.Schedule)
+		if !ValidateSchedule(p.Schedule) {
+			if oneShot {
+				return Task{}, fmt.Errorf("one-shot time is invalid: %s", p.Schedule)
+			}
+			return Task{}, fmt.Errorf("invalid cron expression: %s", p.Schedule)
+		}
+		if len(p.Prompt) == 0 {
+			return Task{}, fmt.Errorf("prompt is required")
+		}
+		if len(p.Prompt) > MaxPromptBytes {
+			return Task{}, fmt.Errorf("prompt too long (max %d bytes)", MaxPromptBytes)
+		}
+		recurring = !oneShot
+		if p.Recurring != nil {
+			recurring = *p.Recurring
+		}
+		next, ok := computeNextRun(p.Schedule, m.now())
+		if !ok {
+			if oneShot {
+				return Task{}, fmt.Errorf("one-shot time is in the past or invalid")
+			}
+			return Task{}, fmt.Errorf("schedule never matches (impossible cron): %s", p.Schedule)
+		}
+		nextRun = unixMS(next)
+	}
+
+	var updated Task
+	found := false
+	if _, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
+		out := make([]Task, len(tasks))
+		for i, t := range tasks {
+			if t.ID == p.ID && t.CreatedBy == owner {
+				found = true
+				if enabledOnly {
+					t.Enabled = *p.Enabled
+				} else {
+					t.Schedule = p.Schedule
+					t.Recurring = recurring
+					t.Prompt = p.Prompt
+					t.NextRun = nextRun
+					if !preserveCoords {
+						// Caller wants to rebind the target. Replace coords.
+						t.ChannelID = p.Coords.ChannelID
+						t.ChannelType = p.Coords.ChannelType
+						t.FromUID = p.Coords.FromUID
+					}
+					// FromName is treated as a partial-edit field on its own:
+					// empty = preserve (matches the "I'm not changing the
+					// display name" GUI default), non-empty = rewrite. Without
+					// this an edit that blanks FromName would erase the bot's
+					// display name in every future fire.
+					if p.Coords.FromName != "" {
+						t.FromName = p.Coords.FromName
+					}
+					if p.Enabled != nil {
+						t.Enabled = *p.Enabled
+					}
+				}
+				updated = t
+			}
+			out[i] = t
+		}
+		return out, found
+	}); err != nil {
+		return Task{}, err
+	}
+	if !found {
+		return Task{}, fmt.Errorf("no task with id %s", p.ID)
+	}
+	return updated, nil
+}
+
 // OnFire sets the callback invoked when a task is due (= the gateway's inbound
 // path). Must be set before Start.
 func (m *Manager) OnFire(fn func(Fire)) { m.onFire = fn }

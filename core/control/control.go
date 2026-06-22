@@ -55,7 +55,9 @@ type (
 	CronCreateBody         = wire.CronCreateBody
 	CronListBody           = wire.CronListBody
 	CronDeleteBody         = wire.CronDeleteBody
+	CronUpdateBody         = wire.CronUpdateBody
 	CronTaskInfo           = wire.CronTaskInfo
+	CronListResponse       = wire.CronListResponse
 	OKBody                 = wire.OKBody
 	HealthBody             = wire.HealthBody
 	BotInfo                = wire.BotInfo

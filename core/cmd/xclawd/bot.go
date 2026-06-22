@@ -321,6 +321,15 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithMediaAuth(connector.MediaAuth())
 	connector.SetGateway(gw)
 
+	// Eager-init the per-bot control-handler target so its embedded turnsWG is
+	// pinned for runBot's shutdown barrier (see the longer note before rtBot
+	// below). Declared up here so the cron fire closure can capture it for
+	// the Console-target branch — Console fires bypass the IM connector and
+	// go straight to gw.Handle, but the call must be wrapped in
+	// target.turnsWG.Add(1)/Done() so it joins the same shutdown barrier the
+	// per-bot session.send goroutines use.
+	target := &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec}
+
 	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
 	// tasks through the gateway as synthetic CronFire messages. The owner uid that
 	// gates create/delete is resolved from the bot registration (owner_uid).
@@ -329,14 +338,15 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// the resolve handler doesn't have to lock-free write `bot.target.cron`
 	// on every call, which raced concurrent control commands.
 	var cm *cron.Manager
-	if cfg.Agent.Cron {
+	if cfg.Agent.Cron != nil && *cfg.Agent.Cron {
 		cm = cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
 		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
 		cm.OnFire(func(f cron.Fire) {
-			fireCronTask(connector, f.Task)
+			fireCronTask(ctx, connector, gw, target, f.Task)
 		})
 		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
 	}
+	target.cron = cm
 
 	// Eager-init the per-bot control-handler target so its embedded turnsWG is
 	// pinned for runBot's shutdown barrier: the lazy-init in
@@ -350,7 +360,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// resolve-side per-call write was racing concurrent reads.
 	rtBot := &botRuntime{
 		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
-		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
+		target: target,
 	}
 	// Single drain defer covers both happy path and panic. Earlier code
 	// expressed the same sequence THREE times (defer for connector/target,
@@ -391,13 +401,49 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	return err
 }
 
-// fireCronTask delivers one due cron task through the full turn pipeline. It
-// enqueues a synthetic CronFire message onto the connector's per-session worker
-// so it serializes with any concurrent real inbound on the same sessionKey
-// (direct gw.Handle here used to race onInbound's target
-// write, mis-delivering one reply and dropping the other). Best-effort: a
-// failed enqueue is logged, never propagated, so the scheduler loop survives.
-func fireCronTask(connector *octo.Connector, t cron.Task) {
+// fireCronTask wakes the gateway as if a real inbound had arrived. For IM
+// targets (DM/Group) it enqueues a synthetic CronFire message onto the octo
+// connector's per-session worker so it serializes with any concurrent real
+// inbound on the same sessionKey (direct gw.Handle here used to race
+// onInbound's target write, mis-delivering one reply and dropping the other).
+// For Console targets (ChannelConsole) the connector path is bypassed entirely
+// — Console fires belong to the desktop GUI's CONSOLE_UID session, the IM
+// connector has no business with them, and the reply naturally surfaces in
+// the chat window via the existing session.user_message + session.reply event
+// path. The Console call is wrapped in target.turnsWG.Add(1)/Done() so the
+// runBot shutdown chain drains in-flight Console fires before st.Close.
+//
+// Best-effort: a failed enqueue or routing error is logged, never propagated,
+// so the scheduler loop survives.
+func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Gateway, target *botTarget, t cron.Task) {
+	if t.ChannelType == cron.ChannelConsole {
+		// Console-target fire — bypass IM connector. The synthetic inbound
+		// is shaped like a CONSOLE_UID DM so router.SessionKey derives the
+		// same key the GUI's Composer-typed messages use, and the resulting
+		// session.user_message / session.reply broadcasts land in the
+		// Console session the user is watching.
+		inbound := router.InboundMessage{
+			FromUID:     t.FromUID,
+			FromName:    t.FromName,
+			ChannelType: router.ChannelDM,
+			Text:        t.Prompt,
+			CronFire:    true,
+		}
+		if _, err := inbound.SessionKey(); err != nil {
+			fmt.Fprintf(os.Stderr, "cron: task %s console fire has unroutable coords: %v\n", t.ID, err)
+			return
+		}
+		target.turnsWG.Add(1)
+		go func() {
+			defer target.turnsWG.Done()
+			if _, err := gw.Handle(ctx, inbound); err != nil {
+				fmt.Fprintf(os.Stderr, "cron: task %s console fire dispatch failed: %v\n", t.ID, err)
+			}
+		}()
+		return
+	}
+
+	// IM targets — the original path through the per-session worker queue.
 	chType := router.ChannelDM
 	octoType := octo.ChannelDM
 	if t.ChannelType == cron.ChannelKind(router.ChannelGroup) {

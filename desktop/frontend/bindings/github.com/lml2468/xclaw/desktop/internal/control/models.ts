@@ -25,6 +25,18 @@ export type CronCreateBody = wire$0.CronCreateBody;
  * Re-export the wire vocabulary so callers depend on this package, not the
  * daemon's, for the contract surface they use.
  */
+export const CronUpdateBody = wire$0.CronUpdateBody;
+
+/**
+ * Re-export the wire vocabulary so callers depend on this package, not the
+ * daemon's, for the contract surface they use.
+ */
+export type CronUpdateBody = wire$0.CronUpdateBody;
+
+/**
+ * Re-export the wire vocabulary so callers depend on this package, not the
+ * daemon's, for the contract surface they use.
+ */
 export const Envelope = wire$0.Envelope;
 
 /**

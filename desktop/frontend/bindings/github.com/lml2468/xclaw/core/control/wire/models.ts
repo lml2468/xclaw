@@ -43,10 +43,22 @@ export class CronCreateBody {
 
     /**
      * ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-     * which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group.
+     * which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console.
      */
     "channelId"?: string;
     "channelType"?: number;
+
+    /**
+     * FromUID identifies WHO the task fires AS — distinct from the auth uid
+     * (which is server-resolved + not from this body). For DM targets this is
+     * the peer's uid (the task fires as a DM from the bot to that peer). For
+     * Console targets the handler stamps cron.ConsoleUID regardless of the body.
+     * For Group targets the handler stamps the owner (the bot identifies as
+     * itself in the group). Empty for DM is a validation error at create time;
+     * empty for DM on update preserves the existing FromUID (the "blank =
+     * preserve" GUI contract for the edit modal).
+     */
+    "fromUid"?: string;
     "fromName"?: string;
 
     /** Creates a new CronCreateBody instance. */
@@ -67,6 +79,62 @@ export class CronCreateBody {
     static createFrom($$source: any = {}): CronCreateBody {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new CronCreateBody($$parsedSource as Partial<CronCreateBody>);
+    }
+}
+
+/**
+ * CronUpdateBody mutates an existing task by id (proto: cron.update). Same
+ * fields as CronCreateBody plus ID, with an optional Enabled toggle. Editing
+ * is a full replacement of mutable fields — partial PATCH would multiply the
+ * schema-mismatch surface and confuse "did the schedule change or not"
+ * audits. Enabled is a pointer so the GUI's toggle UX can send
+ * enabled-only updates without echoing schedule/prompt/channel back.
+ * 
+ * Owner-gated on the server-resolved owner uid (same model as create + delete):
+ * the task is only updatable by the bot's current owner, AND only if the task's
+ * CreatedBy matches that owner — a task created under a previous owner uid
+ * (pre-token-rotation) is invisible / immutable to the new owner.
+ */
+export class CronUpdateBody {
+    "botId"?: string;
+    "id": string;
+    "schedule"?: string;
+    "prompt"?: string;
+    "recurring"?: boolean | null;
+    "channelId"?: string;
+    "channelType"?: number;
+
+    /**
+     * FromUID — see CronCreateBody.FromUID. On update an empty value PRESERVES
+     * the existing stored FromUID (so the GUI's "blank = preserve" edit-modal
+     * contract is honored at the wire layer, not silently rebound by the
+     * handler stamping owner over the peer uid).
+     */
+    "fromUid"?: string;
+    "fromName"?: string;
+
+    /**
+     * Enabled, when non-nil, sets the task's Enabled flag. nil leaves it.
+     * Sent alone (no other field) by the GUI's per-row enable/disable toggle
+     * so the round-trip is minimal.
+     */
+    "enabled"?: boolean | null;
+
+    /** Creates a new CronUpdateBody instance. */
+    constructor($$source: Partial<CronUpdateBody> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CronUpdateBody instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CronUpdateBody {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CronUpdateBody($$parsedSource as Partial<CronUpdateBody>);
     }
 }
 

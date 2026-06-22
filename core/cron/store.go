@@ -21,7 +21,28 @@ import (
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a
 // leaf package). 1 = DM, 2 = Group, matching router and octo.
+//
+// 3 = Console is a non-IM target used exclusively by the desktop GUI: the
+// scheduled fire lands as a Console session inbound (rendered in the chat
+// window via the existing session.user_message / session.reply event path).
+// The IM connector never sees a Console-kind fire; bot.go's fireCronTask
+// routes it past EnqueueCron straight to gateway.Handle. Persisted as kind=3
+// so a daemon restart preserves the routing decision without rediscovery.
 type ChannelKind int
+
+const (
+	ChannelConsole ChannelKind = 3
+)
+
+// ConsoleUID is the synthetic from-uid that identifies the desktop GUI's
+// Console session. The renderer's Composer uses this exact string when it
+// calls session.send (it's exported as CONSOLE_UID from store.svelte.ts),
+// and router.SessionKey for a ChannelDM inbound derives the session key
+// from FromUID — so a Console-target cron task MUST be stored with this
+// uid (not the bot owner's) or its fired reply lands in a different
+// session that the GUI never opens. Server-known so the control handler
+// can stamp it regardless of what the body carries.
+const ConsoleUID = "gui-user"
 
 // Task is one scheduled task. Persisted as a plain JSON object.
 type Task struct {

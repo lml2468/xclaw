@@ -181,10 +181,19 @@ type CronCreateBody struct {
 	// Recurring, when set, overrides the default (cron→true, one-shot→false).
 	Recurring *bool `json:"recurring,omitempty"`
 	// ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group.
+	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console.
 	ChannelID   string `json:"channelId,omitempty"`
 	ChannelType int    `json:"channelType,omitempty"`
-	FromName    string `json:"fromName,omitempty"`
+	// FromUID identifies WHO the task fires AS — distinct from the auth uid
+	// (which is server-resolved + not from this body). For DM targets this is
+	// the peer's uid (the task fires as a DM from the bot to that peer). For
+	// Console targets the handler stamps cron.ConsoleUID regardless of the body.
+	// For Group targets the handler stamps the owner (the bot identifies as
+	// itself in the group). Empty for DM is a validation error at create time;
+	// empty for DM on update preserves the existing FromUID (the "blank =
+	// preserve" GUI contract for the edit modal).
+	FromUID  string `json:"fromUid,omitempty"`
+	FromName string `json:"fromName,omitempty"`
 }
 
 // CronListBody lists a bot's scheduled tasks (proto: cron.list).
@@ -201,14 +210,61 @@ type CronDeleteBody struct {
 	ID  string `json:"id"`
 }
 
+// CronUpdateBody mutates an existing task by id (proto: cron.update). Same
+// fields as CronCreateBody plus ID, with an optional Enabled toggle. Editing
+// is a full replacement of mutable fields — partial PATCH would multiply the
+// schema-mismatch surface and confuse "did the schedule change or not"
+// audits. Enabled is a pointer so the GUI's toggle UX can send
+// enabled-only updates without echoing schedule/prompt/channel back.
+//
+// Owner-gated on the server-resolved owner uid (same model as create + delete):
+// the task is only updatable by the bot's current owner, AND only if the task's
+// CreatedBy matches that owner — a task created under a previous owner uid
+// (pre-token-rotation) is invisible / immutable to the new owner.
+type CronUpdateBody struct {
+	BotID       string `json:"botId,omitempty"`
+	ID          string `json:"id"`
+	Schedule    string `json:"schedule,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	Recurring   *bool  `json:"recurring,omitempty"`
+	ChannelID   string `json:"channelId,omitempty"`
+	ChannelType int    `json:"channelType,omitempty"`
+	// FromUID — see CronCreateBody.FromUID. On update an empty value PRESERVES
+	// the existing stored FromUID (so the GUI's "blank = preserve" edit-modal
+	// contract is honored at the wire layer, not silently rebound by the
+	// handler stamping owner over the peer uid).
+	FromUID  string `json:"fromUid,omitempty"`
+	FromName string `json:"fromName,omitempty"`
+	// Enabled, when non-nil, sets the task's Enabled flag. nil leaves it.
+	// Sent alone (no other field) by the GUI's per-row enable/disable toggle
+	// so the round-trip is minimal.
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // CronTaskInfo is a task rendered for clients (nextRun as ISO; no internal churn).
+// CreatedBy / FromUID are deliberately omitted — operator-internal auth state,
+// not for the renderer to display or echo back.
 type CronTaskInfo struct {
-	ID        string `json:"id"`
-	Schedule  string `json:"schedule"`
-	Recurring bool   `json:"recurring"`
-	Prompt    string `json:"prompt"`
-	NextRun   string `json:"nextRun,omitempty"` // RFC3339, empty when none
-	Enabled   bool   `json:"enabled"`
+	ID          string `json:"id"`
+	Schedule    string `json:"schedule"`
+	Recurring   bool   `json:"recurring"`
+	Prompt      string `json:"prompt"`
+	NextRun     string `json:"nextRun,omitempty"`     // RFC3339, empty when none
+	LastRun     string `json:"lastRun,omitempty"`     // RFC3339, empty when never fired
+	ChannelID   string `json:"channelId,omitempty"`   // empty for DM/Console targets
+	ChannelType int    `json:"channelType,omitempty"` // 1=DM, 2=Group, 3=Console
+	FromName    string `json:"fromName,omitempty"`
+	Enabled     bool   `json:"enabled"`
+}
+
+// CronListResponse is the cron.list response, tagged with the botId the
+// request was about. Mirrors SessionsListResponse — the wrapper carries
+// botId so the renderer can route the response to the right bot's local
+// schedules map even if the user has switched bots mid-fetch (the
+// envelope event handler has no other channel for that correlation).
+type CronListResponse struct {
+	BotID string         `json:"botId"`
+	Tasks []CronTaskInfo `json:"tasks"`
 }
 
 // Responses / event bodies (server → client)

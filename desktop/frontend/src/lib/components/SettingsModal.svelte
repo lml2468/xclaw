@@ -20,9 +20,10 @@
   import BasicInfoPane from "./BasicInfoPane.svelte";
   import OctoIntegrationPane from "./OctoIntegrationPane.svelte";
   import SkillsPane from "./SkillsPane.svelte";
+  import SchedulesPane from "./SchedulesPane.svelte";
   import WorkflowsPane from "./WorkflowsPane.svelte";
 
-  type TabKey = "basic" | "octo" | "skills" | "workflows";
+  type TabKey = "basic" | "octo" | "skills" | "workflows" | "schedules";
   let { onclose, initialTab = "basic" as TabKey, openWizardOnMount = false }:
     { onclose: () => void; initialTab?: TabKey; openWizardOnMount?: boolean } = $props();
 
@@ -164,6 +165,7 @@
     { key: "basic",     label: "基础信息" },
     { key: "octo",      label: "Octo 集成" },
     { key: "skills",    label: "技能" },
+    { key: "schedules", label: "定时任务" },
     { key: "workflows", label: "工作流" },
   ];
 
@@ -238,6 +240,8 @@
               <OctoIntegrationPane bind:bot={bots[sel]} botStatus={store.bots.find((x) => x.id === current.id) ?? null} ondirty={markDirty} {isPreview} />
             {:else if activeTab === "skills"}
               <SkillsPane botId={current.id} {isPreview} />
+            {:else if activeTab === "schedules"}
+              <SchedulesPane bind:bot={bots[sel]} ondirty={markDirty} {isPreview} />
             {:else}
               <WorkflowsPane botId={current.id} {isPreview} />
             {/if}

@@ -211,8 +211,3 @@ func octoInfoLabel() string {
 	}
 	return "octo-cli — not installed"
 }
-
-func fileExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
-}

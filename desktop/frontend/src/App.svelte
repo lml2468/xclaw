@@ -28,6 +28,10 @@
   const initialSettings = initialSettingsState();
   let showSettings = $state(initialSettings.show);
   let settingsTab = $state<SettingsTab>(initialSettings.tab);
+ // First-run path: Sidebar's "+ 新增 Bot" CTA flips this so SettingsModal
+ // opens the wizard immediately. Reset after every modal close to avoid
+ // re-triggering on subsequent gear-icon opens.
+  let settingsOpenWizard = $state(false);
   let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
@@ -89,8 +93,9 @@
 
  // Tray opens the unified Settings modal at a specific tab, or the standalone
  // Token Usage modal. Mutual exclusion: only one top-level modal at a time.
-  function openSettings(tab: SettingsTab = "basic") {
+  function openSettings(tab: SettingsTab = "basic", openWizard: boolean = false) {
     settingsTab = tab;
+    settingsOpenWizard = openWizard;
     showSettings = true;
     showUsage = false;
   }
@@ -127,6 +132,7 @@
 <div class="shell">
   <Sidebar
     onedit={() => openSettings("basic")}
+    onaddbot={() => openSettings("basic", true)}
     onusage={openUsage}
     onpalette={() => (showPalette = true)}
     {collapsed}
@@ -187,7 +193,7 @@
   />
 {/if}
 {#if showSettings}
-  <SettingsModal onclose={() => (showSettings = false)} initialTab={settingsTab} />
+  <SettingsModal onclose={() => { showSettings = false; settingsOpenWizard = false; }} initialTab={settingsTab} openWizardOnMount={settingsOpenWizard} />
 {/if}
 {#if showUsage}
   <TokenUsage onclose={() => (showUsage = false)} />

@@ -23,8 +23,8 @@
   import WorkflowsPane from "./WorkflowsPane.svelte";
 
   type TabKey = "basic" | "octo" | "skills" | "workflows";
-  let { onclose, initialTab = "basic" as TabKey }:
-    { onclose: () => void; initialTab?: TabKey } = $props();
+  let { onclose, initialTab = "basic" as TabKey, openWizardOnMount = false }:
+    { onclose: () => void; initialTab?: TabKey; openWizardOnMount?: boolean } = $props();
 
   const isPreview = new URLSearchParams(location.search).has("preview");
 
@@ -64,6 +64,10 @@
       bots = (await XClawService.LoadConfig()) ?? [];
       loadedIds = bots.map((b) => b.id);
       sel = 0;
+      // First-run path: the Sidebar opens this modal with openWizardOnMount
+      // when the roster is empty so the user lands directly on the Add-bot
+      // wizard rather than a blank settings shell with an easy-to-miss button.
+      if (openWizardOnMount && bots.length === 0) openWizard();
     } catch (e) {
       error = errMsg(e);
     }

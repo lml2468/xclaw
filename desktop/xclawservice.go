@@ -35,7 +35,6 @@ type XClawService struct {
 	mu           sync.Mutex
 	sup          *core.Supervisor
 	client       *control.Client
-	configMode   bool
 	shuttingDown bool
 	// epoch is a generation counter for daemon (re)connect cycles. RestartCore
 	// and each reconnect run bump it; an in-flight reconnect loop bails as soon
@@ -62,11 +61,14 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 	if err != nil {
 		return err
 	}
+	// Always run the daemon in multi-bot config mode. On first launch
+	// ~/.xclaw/config.json may not exist yet — the daemon tolerates that and
+	// serves an empty bots.list; the GUI then drives the user to the Add Bot
+	// wizard. We MUST pin the supervisor's ConfigPath now (never to "") so a
+	// later RestartCore after the first SaveConfig actually re-spawns with
+	// -config and picks up the freshly-written roster, instead of remaining
+	// stuck in the synthetic single-bot REPL fallback.
 	cfg := core.ConfigPath()
-	if !fileExists(cfg) {
-		cfg = "" // single-bot mode when no multi-bot config present
-	}
-	x.configMode = cfg != ""
 	x.sup = &core.Supervisor{BinPath: bin, SocketPath: core.SocketPath(), ConfigPath: cfg}
 	if err := x.sup.Start(); err != nil {
 		// Start may have spawned the daemon process before the socket-wait
@@ -81,7 +83,7 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 		x.sup.Stop()
 		return err
 	}
-	log.Printf("xclaw: bridge up (bin=%s socket=%s configMode=%t)", bin, x.sup.SocketPath, x.configMode)
+	log.Printf("xclaw: bridge up (bin=%s socket=%s)", bin, x.sup.SocketPath)
 	return nil
 }
 

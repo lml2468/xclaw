@@ -239,7 +239,10 @@ func readFile(path string) (File, error) {
 func resolveBots(global File, baseDir string) ([]Resolved, error) {
 	entries := global.Bots
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("no bots configured (add at least one entry to bots[])")
+		// Empty roster is a valid first-run state: the GUI mints config.json
+		// before the user adds any bots. The daemon stays up and serves an
+		// empty bots.list so the GUI can add bots over the control bus.
+		return nil, nil
 	}
 
 	var out []Resolved

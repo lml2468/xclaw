@@ -79,9 +79,9 @@ fi
 
 echo "▸ building the Wails app (.app bundle)…"
 if [[ -n "$universal" ]]; then
-  ( cd "$desktop" && wails3 task package:universal )
+  ( cd "$desktop" && wails3 task darwin:package:universal )
 else
-  ( cd "$desktop" && wails3 task package )
+  ( cd "$desktop" && wails3 task darwin:package )
 fi
 [[ -d "$bundle" ]] || { echo "✗ bundle not produced at $bundle"; exit 1; }
 

@@ -8,8 +8,8 @@
   import Avatar from "./Avatar.svelte";
   import XMark from "./XMark.svelte";
 
-  let { onedit, onusage, onpalette, collapsed = false }:
-    { onedit: () => void; onusage: () => void; onpalette: () => void; collapsed?: boolean } = $props();
+  let { onedit, onaddbot, onusage, onpalette, collapsed = false }:
+    { onedit: () => void; onaddbot: () => void; onusage: () => void; onpalette: () => void; collapsed?: boolean } = $props();
 
  // Relative timestamp for the sidebar's session list. The rest of the UI
  // is Chinese (sidebar headers 会话/BOTS, settings 编辑Bot/技能/工作流,
@@ -87,6 +87,16 @@
         <span class="nm">{b.id}</span>
       </button>
     {/each}
+    <!-- First-run onboarding: no bots yet → CTA that opens the Add-bot
+         wizard directly. Without this, a fresh install shows an empty
+         BOTS rail with no obvious next step (the wizard is buried two
+         clicks deep in Settings). -->
+    {#if store.bots.length === 0}
+      <button class="space addbot" onclick={onaddbot} title="新增 Bot">
+        <span class="tile addtile" aria-hidden="true">+</span>
+        <span class="nm">新增 Bot</span>
+      </button>
+    {/if}
   </div>
 
   <div class="lbl">会话</div>
@@ -173,6 +183,21 @@
   .status { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-faint); border: 2px solid var(--surface); }
   .status.on { background: var(--online); }
   .space .nm { font-size: 13px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+ /* First-run "+ 新增 Bot" CTA: dashed tile + soft accent so it reads as an
+    invitation, not as another existing space. Identical row metrics to the
+    real .space buttons so the rail doesn't shift after the first bot lands. */
+  .space.addbot { color: var(--ink-soft); }
+  .space.addbot:hover { color: var(--ink); }
+  .space.addbot .addtile {
+    width: 26px; height: 26px; flex: 0 0 26px;
+    display: grid; place-items: center;
+    border-radius: 6px; border: 1px dashed var(--hairline);
+    color: var(--ink-soft); font-size: 16px; font-weight: 500; line-height: 1;
+    background: color-mix(in srgb, var(--ink) 3%, transparent);
+  }
+  .space.addbot:hover .addtile { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 30%, transparent); }
+  .sidebar.collapsed .space.addbot .nm { display: none; }
 
   .tabs { flex: 1; overflow-y: auto; padding: 0 2px; display: flex; flex-direction: column; gap: 2px; }
   .empty { color: var(--ink-faint); font-size: 12px; padding: 12px; }

@@ -41,10 +41,12 @@
     if (isImeComposing(e)) return;
  // ⌘↩ / Ctrl-↩ is the canonical "force send" — bypass the Shift-Enter
  // newline path and send even if a newline character is present
- // (matches Slack/Discord/Linear muscle memory). Require
- // !shiftKey too so Shift+Cmd+Enter retains the prior insert-newline
- // behavior and doesn't silently force-send.
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+ // (matches Slack/Discord/Linear muscle memory). Require !shiftKey AND
+ // !altKey too so Shift+Cmd+Enter retains the prior insert-newline
+ // behavior, and so Cmd+Alt+Enter (operator holds Alt to type a
+ // newline and happens to also hold Cmd) doesn't silently force-send a
+ // half-drafted message.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       send();
       return;

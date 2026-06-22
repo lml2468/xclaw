@@ -341,6 +341,21 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
 		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
 	}
+	// Same panic-safety pattern as the cm defer below: a panic from
+	// connector.Run (or anywhere between here and the explicit chain at
+	// the bottom of runBot) would otherwise skip the connector + target
+	// drain, letting in-flight drainTurns workers + control-bus
+	// session.send goroutines continue calling gw.Handle on the store
+	// AFTER defer st.Close has fired. Both Waits are idempotent
+	// (turnsWG-zero is a no-op; WaitTurns flips a flag once), so the
+	// explicit chain on the happy path remains the source of truth for
+	// ordering. LIFO ordering on panic: cm.Stop+Wait (registered last,
+	// fires first) → connector.WaitTurns + target.turnsWG.Wait → st.Close
+	// (registered first, fires last) — matches the explicit chain.
+	defer func() {
+		connector.WaitTurns()
+		rtBot.target.turnsWG.Wait()
+	}()
 	if reg != nil {
 		reg.add(rtBot)
 	}

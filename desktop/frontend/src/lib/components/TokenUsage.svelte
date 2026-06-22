@@ -42,15 +42,21 @@
  // would re-run itself (update-depth loop). For "yesterday" we also need the
  // today-bound bucket to subtract, so fetch both.
   let loading = $state(false);
+ // Generation counter discards stale spinner-resets: rapid range clicks
+ // (today → 7d → today) let the first Promise to settle flip
+ // loading=false while a later fetch is still in flight, hiding the
+ // spinner prematurely. Only the freshest fetch may flip loading off.
+  let fetchGen = 0;
   async function fetchRange(k: RangeKey) {
     const bnd = boundsFor(k);
+    const gen = ++fetchGen;
     loading = true;
     try {
       const calls = [store.loadUsage(bnd.since)];
       if (k === "yesterday") calls.push(store.loadUsage(bnd.until)); // today's bucket, to subtract
       await Promise.all(calls);
     } finally {
-      loading = false;
+      if (gen === fetchGen) loading = false;
     }
   }
   onMount(() => fetchRange(range));

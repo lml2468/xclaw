@@ -158,7 +158,12 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") onclose();
+ // Don't close the file preview when another modal (SettingsModal,
+ // TokenUsage, Confirm) has handled Esc — its own listener calls
+ // preventDefault, and a second Esc handler closing the preview
+ // underneath the modal is a "wait, why did my file close" surprise
+ // when the operator just wanted to dismiss the modal.
+    if (e.key === "Escape" && !e.defaultPrevented) onclose();
   }
 </script>
 

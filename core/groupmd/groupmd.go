@@ -126,33 +126,30 @@ func (l *Loader) Load(channelID string) (string, bool) {
 }
 
 // loadFile loads "<dir>/<id>.md" with slug-pinning, mtime caching, a size cap,
-// and a group/world-writable refusal.
+// and a group/world-writable refusal. All filesystem I/O routes through
+// safepath (per CLAUDE.md's policy on path operations under a managed root)
+// so a symlinked intermediate cannot satisfy the stat-based perm/mtime check
+// while readCapped's SafeOpen rejects the symlink — that drift would silently
+// produce no content AND never invalidate the cache slot, leaving the prior
+// content live indefinitely. SafeLstat enforces dirfd-walk through every
+// parent component AND refuses a leaf symlink, matching readCapped's view.
 func (l *Loader) loadFile(id string) (string, bool) {
 	if !isSafeID(id) {
 		return "", false
 	}
 	path := filepath.Join(l.dir, id+".md")
+	leaf := id + ".md"
 
-	// Lstat (not Stat) so a symlink at `path` is observed as a symlink rather
-	// than transparently followed. A symlink whose target is mode 0600 root
-	// would otherwise pass the perm check below and inject whatever the
-	// attacker controls — defense-in-depth around the same trust boundary
-	// the perm check guards. Refuse symlinks outright; operators authoring
-	// groupConfigDir content should use regular files.
-	lst, lerr := os.Lstat(path)
-	if lerr == nil && lst.Mode()&os.ModeSymlink != 0 {
-		fmt.Fprintf(os.Stderr,
-			"[groupmd] refusing %s: file is a symlink. groupConfigDir must hold regular files only.\n",
-			path)
-		l.remember(path, cacheEntry{modTime: lst.ModTime().UnixNano(), size: lst.Size()})
+	st, err := safepath.SafeLstat(l.dir, leaf)
+	if err != nil {
+		// Missing, symlinked-leaf-refused, or symlinked-intermediate-refused —
+		// remember absence so a repeated miss is cheap; an unrelated load that
+		// later succeeds picks up the new content (SafeLstat runs every Load).
+		l.remember(path, cacheEntry{})
 		return "", false
 	}
-
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		// Missing/irregular: remember absence so a repeated miss is cheap, but a
-		// later create is still picked up (Stat runs on every Load).
-		l.remember(path, cacheEntry{})
+	if !st.Mode().IsRegular() {
+		l.remember(path, cacheEntry{modTime: st.ModTime().UnixNano(), size: st.Size()})
 		return "", false
 	}
 
@@ -179,7 +176,7 @@ func (l *Loader) loadFile(id string) (string, bool) {
 		return cached.content, cached.content != ""
 	}
 
-	content := readCapped(l.dir, id+".md")
+	content := readCapped(l.dir, leaf)
 	l.remember(path, cacheEntry{modTime: mod, size: st.Size(), content: content})
 	return content, content != ""
 }

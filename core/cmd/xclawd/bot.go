@@ -142,12 +142,25 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 
 	var srv *control.Server
 	reg := newBotRegistry(nil)
+	var stopControl func()
 	if controlSock != "" {
 		srv = control.NewServer(nil)
 		reg.srv = srv
 		srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
 		configureBusAuth(srv, authStdin) // arm the capability-token gate before serving
-		defer serveControlBus(srv, controlSock)()
+		cleanup := serveControlBus(srv, controlSock)
+		var once sync.Once
+		stopControl = func() { once.Do(cleanup) }
+		defer stopControl() // belt-and-suspenders: if the ctx-watcher misses it
+		// Close the control listener as soon as shutdown begins so no late
+		// session.send can land and race a per-bot target.turnsWG.Add(1)
+		// AFTER that bot's turnsWG.Wait has already returned 0 — which both
+		// violates the WaitGroup contract and would dispatch to a bot whose
+		// store has already been closed by runBot's deferred st.Close.
+		go func() {
+			<-ctx.Done()
+			stopControl()
+		}()
 	}
 
 	fmt.Printf("xclawd — config mode: %d bot(s)\n", len(bots))

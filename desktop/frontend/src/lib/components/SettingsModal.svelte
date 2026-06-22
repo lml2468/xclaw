@@ -221,7 +221,15 @@
 
           <div class="content" role="tabpanel" id={"tabpanel-" + activeTab} aria-labelledby={"tab-" + activeTab}>
             {#if activeTab === "basic"}
-              <BasicInfoPane bind:bot={bots[sel]} ondirty={markDirty} ondelete={deleteBot} />
+              {#key sel}
+                <!-- {#key sel} remounts BasicInfoPane on bot switch so its
+                     internal env-row state is rebuilt fresh from bot.env.
+                     Without this the pane has to react to bot.id changes
+                     reactively, which also fires when the operator edits
+                     the Bot ID input — wiping any uncommitted blank env
+                     row mid-keystroke. -->
+                <BasicInfoPane bind:bot={bots[sel]} ondirty={markDirty} ondelete={deleteBot} />
+              {/key}
             {:else if activeTab === "octo"}
               <OctoIntegrationPane bind:bot={bots[sel]} botStatus={store.bots.find((x) => x.id === current.id) ?? null} ondirty={markDirty} {isPreview} />
             {:else if activeTab === "skills"}

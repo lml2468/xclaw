@@ -19,12 +19,17 @@
   type Row = { id: number; k: string; v: string };
   let rowSeq = 0;
   function newRow(k: string, v: string): Row { rowSeq += 1; return { id: rowSeq, k, v }; }
-  let rows = $state<Row[]>([]);
-  $effect(() => {
-    bot.id; // re-seed on bot switch
-    const e = bot.env ?? {};
-    rows = Object.entries(e).filter(([k]) => !RESERVED_ENV_KEYS.has(k)).map(([k, v]) => newRow(k, String(v ?? "")));
-  });
+ // Seed once at mount. The parent (SettingsModal) wraps this pane in
+ // `{#key sel}` so a bot switch remounts the whole component — no
+ // reactive re-seed is needed, and reading bot.env reactively here
+ // would re-fire on every keystroke in the Bot ID input (bot.id is
+ // also a dep when read inside an effect with bot.env), silently
+ // wiping any uncommitted blank env row.
+  let rows = $state<Row[]>(
+    Object.entries(bot.env ?? {})
+      .filter(([k]) => !RESERVED_ENV_KEYS.has(k))
+      .map(([k, v]) => newRow(k, String(v ?? "")))
+  );
   function commitEnv() {
  // Preserve reserved keys (owned by other panes) by passing them through
  // unchanged; rebuild the free-form half from `rows`.

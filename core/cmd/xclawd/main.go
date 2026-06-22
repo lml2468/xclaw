@@ -138,11 +138,12 @@ func main() {
 		srv.SetHandler(handler)
 		configureBusAuth(srv, *authStdin) // arm the capability-token gate before serving
 		// Wait for control-bus turns to finish before defer st.Close fires.
-		// Defers are LIFO; the actual shutdown order is:
+		// Defers are LIFO; the actual single-bot shutdown chain is:
 		//   connector.WaitTurns (registered below)
-		//   → close control listener (serveControlBus)
+		//   → close control listener (serveControlBus) — refuses new commands
 		//   → wait for in-flight session.send (target.turnsWG, here)
-		//   → cron.Wait + drv.Close + st.Close (the earlier defers)
+		//   → signal stop()
+		//   → st.Close (the earliest defer at the top of main)
 		defer target.turnsWG.Wait()
 		defer serveControlBus(srv, *controlSock)()
 	}

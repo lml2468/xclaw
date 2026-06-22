@@ -43,11 +43,11 @@ func ExtractParentGroupNo(channelID string) string {
 	return channelID
 }
 
-// ExtractThreadShortID returns the thread short id of channelID, or "" when
+// extractThreadShortID returns the thread short id of channelID, or "" when
 // channelID is not a thread ref (no separator) or has an empty short-id portion
 // ("<groupNo>____"). Mirrors group-md.ts extractThreadShortId, collapsing its
 // null/"" distinction to "" since Go callers test for emptiness either way.
-func ExtractThreadShortID(channelID string) string {
+func extractThreadShortID(channelID string) string {
 	i := strings.Index(channelID, ThreadIDSeparator)
 	if i < 0 {
 		return ""
@@ -65,11 +65,11 @@ func ExtractThreadShortID(channelID string) string {
 // aimed. The returned (channelID, rerouted) is the channel to actually send to.
 //
 // Reroute fires only when ALL hold (mirroring actions.ts):
-//   - currentChannelID is a thread ref (bot is in a thread session), and
-//   - targetChannelID is NOT itself a thread ref (an explicit thread target
-//     always wins — never overridden), and
-//   - targetChannelID equals the parent group_no of the current thread (the
-//     bare-parent mistake). Cross-group sends are left untouched.
+// - currentChannelID is a thread ref (bot is in a thread session), and
+// - targetChannelID is NOT itself a thread ref (an explicit thread target
+// always wins — never overridden), and
+// - targetChannelID equals the parent group_no of the current thread (the
+// bare-parent mistake). Cross-group sends are left untouched.
 //
 // Any explicit thread target, or a target in a different group, passes through
 // unchanged.

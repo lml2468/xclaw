@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safety"
 	"github.com/lml2468/xclaw/core/store"
 )
 
@@ -22,6 +25,13 @@ type botTarget struct {
 	store   *store.Store
 	secrets *secretStore
 	cron    *cron.Manager // nil when agent.cron is disabled for this bot
+
+	// turnsWG tracks every in-flight session.send goroutine so the daemon
+	// can wait for them before closing the store. The Octo connector tracks
+	// its own queue via Connector.WaitTurns; this is the symmetric guard for
+	// turns initiated over the control bus (Console GUI). Without it,
+	// SIGTERM races the goroutine into the store-close path.
+	turnsWG sync.WaitGroup
 }
 
 // handlerDeps adapts single-bot vs multi-bot wiring to one command dispatcher.
@@ -63,13 +73,19 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
-			// Never log b.Value.
+			// Never log b.Value, and never bubble the underlying secret-store
+			// error verbatim to the control bus — a future keyring lib that
+			// includes the value in its error message would otherwise leak
+			// the secret to the connected GUI. Log the real cause server-side
+			// only; return a neutral error to the caller.
 			if b.Clear {
 				if err := t.secrets.Clear(b.Kind); err != nil {
-					return nil, err
+					log.Printf("[secret] clear %s/%s: %v", b.BotID, b.Kind, err)
+					return nil, fmt.Errorf("secret.inject clear failed for %s/%s", b.BotID, b.Kind)
 				}
 			} else if err := t.secrets.Set(b.Kind, b.Value); err != nil {
-				return nil, err
+				log.Printf("[secret] set %s/%s: %v", b.BotID, b.Kind, err)
+				return nil, fmt.Errorf("secret.inject set failed for %s/%s", b.BotID, b.Kind)
 			}
 			return control.OKBody{OK: true}, nil
 
@@ -85,7 +101,9 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
+			t.turnsWG.Add(1)
 			go func() {
+				defer t.turnsWG.Done()
 				d, herr := t.gateway.Handle(ctx, router.InboundMessage{
 					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: b.Text,
 				})
@@ -228,7 +246,13 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				ChannelID:   b.ChannelID,
 				ChannelType: cron.ChannelKind(channelTypeFor(b.ChannelType, b.ChannelID)),
 				FromUID:     owner,
-				FromName:    b.FromName,
+				// Sanitize at the store boundary so a malicious FromName
+				// (control chars, bidi overrides, bracket forgery) can't
+				// later resurface as part of a future prompt rendering
+				// (Sec L2: defense in depth — the prompt path
+				// already sanitizes via groupctx, but the on-disk task
+				// shouldn't carry the unsafe form forward).
+				FromName: safety.SanitizeDisplayName(b.FromName, owner),
 			}
 			task, err := t.cron.Create(cron.CreateParams{
 				Schedule:   b.Schedule,
@@ -330,7 +354,7 @@ func channelTypeFor(explicit int, channelID string) int {
 }
 
 // cronTaskInfo projects a stored cron task onto the wire type (nextRun rendered
-// as RFC3339, mirroring cron-tool.ts summarize()).
+// as RFC3339, mirroring cron-tool.ts summarize).
 func cronTaskInfo(t cron.Task) control.CronTaskInfo {
 	next := ""
 	if t.NextRun != 0 {

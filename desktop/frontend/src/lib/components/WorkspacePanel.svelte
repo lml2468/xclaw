@@ -1,6 +1,7 @@
 <script lang="ts">
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import type { Node } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/workspace/models";
+  import { errMsg } from "../errors";
 
   let { botId, sessionKey, activePath, onopen, onclose }: {
     botId: string | null;
@@ -17,7 +18,7 @@
   let error = $state("");
   let loading = $state(false);
 
-  // Preview-mode mock so the layout can be screenshotted without a daemon.
+ // Preview-mode mock so the layout can be screenshotted without a daemon.
   const mockTree = {
     name: "workspace", path: "", isDir: true,
     children: [
@@ -31,24 +32,38 @@
     ],
   } as unknown as Node;
 
-  // Refetch whenever the selected session changes (covers open + switch).
+ // Refetch whenever the selected session changes (covers open + switch).
   $effect(() => {
     const b = botId, k = sessionKey;
     expanded = new Set();
     loadTree(b, k);
   });
 
+ // Generation counter discards stale fetches: switching sessions twice
+ // quickly used to leave the slower (older) WorkspaceTree response
+ // overwriting `tree` with the wrong session's files.
+  let loadGen = 0;
   async function loadTree(b: string | null, k: string | null) {
+    const gen = ++loadGen;
     error = "";
-    if (!b || !k) { tree = null; return; }
+    if (!b || !k) {
+ // Switching back to a selection-less state mid-fetch: clear the
+ // tree AND drop the spinner. Previously the early-return left
+ // `loading=true` from a still-running prior fetch — its finally
+ // skipped the reset (gen mismatch) and the spinner spun forever
+ // until the next non-null load.
+      tree = null;
+      loading = false;
+      return;
+    }
     loading = true;
     try {
-      tree = isPreview ? mockTree : await XClawService.WorkspaceTree(b, k);
-    } catch (e: any) {
-      error = String(e?.message ?? e);
-      tree = null;
+      const t = isPreview ? mockTree : await XClawService.WorkspaceTree(b, k);
+      if (gen === loadGen) tree = t;
+    } catch (e) {
+      if (gen === loadGen) { error = errMsg(e); tree = null; }
     } finally {
-      loading = false;
+      if (gen === loadGen) loading = false;
     }
   }
 
@@ -58,7 +73,7 @@
     expanded = next; // Svelte 5: reassign, don't mutate in place
   }
 
-  // Generated children type is (Node | null)[]; narrow to non-null Node[].
+ // Generated children type is (Node | null)[]; narrow to non-null Node[].
   function kids(n: Node | null): Node[] {
     return ((n?.children ?? []) as (Node | null)[]).filter((c): c is Node => c != null);
   }
@@ -113,6 +128,9 @@
       {#each kids(node) as c (c.path)}
         {@render row(c, depth + 1)}
       {/each}
+      {#if node.children.length === 0}
+        <div class="empty-leaf" style="padding-left:{8 + (depth + 1) * 14}px">空目录</div>
+      {/if}
     {/if}
   {:else}
     <button class="node file" class:sel={node.path === activePath} style="padding-left:{8 + depth * 14 + 14}px" onclick={() => onopen(node.path)}>
@@ -150,7 +168,7 @@
   .retry:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
   .retry:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
-  /* Loading skeleton — shimmering placeholder rows until the tree lands. */
+ /* Loading skeleton — shimmering placeholder rows until the tree lands. */
   .skel { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
   .skel-row { height: 12px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 6%, transparent) 25%, color-mix(in srgb, var(--ink) 11%, transparent) 37%, color-mix(in srgb, var(--ink) 6%, transparent) 63%); background-size: 280% 100%; animation: shimmer 1.4s ease-in-out infinite; }
   @keyframes shimmer { 0% { background-position: 180% 0; } 100% { background-position: -120% 0; } }
@@ -173,6 +191,7 @@
   .ico svg { width: 15px; height: 15px; }
   .node.file.sel .ico { color: var(--accent-strong, var(--accent)); }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-leaf { font-size: 12px; color: var(--ink-faint); padding: 4px 8px; font-style: italic; }
   @media (prefers-reduced-motion: reduce) {
     .skel-row { animation: none; }
     .icon.spin svg { animation-duration: 1.6s; }

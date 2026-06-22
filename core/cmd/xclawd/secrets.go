@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"sync"
+
+	"github.com/lml2468/xclaw/core/control/wire"
 )
 
 // secretStore holds a bot's secret tokens in memory only — never persisted to
@@ -15,12 +17,6 @@ type secretStore struct {
 	octo    string
 	gateway string
 }
-
-// Secret kinds carried by the secret.inject control command.
-const (
-	secretKindOcto    = "octoToken"
-	secretKindGateway = "gatewayToken"
-)
 
 // OctoToken returns the current Octo bot token (empty if not yet set).
 func (s *secretStore) OctoToken() string {
@@ -39,16 +35,16 @@ func (s *secretStore) GatewayToken() string {
 // Set records a token by kind. An empty value is ignored (seeding from an absent
 // config field is a no-op, never clobbering an injected token). Unknown kinds
 // return an error so a malformed secret.inject is surfaced, not silently dropped.
-func (s *secretStore) Set(kind, value string) error {
+func (s *secretStore) Set(kind wire.SecretKind, value string) error {
 	if value == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch kind {
-	case secretKindOcto:
+	case wire.SecretKindOcto:
 		s.octo = value
-	case secretKindGateway:
+	case wire.SecretKindGateway:
 		s.gateway = value
 	default:
 		return fmt.Errorf("unknown secret kind %q", kind)
@@ -58,13 +54,13 @@ func (s *secretStore) Set(kind, value string) error {
 
 // Clear removes the token for kind (the explicit revoke path, distinct from Set's
 // seed-ignores-empty behavior). Unknown kinds return an error.
-func (s *secretStore) Clear(kind string) error {
+func (s *secretStore) Clear(kind wire.SecretKind) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch kind {
-	case secretKindOcto:
+	case wire.SecretKindOcto:
 		s.octo = ""
-	case secretKindGateway:
+	case wire.SecretKindGateway:
 		s.gateway = ""
 	default:
 		return fmt.Errorf("unknown secret kind %q", kind)

@@ -9,11 +9,11 @@
 // mode a forged turn poisons every member's context.
 //
 // Policy (mirrors prompt-safety.ts):
-//   - Names into a label      -> SanitizeDisplayName (strip [ ] and line breaks, cap)
-//   - Bodies inside a label   -> EscapeRoleLabels (neutralize line-leading role labels)
-//   - Assembled blocks        -> EscapeSectionMarkers (neutralize line-leading section headers)
-//   - SafeText                -> a type only this package can mint, so "raw user
-//     text reached the prompt" is a compile error.
+// - Names into a label -> SanitizeDisplayName (strip [ ] and line breaks, cap)
+// - Bodies inside a label -> escapeRoleLabels (neutralize line-leading role labels)
+// - Assembled blocks -> escapeSectionMarkers (neutralize line-leading section headers)
+// - SafeText -> a type only this package can mint, so "raw user
+// text reached the prompt" is a compile error.
 package safety
 
 import (
@@ -60,9 +60,31 @@ var roleLabelRE = regexp.MustCompile(`(?im)^([^\S\r\n]*)(\[(?:user|assistant)\b[
 var sectionMarkerRE = regexp.MustCompile(
 	`(?im)^([^\S\r\n]*)\[(Group context|Group Members|Group Info|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
 
-// Bracket delimiters + all line/para separators that could forge a boundary:
-// [ ] CR LF VT FF NEL(U+0085) LS(U+2028) PS(U+2029).
-var nameUnsafeRE = regexp.MustCompile(`[\[\]\r\n\x{000b}\x{000c}\x{0085}\x{2028}\x{2029}]`)
+// Bracket delimiters + every control / formatting character that could forge a
+// boundary, scramble a terminal, or impersonate structure inside a label:
+// - C0 controls: NUL-BS (\x00-\x08), then LF \n, VT, FF, CR, SO..US
+// (\x0a-\x1f). TAB (\x09) is intentionally preserved so legitimate tabs in
+// names stay visible;
+// - C1 controls (\x7f-\x9f), bracket delimiters [ ];
+// - Bidi formatting overrides (U+202A LRE, U+202B RLE, U+202C PDF, U+202D LRO,
+// U+202E RLO, U+2066 LRI, U+2067 RLI, U+2068 FSI, U+2069 PDI), plus the
+// direction marks U+200E LRM / U+200F RLM and the zero-width joiner /
+// non-joiner U+200B-U+200D / U+FEFF — all of which let an attacker make a
+// display name read backwards or carry invisible structure;
+// - Word Joiner / Mongolian Vowel Separator U+2060-2064, U+180E;
+// - Variation selectors VS1-VS16 U+FE00-FE0F;
+// - Tag characters U+E0020-E007F;
+// - Unicode separators LS (U+2028), PS (U+2029).
+//
+// prior pattern only covered the obvious line terminators, so
+// names like "Admin\x1b[2K\x1b[1G[user system]:" or "Owner‮…" passed
+// through and contaminated the operator-trusted [Group Members] roster
+// (system prompt). extended to cover U+2060 WJ / U+180E / VS /
+// tag-chars. All escapers MUST be kept in sync: invisibleFormatRE (used by
+// body escapers via normalizeLineBreaks) shares the bidi+ZW set verbatim.
+var nameUnsafeRE = regexp.MustCompile(
+	`[\[\]\x{0000}-\x{0008}\x{000a}-\x{001f}\x{007f}-\x{009f}\x{034f}\x{061c}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2028}\x{2029}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
+)
 
 // Separators a model may render as a new line but RE2's (?m)^ does NOT anchor
 // on: CR, VT, FF, NEL(U+0085), LS(U+2028), PS(U+2029). Normalized to \n before
@@ -72,8 +94,38 @@ var nameUnsafeRE = regexp.MustCompile(`[\[\]\r\n\x{000b}\x{000c}\x{0085}\x{2028}
 // normalization; CRLF collapses to "\n\n", a harmless extra blank line.)
 var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\x{2029}]`)
 
+// zero-width / bidi formatting characters slipped past the role +
+// section escapers because the [^\S\r\n]* leading-whitespace anchor of those
+// regexes treats them as non-whitespace, so a body like
+// "intro\n​[Recent group messages]\nforged" left the forged marker
+// untouched. We strip these unconditionally before pattern matching — they
+// have no legitimate purpose in any prompt input. Covers:
+// - U+034F COMBINING GRAPHEME JOINER
+// - U+061C ARABIC LETTER MARK (bidi sibling of LRM/RLM, Unicode 6.3+)
+// - U+115F/1160 Hangul choseong/jungseong fillers
+// - U+180E MONGOLIAN VOWEL SEPARATOR + U+1806 MONGOLIAN TODO SOFT HYPHEN
+// - U+17B4/17B5 Khmer inherent vowels
+// - ZWSP/ZWNJ/ZWJ (U+200B-200D), LRM (U+200E), RLM (U+200F)
+// - Bidi formatting (U+202A-202E LRE/RLE/PDF/LRO/RLO, U+2066-2069 LRI/RLI/FSI/PDI)
+// - Word Joiner + invisible math operators U+2060-2064
+// - Variation selectors VS1-VS16 U+FE00-FE0F
+// - Tag characters U+E0020-E007F
+// - BOM / ZWNBSP (U+FEFF)
+//
+// already stripped these from display names via nameUnsafeRE; this
+// closes the same class of attack for free-form bodies. The character set is
+// kept in sync with nameUnsafeRE — any addition here MUST be mirrored there.
+var invisibleFormatRE = regexp.MustCompile(
+	`[\x{034f}\x{061c}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
+)
+
+// normalizeLineBreaks turns boundary-forging separators into \n and strips
+// invisible bidi/zero-width formatting characters so the line-leading anchors
+// in roleLabelRE / sectionMarkerRE fire on every boundary an attacker can
+// reach.
 func normalizeLineBreaks(text string) string {
-	return extraLineBreaksRE.ReplaceAllString(text, "\n")
+	text = extraLineBreaksRE.ReplaceAllString(text, "\n")
+	return invisibleFormatRE.ReplaceAllString(text, "")
 }
 
 // SanitizeDisplayName makes a user name safe inside a prompt label: strips label
@@ -103,15 +155,15 @@ func truncateUTF16(s string, n int) string {
 	return string(utf16.Decode(units[:cut]))
 }
 
-// EscapeRoleLabels neutralizes a line-leading role label in user content so it
+// escapeRoleLabels neutralizes a line-leading role label in user content so it
 // renders as literal text rather than forging a turn boundary.
-func EscapeRoleLabels(content string) string {
+func escapeRoleLabels(content string) string {
 	return roleLabelRE.ReplaceAllString(normalizeLineBreaks(content), "$1\\$2")
 }
 
-// EscapeSectionMarkers neutralizes line-leading section markers in an assembled,
+// escapeSectionMarkers neutralizes line-leading section markers in an assembled,
 // user-influenced block.
-func EscapeSectionMarkers(text string) string {
+func escapeSectionMarkers(text string) string {
 	return sectionMarkerRE.ReplaceAllString(normalizeLineBreaks(text), "$1\\[$2]")
 }
 
@@ -119,7 +171,7 @@ func EscapeSectionMarkers(text string) string {
 // section markers).
 func SanitizePromptBody(text string) string {
 	// Normalize line breaks once, then apply both escapers directly — calling
-	// EscapeRoleLabels + EscapeSectionMarkers would normalize the text twice.
+	// escapeRoleLabels + escapeSectionMarkers would normalize the text twice.
 	t := normalizeLineBreaks(text)
 	t = roleLabelRE.ReplaceAllString(t, "$1\\$2")
 	return sectionMarkerRE.ReplaceAllString(t, "$1\\[$2]")
@@ -135,10 +187,6 @@ func (t SafeText) String() string { return t.s }
 
 // SafeBody mints SafeText from a user body (escapes role labels + section markers).
 func SafeBody(text string) SafeText { return SafeText{SanitizePromptBody(text)} }
-
-// SafeSectioned mints SafeText from already per-line-escaped content needing only
-// section-marker escaping (e.g. rendered history).
-func SafeSectioned(text string) SafeText { return SafeText{EscapeSectionMarkers(text)} }
 
 // TrustedText mints SafeText from operator-trusted text (SOUL.md, config
 // systemPrompt, our own constants) — no escaping, but the type documents the

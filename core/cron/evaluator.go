@@ -9,11 +9,11 @@
 // This file is the evaluator: pure schedule math, no I/O (port of
 // cron-evaluator.ts). Two schedule forms are supported:
 //
-//   - 5-field cron "minute hour dom month dow" — each field is `*`, an integer,
-//     `*`+`/step`, an `a-b` range, or a comma list of those. Standard Unix
-//     semantics: dom/dow are OR'd when BOTH are restricted (fires when either
-//     matches), matching cron's historical behavior.
-//   - one-shot ISO datetime "2026-06-09T09:00:00Z" — fires once, then never.
+// - 5-field cron "minute hour dom month dow" — each field is `*`, an integer,
+// `*`+`/step`, an `a-b` range, or a comma list of those. Standard Unix
+// semantics: dom/dow are OR'd when BOTH are restricted (fires when either
+// matches), matching cron's historical behavior.
+// - one-shot ISO datetime "2026-06-09T09:00:00Z" — fires once, then never.
 //
 // TIMEZONE: cron fields match against the injected clock's LOCAL time, so
 // "0 9 * * *" means 9am in the server's timezone. One-shot ISO datetimes are
@@ -125,7 +125,7 @@ func parseCronExpression(expr string) *parsedCron {
 		return nil
 	}
 	sets := make([]map[int]bool, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		set := parseField(fields[i], fieldRanges[i].min, fieldRanges[i].max)
 		if set == nil {
 			return nil
@@ -241,13 +241,20 @@ const maxScanMinutes = 366 * 24 * 60
 // when there is none (a past/invalid one-shot, or an impossible cron). Mirrors
 // computeNextRun in cron-evaluator.ts.
 //
-//   - one-shot ISO: its instant if still in the future, else none.
-//   - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
-//
-// recurring is accepted for symmetry with the store; cron exprs are inherently
-// recurring and the flag does not affect the computation.
-func computeNextRun(schedule string, recurring bool, from time.Time) (time.Time, bool) {
-	_ = recurring
+// - one-shot ISO: its instant if still in the future, else none.
+// - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
+func computeNextRun(schedule string, from time.Time) (time.Time, bool) {
+	return computeNextRunSkipping(schedule, from, "")
+}
+
+// computeNextRunSkipping is computeNextRun plus a "skip this wall-clock minute"
+// guard. Used by the scheduler after firing a recurring task to skip the
+// just-fired wall-clock minute — without which a DST fall-back ambiguous hour
+// would fire the same minute twice (the second absolute-time pass through
+// wall-01:30 would match the same cron expr that just fired at the first).
+// skipKey is a "YYYY-MM-DDTHH:MM" formatted in the cursor's local zone, or ""
+// to disable the skip (the create-path call).
+func computeNextRunSkipping(schedule string, from time.Time, skipKey string) (time.Time, bool) {
 	if isOneShotSchedule(schedule) {
 		t, ok := parseOneShot(schedule)
 		if !ok {
@@ -264,13 +271,20 @@ func computeNextRun(schedule string, recurring bool, from time.Time) (time.Time,
 	}
 	// Start at the next whole minute boundary after from, in the clock's zone.
 	cursor := from.Truncate(time.Minute).Add(time.Minute)
-	for i := 0; i < maxScanMinutes; i++ {
-		if parsed.matches(cursor) {
+	for range maxScanMinutes {
+		if parsed.matches(cursor) && fireKey(cursor) != skipKey {
 			return cursor, true
 		}
 		cursor = cursor.Add(time.Minute)
 	}
 	return time.Time{}, false // impossible schedule
+}
+
+// fireKey returns the wall-clock "YYYY-MM-DDTHH:MM" identifying a fire
+// occurrence. Two distinct absolute times can share a key during DST fall-back;
+// that's precisely the ambiguity computeNextRunSkipping is built to dedup.
+func fireKey(t time.Time) string {
+	return t.Format("2006-01-02T15:04")
 }
 
 // ValidateSchedule reports whether schedule is a parseable cron expr or a

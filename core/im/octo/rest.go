@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -79,13 +80,83 @@ func (c *RESTClient) Register(ctx context.Context, forceRefresh bool) (RegisterR
 	if out.RobotID == "" || out.IMToken == "" || out.WSURL == "" {
 		return RegisterResponse{}, fmt.Errorf("register: incomplete response %+v", out)
 	}
+	// SECURITY: validate the server-supplied ws_url BEFORE the connector dials
+	// it. Without this, a compromised or MitM'd octo-server could return
+	// ws://attacker/ — accepted as plaintext + arbitrary host by the WS
+	// dialer, leaking the bot's IMToken in the CONNECT frame to a host the
+	// operator never trusted. Policy:
+	// - apiURL is https → WSURL must be wss (no plaintext downgrade)
+	// - apiURL is http → only loopback apiURL allowed by config.IsAllowedURL,
+	// so ws://loopback is fine (dev mode)
+	// - host must match apiURL's hostname exactly (no sibling-subdomain
+	// hop). Stricter than a same-eTLD+1 check; legitimate deployments
+	// terminate WS on the same hostname as REST.
+	if err := validateWSURL(out.WSURL, c.apiURL); err != nil {
+		return RegisterResponse{}, fmt.Errorf("register: %w", err)
+	}
 	return out, nil
+}
+
+// validateWSURL enforces scheme + host equality between the server-returned
+// WSURL and the operator-configured apiURL. See Register's SECURITY comment.
+func validateWSURL(rawWSURL, rawAPIURL string) error {
+	wu, err := url.Parse(rawWSURL)
+	if err != nil {
+		return fmt.Errorf("ws_url parse: %w", err)
+	}
+	au, err := url.Parse(rawAPIURL)
+	if err != nil {
+		return fmt.Errorf("api_url parse: %w", err)
+	}
+	switch wu.Scheme {
+	case "wss":
+		// always acceptable
+	case "ws":
+		// only when the configured api_url is plaintext (dev / loopback)
+		if au.Scheme != "http" {
+			return fmt.Errorf("ws_url uses plaintext ws:// but api_url is %s://", au.Scheme)
+		}
+	default:
+		return fmt.Errorf("ws_url has unsupported scheme %q", wu.Scheme)
+	}
+	if wu.Hostname() == "" {
+		return fmt.Errorf("ws_url has no host")
+	}
+	// EqualFold so a case-drift between apiURL ("api.example") and the
+	// server-returned ws_url ("API.example") doesn't false-positive on
+	// legitimate deployments; DNS itself is case-insensitive.
+	if !strings.EqualFold(wu.Hostname(), au.Hostname()) {
+		return fmt.Errorf("ws_url host %q does not match api_url host %q (cross-host redirect of credentialed handshake refused)", wu.Hostname(), au.Hostname())
+	}
+	// Port equality (with scheme-default fallback): without this, a compromised
+	// server could return wss://api.example:9443/ws when apiURL is
+	// https://api.example (port 443) and the handshake would proceed against an
+	// attacker-controlled port on the same hostname. Defense-in-depth.
+	if portFor(wu) != portFor(au) {
+		return fmt.Errorf("ws_url port %q does not match api_url port %q (credentialed handshake refused)", portFor(wu), portFor(au))
+	}
+	return nil
+}
+
+// portFor returns u's explicit port, or the scheme default (443 for https/wss,
+// 80 for http/ws). Empty Port means "use the default" per net/url.
+func portFor(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "https", "wss":
+		return "443"
+	case "http", "ws":
+		return "80"
+	}
+	return ""
 }
 
 // SendMessageResult mirrors SendMessageResult (types.ts). message_id is decoded
 // via flexString because the octo IM server sometimes returns it as a JSON
 // number (uint64) and sometimes as a string — a strict string decode used to
-// fail with "cannot unmarshal number ... into string", and our caller treated
+// fail with "cannot unmarshal number... into string", and our caller treated
 // the error as a transient send failure → retried with a fresh client_msg_no
 // → the user received two copies of every reply (#bug-2025-06).
 type SendMessageResult struct {
@@ -129,7 +200,31 @@ func (c *RESTClient) SendText(ctx context.Context, channelID string, channelType
 // relay). When onBehalfOf is non-empty, the server presents the message as the
 // grantor speaking (api-fetch.ts sendMessage `on_behalf_of`). An empty string
 // is identical to SendText.
+//
+// Generates a fresh client_msg_no per call — appropriate for a single,
+// one-shot send. Callers that retry MUST instead route through
+// SendTextAsWithMsgNo with a stable id, otherwise a network blip after the
+// server commits but before the response reaches us produces a duplicate
+// delivery (octo-server dedup is keyed on client_msg_no).
 func (c *RESTClient) SendTextAs(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionEntities []MentionEntity, mentionAll bool, onBehalfOf string) (SendMessageResult, error) {
+	return c.SendTextAsWithMsgNo(ctx, channelID, channelType, content, mentionUIDs, mentionEntities, mentionAll, onBehalfOf, uuid.NewString())
+}
+
+// SendTextAsWithMsgNo is SendTextAs with a caller-supplied client_msg_no for
+// idempotent retry. Server dedup is keyed on this id, so a retry MUST reuse
+// the original id — otherwise a transient post-commit failure (TCP reset,
+// 502, timeout that hits AFTER the server committed but BEFORE the response
+// landed) produces a successful retry with a new id and the user sees the
+// message twice. clientMsgNo MUST be non-empty.
+func (c *RESTClient) SendTextAsWithMsgNo(ctx context.Context, channelID string, channelType ChannelType, content string, mentionUIDs []string, mentionEntities []MentionEntity, mentionAll bool, onBehalfOf, clientMsgNo string) (SendMessageResult, error) {
+	// Lock the F1 fix in the type system rather than in commentary: a caller
+	// passing "" would re-introduce the duplicate-IM-on-retry hazard silently
+	// (octo-server's dedup is keyed on this field; an empty key collides
+	// with every other empty-key send and the dedup behavior becomes
+	// undefined). Refuse here so the regression is loud.
+	if clientMsgNo == "" {
+		return SendMessageResult{}, fmt.Errorf("octo: SendTextAsWithMsgNo requires a non-empty clientMsgNo (server dedup key)")
+	}
 	payload := map[string]any{
 		"type":    int(MsgText),
 		"content": content,
@@ -151,7 +246,7 @@ func (c *RESTClient) SendTextAs(ctx context.Context, channelID string, channelTy
 		"channel_id":    channelID,
 		"channel_type":  int(channelType),
 		"payload":       payload,
-		"client_msg_no": uuid.NewString(),
+		"client_msg_no": clientMsgNo,
 	}
 	if onBehalfOf != "" {
 		body["on_behalf_of"] = onBehalfOf
@@ -264,13 +359,17 @@ func (c *RESTClient) GetChannelMessages(ctx context.Context, channelID string, c
 			if json.Unmarshal(m.Payload, &s) == nil {
 				if len(s) <= maxHistoricalPayloadBase64Len {
 					if dec, derr := base64.StdEncoding.DecodeString(s); derr == nil {
-						_ = json.Unmarshal(dec, &pl) // leave pl zero on failure
+						if err := json.Unmarshal(dec, &pl); err != nil {
+							fmt.Fprintf(os.Stderr, "[octo] getChannelMessages base64-payload JSON decode: %v\n", err)
+						}
 					}
 				} else {
 					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages dropping oversized payload (%d base64 chars)\n", len(s))
 				}
 			} else {
-				_ = json.Unmarshal(m.Payload, &pl) // object payload
+				if err := json.Unmarshal(m.Payload, &pl); err != nil {
+					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages object-payload JSON decode: %v\n", err)
+				}
 			}
 		}
 		hm := HistoricalMessage{

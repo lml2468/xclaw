@@ -14,14 +14,14 @@ import (
 // cron.*, history + the broadcast event stream), so it must not be drivable by
 // any local process. Two layers guard it:
 //
-//   - chmod 0600 — defense in depth. The kernel enforces socket-connect perms on
-//     Linux, so a different user is denied connect(); macOS does NOT enforce them,
-//     hence the second layer.
-//   - peer-credential check (peerCredListener) — authoritative. Every accepted
-//     connection's peer OS-uid is read from the kernel and must equal the daemon's
-//     effective uid; a cross-uid process is dropped at accept. This does not rely
-//     on filesystem perms, so it holds even with the socket in a world-writable
-//     /tmp and on platforms that ignore socket perms.
+// - chmod 0600 — defense in depth. The kernel enforces socket-connect perms on
+// Linux, so a different user is denied connect; macOS does NOT enforce them,
+// hence the second layer.
+// - peer-credential check (peerCredListener) — authoritative. Every accepted
+// connection's peer OS-uid is read from the kernel and must equal the daemon's
+// effective uid; a cross-uid process is dropped at accept. This does not rely
+// on filesystem perms, so it holds even with the socket in a world-writable
+// /tmp and on platforms that ignore socket perms.
 //
 // On platforms without peer-cred support (Windows AF_UNIX) the check is skipped
 // and the socket relies on filesystem ACLs alone.
@@ -52,6 +52,11 @@ func serveControlBus(srv *control.Server, path string) (cleanup func()) {
 	}()
 	fmt.Printf("control bus listening on %s\n", path)
 	return func() {
+		// Flip the server's `closed` flag first so the next Accept returns
+		// nil instead of bubbling "use of closed network connection" up to
+		// the operator's stderr on every graceful shutdown (cosmetic but it
+		// muddied real failures).
+		srv.Close()
 		_ = ln.Close()
 		_ = os.Remove(path)
 	}

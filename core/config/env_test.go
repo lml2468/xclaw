@@ -42,8 +42,10 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 		t.Fatalf("per-bot should override SHARED, got %q", env["SHARED"])
 	}
 
-	// claude driver → ANTHROPIC_* names.
-	de := bots[0].DriverEnv()
+	// claude driver → ANTHROPIC_* names. Pass the config-file gateway token to
+	// emulate the headless path (cmd/xclawd injects sec.GatewayToken in -config
+	// mode; either feeds the same field through).
+	de := bots[0].DriverEnv(bots[0].Agent.GatewayToken, "")
 	joined := strings.Join(de, "\n")
 	for _, want := range []string{
 		"SHARED_DEFAULT=global", "OCTO_BOT_ID=alpha-bot", "GH_TOKEN=ghp_x", "SHARED=perbot",
@@ -62,7 +64,7 @@ func TestDriverEnvEmptyWhenUnset(t *testing.T) {
 	bots, _ := Load(cfg)
 	// With no gateway URL/token/env, the only DriverEnv entry is the isolation
 	// var (CLAUDE_CONFIG_DIR → the per-bot config root), on by default.
-	env := bots[0].DriverEnv()
+	env := bots[0].DriverEnv("", "")
 	if len(env) != 1 || env[0] != "CLAUDE_CONFIG_DIR="+bots[0].ClaudeConfigDir {
 		t.Fatalf("expected only CLAUDE_CONFIG_DIR, got %v", env)
 	}
@@ -73,14 +75,16 @@ func TestDriverEnvInheritUserConfigOptsOut(t *testing.T) {
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{"bots":[{"id":"alpha","octoToken":"t","agent":{"inheritUserConfig":true}}]}`)
 	bots, _ := Load(cfg)
-	if len(bots[0].DriverEnv()) != 0 {
-		t.Fatalf("inheritUserConfig should suppress CLAUDE_CONFIG_DIR, got %v", bots[0].DriverEnv())
+	if len(bots[0].DriverEnv("", "")) != 0 {
+		t.Fatalf("inheritUserConfig should suppress CLAUDE_CONFIG_DIR, got %v", bots[0].DriverEnv("", ""))
 	}
 }
 
-// DriverEnvForOcto injects the octo-cli companion credential (OCTO_BOT_TOKEN +
-// OCTO_API_BASE_URL) so the spawned agent's octo-cli authenticates from env.
-func TestDriverEnvForOcto(t *testing.T) {
+// DriverEnv with a non-empty octo token injects the octo-cli companion
+// credential (OCTO_BOT_TOKEN + OCTO_API_BASE_URL) so the spawned agent's
+// octo-cli authenticates from env (the fallback path; the primary path is
+// the on-disk profile written by octocli.Login).
+func TestDriverEnvOctoFallbackVars(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"alpha","octoToken":"t"}]}`)
@@ -90,19 +94,19 @@ func TestDriverEnvForOcto(t *testing.T) {
 	}
 
 	// With an injected octo token + the bot's apiUrl, both octo-cli vars appear.
-	joined := strings.Join(bots[0].DriverEnvForOcto("", "bf_injected"), "\n")
+	joined := strings.Join(bots[0].DriverEnv("", "bf_injected"), "\n")
 	for _, want := range []string{
 		"OCTO_BOT_TOKEN=bf_injected",
 		"OCTO_API_BASE_URL=https://octo.example",
 	} {
 		if !strings.Contains(joined, want) {
-			t.Fatalf("DriverEnvForOcto missing %q in:\n%s", want, joined)
+			t.Fatalf("DriverEnv missing %q in:\n%s", want, joined)
 		}
 	}
 
 	// An empty octo token omits OCTO_BOT_TOKEN (but apiUrl still yields the base
 	// URL — harmless for octo-cli, whose EnvProvider needs the token to act).
-	joined = strings.Join(bots[0].DriverEnvForOcto("", ""), "\n")
+	joined = strings.Join(bots[0].DriverEnv("", ""), "\n")
 	if strings.Contains(joined, "OCTO_BOT_TOKEN=") {
 		t.Fatalf("empty octo token should omit OCTO_BOT_TOKEN, got:\n%s", joined)
 	}

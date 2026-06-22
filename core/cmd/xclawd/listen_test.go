@@ -19,7 +19,7 @@ import (
 // prove the gate does not break the legitimate same-uid path.
 func TestPeerCredListenerAllowsSameUID(t *testing.T) {
 	// Keep the path short: the AF_UNIX sockaddr_un path limit is ~104 bytes, and
-	// t.TempDir() on macOS is well over that. Use /tmp with a unique name.
+	// t.TempDir on macOS is well over that. Use /tmp with a unique name.
 	sock := filepath.Join("/tmp", "xclaw-listen-test-"+filepath.Base(t.TempDir())+".sock")
 	defer os.Remove(sock)
 

@@ -102,7 +102,7 @@ func TestFullTurnPipeline(t *testing.T) {
 		t.Fatalf("assistant content wrong: %q", msgs[1].Content)
 	}
 	// 4. resume id persisted.
-	if got, _ := st.Resume("u1"); got != "thr-1" {
+	if got, _ := st.Resume("u1", "fake"); got != "thr-1" {
 		t.Fatalf("resume not persisted: %q", got)
 	}
 }
@@ -265,13 +265,13 @@ func TestStaleResumeSelfHeals(t *testing.T) {
 		}
 	}
 	// The fresh resume id replaced the stale one.
-	if got, _ := st.Resume("u1"); got != "fresh-id" {
+	if got, _ := st.Resume("u1", "fake"); got != "fresh-id" {
 		t.Errorf("resume = %q, want fresh-id", got)
 	}
 }
 
 // A hostile group message must not be able to forge prompt structure below the
-// real current-message anchor (MLT-34 L1): the body is run through
+// real current-message anchor L1): the body is run through
 // safety.SafeBody, so a second anchor or a fake role label survives only in
 // escaped form.
 func TestCurrentMessageBodyCannotForgeAnchor(t *testing.T) {

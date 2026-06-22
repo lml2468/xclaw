@@ -8,38 +8,45 @@
   import Transcript from "./lib/components/Transcript.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Composer from "./lib/components/Composer.svelte";
-  import ConfigEditor from "./lib/components/ConfigEditor.svelte";
+  import SettingsModal from "./lib/components/SettingsModal.svelte";
   import TrafficLights from "./lib/components/TrafficLights.svelte";
-  import SkillsPanel from "./lib/components/SkillsPanel.svelte";
-  import WorkflowsPanel from "./lib/components/WorkflowsPanel.svelte";
   import WorkspacePanel from "./lib/components/WorkspacePanel.svelte";
   import FilePreview from "./lib/components/FilePreview.svelte";
   import TokenUsage from "./lib/components/TokenUsage.svelte";
   import { confirm } from "./lib/confirm.svelte";
 
   let composer = $state<Composer>();
-  let showEditor = $state(new URLSearchParams(location.search).has("editor"));
-  let showSkills = $state(new URLSearchParams(location.search).has("skills"));
-  let showWorkflows = $state(new URLSearchParams(location.search).has("workflows"));
+
+ // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows].
+  type SettingsTab = "basic" | "octo" | "skills" | "workflows";
+  const TABS: SettingsTab[] = ["basic", "octo", "skills", "workflows"];
+  function initialSettingsState(): { show: boolean; tab: SettingsTab } {
+    const t = new URLSearchParams(location.search).get("settings");
+    if (t === null) return { show: false, tab: "basic" };
+    return { show: true, tab: TABS.includes(t as SettingsTab) ? (t as SettingsTab) : "basic" };
+  }
+  const initialSettings = initialSettingsState();
+  let showSettings = $state(initialSettings.show);
+  let settingsTab = $state<SettingsTab>(initialSettings.tab);
   let showUsage = $state(new URLSearchParams(location.search).has("usage"));
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
   let collapsed = $state(false);
-  // The file open in the wide preview pane (which overlays the chat). Null = chat.
+ // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
-  // The preview path belongs to one session's workspace; clear it when the
-  // selected bot/session changes, or it would render the old file against the
-  // new session (a not-found error, or the wrong same-named file).
+ // The preview path belongs to one session's workspace; clear it when the
+ // selected bot/session changes, or it would render the old file against the
+ // new session (a not-found error, or the wrong same-named file).
   $effect(() => {
     store.selectedBotId; store.selectedKey;
     previewPath = null;
   });
 
-  // Per-Space theme color (Arc's signature): each bot carries an Arc theme
-  // gradient, chosen deterministically from its id, and the whole window
-  // backdrop blooms from it. Selecting a bot re-themes the window; light and
-  // dark both recompute since --window-grad references --grad-a/--grad-b.
+ // Per-Space theme color (Arc's signature): each bot carries an Arc theme
+ // gradient, chosen deterministically from its id, and the whole window
+ // backdrop blooms from it. Selecting a bot re-themes the window; light and
+ // dark both recompute since --window-grad references --grad-a/--grad-b.
   const SPACE_THEMES: [string, string][] = [
     ["#ff7e5f", "#feb47b"], // Sunset — peach → coral
     ["#7f5af0", "#e84393"], // Twilight — violet → fuchsia
@@ -61,8 +68,12 @@
     s.setProperty("--grad-b", b);
   });
 
-  // ⌘K / Ctrl-K toggles the command palette (capture phase + both targets so
-  // iframe focus quirks don't swallow it).
+ // ⌘K / Ctrl-K toggles the command palette. Listen on document (NOT both
+ // window AND document — registering on both fired onKey twice per
+ // keydown, so the toggle was cancelling itself and the palette never
+ // appeared) in the capture phase so iframe focus quirks don't swallow it.
+ // Bound inside $effect with cleanup so dev-mode HMR doesn't stack a fresh
+ // handler on every save.
   function onKey(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
@@ -71,22 +82,33 @@
       showPalette = false;
     }
   }
-  try { window.addEventListener("keydown", onKey, true); document.addEventListener("keydown", onKey, true); } catch {}
+  $effect(() => {
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  });
 
-  // Tray / gear menu open these as modals over the console (guarded: the Wails
-  // runtime is absent in a plain browser, e.g. the headless UI-audit harness).
-  // openModal enforces mutual exclusivity so a tray event can't stack two
-  // full-screen modals on top of each other.
-  function openModal(which: "editor" | "skills" | "workflows" | "usage") {
-    showEditor = which === "editor";
-    showSkills = which === "skills";
-    showWorkflows = which === "workflows";
-    showUsage = which === "usage";
+ // Tray opens the unified Settings modal at a specific tab, or the standalone
+ // Token Usage modal. Mutual exclusion: only one top-level modal at a time.
+  function openSettings(tab: SettingsTab = "basic") {
+    settingsTab = tab;
+    showSettings = true;
+    showUsage = false;
   }
-  try { Events.On("xclaw:open-editor", () => openModal("editor")); } catch {}
-  try { Events.On("xclaw:open-skills", () => openModal("skills")); } catch {}
-  try { Events.On("xclaw:open-workflows", () => openModal("workflows")); } catch {}
-  try { Events.On("xclaw:open-usage", () => openModal("usage")); } catch {}
+  function openUsage() {
+    showUsage = true;
+    showSettings = false;
+  }
+ // Wails Events.On returns an unsubscribe — capture inside $effect so HMR
+ // doesn't keep stacking handlers each save. Both subscriptions
+ // share the same cleanup boundary.
+  $effect(() => {
+    const offSettings = Events.On("xclaw:open-settings", (e: any) => {
+      const tab = e?.data?.tab as SettingsTab | undefined;
+      openSettings(tab && TABS.includes(tab) ? tab : "basic");
+    });
+    const offUsage = Events.On("xclaw:open-usage", () => openUsage());
+    return () => { try { offSettings?.(); offUsage?.(); } catch {} };
+  });
 
   function pick(prompt: string) { composer?.setDraft(prompt); }
 
@@ -104,7 +126,8 @@
 {/if}
 <div class="shell">
   <Sidebar
-    onedit={() => (showEditor = true)}
+    onedit={() => openSettings("basic")}
+    onusage={openUsage}
     onpalette={() => (showPalette = true)}
     {collapsed}
   />
@@ -157,31 +180,25 @@
 {#if showPalette}
   <CommandPalette
     onclose={() => (showPalette = false)}
-    onedit={() => (showEditor = true)}
-    onskills={() => (showSkills = true)}
-    onworkflows={() => (showWorkflows = true)}
-    onusage={() => (showUsage = true)}
+    onedit={() => openSettings("basic")}
+    onskills={() => openSettings("skills")}
+    onworkflows={() => openSettings("workflows")}
+    onusage={openUsage}
   />
 {/if}
-{#if showEditor}
-  <ConfigEditor onclose={() => (showEditor = false)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
-{/if}
-{#if showSkills}
-  <SkillsPanel onclose={() => (showSkills = false)} onedit={() => (showEditor = true)} onusage={() => (showUsage = true)} onworkflows={() => (showWorkflows = true)} />
-{/if}
-{#if showWorkflows}
-  <WorkflowsPanel onclose={() => (showWorkflows = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onusage={() => (showUsage = true)} />
+{#if showSettings}
+  <SettingsModal onclose={() => (showSettings = false)} initialTab={settingsTab} />
 {/if}
 {#if showUsage}
-  <TokenUsage onclose={() => (showUsage = false)} onedit={() => (showEditor = true)} onskills={() => (showSkills = true)} onworkflows={() => (showWorkflows = true)} />
+  <TokenUsage onclose={() => (showUsage = false)} />
 {/if}
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--window-grad); }
-  /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
+ /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
   :global(.lights) { position: fixed; top: calc((var(--header-h) - 12px) / 2); left: 15px; z-index: 1000; }
 
-  /* The chat fills the right area flush — no card framing. */
+ /* The chat fills the right area flush — no card framing. */
   .content {
     flex: 1; min-width: 0; display: flex;
     overflow: hidden;
@@ -217,7 +234,7 @@
   }
   .icon:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--accent); }
   .icon.on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
-  /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
+ /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
      toward the rail (collapse); flips outward when collapsed (expand). */
   .sb-toggle { margin-left: -4px; }
   .sb-toggle svg { transition: transform .2s var(--ease-standard, ease); }

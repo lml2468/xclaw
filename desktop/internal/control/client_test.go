@@ -21,7 +21,7 @@ func TestBridgeHealthRoundTrip(t *testing.T) {
 	if bin == "" {
 		// Fall back to the monorepo dev build if present.
 		if wd, err := os.Getwd(); err == nil {
-			// .../desktop/internal/control -> repo root is three up.
+			//.../desktop/internal/control -> repo root is three up.
 			cand := filepath.Join(wd, "..", "..", "..", "core", ".xclawd-dev")
 			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
 				bin = cand
@@ -32,7 +32,7 @@ func TestBridgeHealthRoundTrip(t *testing.T) {
 		t.Skip("no xclawd binary (set XCLAWD_BIN or build core/.xclawd-dev)")
 	}
 
-	// Short path under /tmp — sockaddr_un caps at ~104 bytes, and macOS t.TempDir()
+	// Short path under /tmp — sockaddr_un caps at ~104 bytes, and macOS t.TempDir
 	// paths blow past that.
 	sock := filepath.Join("/tmp", "xclaw-test.sock")
 	_ = os.Remove(sock)

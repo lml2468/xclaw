@@ -6,14 +6,15 @@
 // directory exists on disk.
 //
 // Everything here is read-only and defensive: bot IDs are slug-validated,
-// per-file paths are containment-checked (mirroring internal/skills), symlinks
-// are never followed (the daemon symlinks the global skills/workflows catalog
-// into each sandbox's .claude/, which must not be traversed or escaped), and the
-// walk is bounded in depth, entry count, and file size.
+// per-file paths are containment-checked (mirroring internal/skills),
+// symlinks are never followed (G #3 added an O_NOFOLLOW open
+// for the final component on Unix), and the walk is bounded in depth,
+// entry count, and file size.
 package workspace
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,8 +24,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/core/sandbox"
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or
@@ -40,13 +41,11 @@ const (
 	maxBinaryBytes = 8 << 20 // 8 MiB
 )
 
-// Dir is ~/.xclaw (the install root), matching configstore.Dir().
+// Dir is ~/.xclaw (the install root), matching configstore.Dir.
 func Dir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".xclaw")
 }
-
-func validSlug(s string) bool { return safepath.ValidSlug(s) }
 
 // Node is a file or directory in the workspace tree. Path is relative to the
 // workspace root, forward-slashed; the root node has Path "". Children is nil for
@@ -79,7 +78,7 @@ type FileContent struct {
 // so at most one exists; DM wins a pathological tie). When neither exists yet (no
 // turn has run), exists is false and dir is the DM candidate path.
 func resolveRoot(botID, sessionKey string) (dir string, exists bool, err error) {
-	if !validSlug(botID) {
+	if !safepath.ValidSlug(botID) {
 		return "", false, fmt.Errorf("invalid bot id %q", botID)
 	}
 	base := filepath.Join(Dir(), botID, "workspace")
@@ -114,8 +113,8 @@ func Tree(botID, sessionKey string) (*Node, error) {
 	return out, nil
 }
 
-func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
-	entries, err := os.ReadDir(abs)
+func readDir(root, rel string, depth int, count *int) ([]*Node, error) {
+	entries, err := safepath.SafeReadDir(root, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -128,24 +127,39 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 	})
 
-	var nodes []*Node
+	// Initialize as an empty (non-nil) slice so JSON marshals an EMPTY but
+	// readable directory as `[]` instead of `null`. The frontend uses null to
+	// mean "not expandable" (depth-cap /.claude / symlink leaf); without
+	// this an empty dir was indistinguishable from a depth-capped one and
+	// the chevron silently disappeared.
+	nodes := []*Node{}
 	for _, e := range entries {
 		if *count >= maxEntries {
 			break
 		}
-		*count++
 		name := e.Name()
+		// Refuse credential-bearing FILES outright (don't even list them).
+		// Directory-level skip happens via skipDir below once we decide isDir.
+		if !e.IsDir() && skipFile(name) {
+			continue
+		}
+		// skip symlinked entries entirely instead of
+		// surfacing them as bogus leaves. Clicking one would invoke
+		// File → SafeOpen → ErrSymlink ("refusing to read symlink") —
+		// click-to-error noise that no legitimate workflow produces.
+		// Matches the skills/workflows listing policy: symlinks under
+		// these agent-writable dirs are tampering signals, not content.
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		*count++
 		childRel := name
 		if rel != "" {
 			childRel = rel + "/" + name
 		}
-		// Never follow symlinks: a symlinked dir (e.g. .claude/skills/<bundle>)
-		// would escape into the global catalog. Surface it as a leaf.
-		isSymlink := e.Type()&os.ModeSymlink != 0
-		isDir := e.IsDir() && !isSymlink
-		n := &Node{Name: name, Path: childRel, IsDir: isDir}
-		if isDir && depth < maxDepth && name != ".claude" {
-			kids, err := readDir(filepath.Join(abs, name), childRel, depth+1, count)
+		n := &Node{Name: name, Path: childRel, IsDir: e.IsDir()}
+		if e.IsDir() && depth < maxDepth && !skipDir(name) {
+			kids, err := readDir(root, childRel, depth+1, count)
 			if err == nil {
 				n.Children = kids
 			}
@@ -155,18 +169,30 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 	return nodes, nil
 }
 
-// resolveIn validates that rel is a clean relative path inside root and returns
-// the absolute path (lexical only; callers that read also EvalSymlinks-check).
-// Shared with the other CRUD packages via safepath.
-func resolveIn(root, rel string) (string, error) {
-	return safepath.ResolveLexical(root, rel)
-}
-
 // File reads one workspace file for inline preview. It refuses symlinks and
 // directories, caps the read at 1 MiB (setting Truncated), and base64-encodes
 // non-text content (images, binaries) so the UI can render it via a data URL.
+// All path safety — lexical containment, parent-chain symlink refusal,
+// race-free leaf open — lives in safepath; this function has no Lstat /
+// EvalSymlinks / O_NOFOLLOW concerns of its own.
 func File(botID, sessionKey, relPath string) (FileContent, error) {
 	var fc FileContent
+	// Refuse credential-bearing dotfiles at the door. A hand-crafted
+	// File("..../.netrc") path would otherwise bypass the tree-level filter
+	// (readDir skips listing these but the path resolver doesn't refuse them).
+	if skipFile(filepath.Base(relPath)) {
+		return fc, fmt.Errorf("path is a credential-bearing file: %q", relPath)
+	}
+	// Tree refuses to descend into skipDir entries (.aws,
+	//.ssh,.kube, …), so the user never sees them in the file picker — but
+	// File relied only on basename matching, so a hand-crafted relPath
+	// like ".aws/credentials" passed every check and read the file. Walk
+	// every path segment through skipDir to close that door too.
+	for _, seg := range strings.Split(filepath.ToSlash(relPath), "/") {
+		if seg != "" && skipDir(seg) {
+			return fc, fmt.Errorf("path traverses a credential-bearing directory: %q", relPath)
+		}
+	}
 	root, exists, err := resolveRoot(botID, sessionKey)
 	if err != nil {
 		return fc, err
@@ -174,42 +200,27 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 	if !exists {
 		return fc, fmt.Errorf("no workspace yet for this session")
 	}
-	full, err := resolveIn(root, relPath)
+
+	// One call does it all: lexical containment, parent-chain symlink walk
+	// via dirfd, leaf O_NOFOLLOW open. The returned FD is guaranteed to be
+	// reached without traversing any symlink, race-free against an agent
+	// swapping parents mid-open.
+	f, err := safepath.SafeOpen(root, relPath)
 	if err != nil {
+		if errors.Is(err, safepath.ErrSymlink) {
+			return fc, fmt.Errorf("refusing to read symlink: %q", relPath)
+		}
 		return fc, err
 	}
-	// Lexical containment isn't enough: an intermediate symlinked component could
-	// still escape the sandbox. Resolve symlinks on both sides and re-check in
-	// real-path space (this also normalizes /tmp→/private/tmp on macOS). A broken
-	// or missing target makes EvalSymlinks fail, which we treat as "not readable".
-	realRoot, err := filepath.EvalSymlinks(root)
+	defer f.Close()
+	fi, err := f.Stat()
 	if err != nil {
 		return fc, err
-	}
-	real, err := filepath.EvalSymlinks(full)
-	if err != nil {
-		return fc, err
-	}
-	if real != realRoot && !strings.HasPrefix(real, realRoot+string(os.PathSeparator)) {
-		return fc, fmt.Errorf("path escapes workspace: %q", relPath)
-	}
-	// Lstat (not Stat) so a symlink final component is refused rather than followed.
-	fi, err := os.Lstat(full)
-	if err != nil {
-		return fc, err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return fc, fmt.Errorf("refusing to read symlink: %q", relPath)
 	}
 	if fi.IsDir() {
 		return fc, fmt.Errorf("not a file: %q", relPath)
 	}
 
-	f, err := os.Open(full)
-	if err != nil {
-		return fc, err
-	}
-	defer f.Close()
 	// Read up to the larger (binary) cap + 1 sentinel byte; we decide the real cap
 	// once isTextual classifies the content below. Size the buffer to the file when
 	// it's smaller than the cap, so a small text file doesn't allocate 8 MiB.
@@ -226,7 +237,7 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 	}
 	data := buf[:n]
 
-	mime := mimeOf(full, data)
+	mime := mimeOf(relPath, data)
 	textual := isTextual(mime, data)
 	// Per-kind cap: text previews at 1 MiB, binary (image/PDF/…) at 8 MiB.
 	limit := maxBinaryBytes
@@ -321,4 +332,88 @@ func kindOf(mime string, textual bool) string {
 	default:
 		return "binary"
 	}
+}
+
+// skipDir reports whether the workspace file tree should refuse to descend
+// into the named child DIRECTORY. Two reasons to skip:
+//
+// - `.claude` — the per-bot CLI config dir. Always present, never
+// interesting in a workspace context, and contains skill bundles +
+// workflows that have their own UIs.
+// - common credential-bearing dotdirs — the agent has Bash + bypass
+// permissions and chooses its own files. If it writes `.aws/credentials`
+// or `~/.ssh/id_rsa` under its cwd (e.g. a `cp ~/.aws/credentials.`
+// during a research turn), the desktop file pane would expose those
+// contents to anyone who can screenshot the GUI. This is operator
+// self-exposure, not RCE, but a viewing pane shouldn't surface secrets
+// by default. Operators who specifically want to inspect a `.aws/` dir
+// can still `cat` it via the agent's tools.
+//
+// File also walks every path segment of a hand-crafted relPath through
+// this list, so a request for `.aws/credentials` is
+// refused even though Tree never lists the parent.
+//
+// Comparison is case-INSENSITIVE — macOS APFS-default and Windows NTFS
+// resolve `.AWS/` to `.aws/` on read but `os.ReadDir` returns the on-disk
+// casing verbatim, so a case-sensitive switch would silently leak
+// `cp ~/.aws.AWS` (Sec). Use skipFile for credential-bearing
+// FILES.
+func skipDir(name string) bool {
+	switch strings.ToLower(name) {
+	case ".claude",
+		// Cloud / SaaS credential stores. If the agent runs a Bash command
+		// that copies any of these into its cwd (e.g. a research turn that
+		// `cp ~/.aws/credentials.`), the desktop file pane would expose
+		// the credential by default. Operator self-exposure, not RCE, but
+		// the file viewer shouldn't surface secrets unless explicitly asked.
+		".aws", ".azure", ".gcloud",
+		".ssh", ".gnupg", ".gpg",
+		".docker", ".kube", ".helm",
+		".cloudflared", ".terraform.d",
+		".cargo", ".m2", ".gradle",
+		".snowsql", ".databricks", ".kaggle",
+		".continue", ".ipython",
+		".config":
+		return true
+	}
+	return false
+}
+
+// skipFile reports whether the workspace file tree should refuse to LIST
+// or READ the named file. Catches credential-bearing dotfiles that an
+// agent's bash might copy into cwd (`cp ~/.netrc.`). Consulted by both
+// readDir (so they don't appear in the tree) and File (so a hand-crafted
+// path can't read them either).
+//
+// All matches are case-INSENSITIVE — macOS APFS-default and Windows NTFS
+// preserve case on read but resolve case-insensitively, so a file landing
+// as `.NETRC` or `Id_Rsa` would slip a case-sensitive list (Sec).
+// Two match modes:
+// - exact basename (lowercase) — for canonical names like `.netrc`,
+// `authorized_keys`, `id_rsa` and its family
+// - dangerous extension — for cert/key file types whose names vary
+// widely (`server.key`, `mycert.pem`, `wallet.kdbx`)
+func skipFile(name string) bool {
+	lc := strings.ToLower(name)
+	switch lc {
+	case ".netrc", ".npmrc", ".pypirc",
+		".git-credentials", ".pgpass",
+		".my.cnf",
+		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+		"id_rsa.pub", "id_ecdsa.pub", "id_ed25519.pub",
+		"authorized_keys", "known_hosts":
+		return true
+	}
+	// `.env` / `.env.local` / `.env.production` …
+	if lc == ".env" || strings.HasPrefix(lc, ".env.") {
+		return true
+	}
+	// Common cert / key / keystore / password-store extensions.
+	switch filepath.Ext(lc) {
+	case ".pem", ".key", ".p12", ".pfx",
+		".jks", ".keystore", ".kdbx",
+		".kubeconfig", ".ovpn":
+		return true
+	}
+	return false
 }

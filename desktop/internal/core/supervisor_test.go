@@ -44,7 +44,7 @@ func fakeDaemon() {
 	os.Exit(0)
 }
 
-// TestTokenDeliveredOutOfBand is the MLT-37 supervisor regression: the minted
+// TestTokenDeliveredOutOfBand is the supervisor regression: the minted
 // capability token must reach the daemon on stdin and must NOT appear in its
 // argv or environment (both world-readable via /proc on Linux).
 func TestTokenDeliveredOutOfBand(t *testing.T) {

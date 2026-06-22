@@ -2,12 +2,11 @@
   import { store, type BotUsage } from "../store.svelte";
   import { onMount } from "svelte";
   import { modal } from "../actions/modal";
-  import SettingsHeader from "./SettingsHeader.svelte";
 
-  let { onclose, onedit, onskills, onworkflows }: { onclose: () => void; onedit?: () => void; onskills?: () => void; onworkflows?: () => void } = $props();
+  let { onclose }: { onclose: () => void } = $props();
 
-  // Range selector. `since` is Unix seconds at a LOCAL-midnight bound (0 = all
-  // time), computed from the user's own calendar so "today" matches their tz.
+ // Range selector. `since` is Unix seconds at a LOCAL-midnight bound (0 = all
+ // time), computed from the user's own calendar so "today" matches their tz.
   type RangeKey = "all" | "30d" | "7d" | "yesterday" | "today";
   const RANGES: { key: RangeKey; label: string }[] = [
     { key: "all", label: "全部" },
@@ -24,8 +23,8 @@
     d.setDate(d.getDate() - daysAgo);
     return Math.floor(d.getTime() / 1000);
   }
-  // since/until for a range key. until (today's midnight) is only used by the
-  // single-day "yesterday" window; 0 elsewhere.
+ // since/until for a range key. until (today's midnight) is only used by the
+ // single-day "yesterday" window; 0 elsewhere.
   function boundsFor(k: RangeKey): { since: number; until: number } {
     switch (k) {
       case "today": return { since: midnight(0), until: 0 };
@@ -37,21 +36,27 @@
   }
   const bounds = $derived(boundsFor(range));
 
-  // Fetch the active range for every bot on open, and on each range change. We
-  // drive fetches imperatively (onMount + the selector's onclick) rather than via
-  // $effect, because loadUsage writes bot.usage — an effect that also read it
-  // would re-run itself (update-depth loop). For "yesterday" we also need the
-  // today-bound bucket to subtract, so fetch both.
+ // Fetch the active range for every bot on open, and on each range change. We
+ // drive fetches imperatively (onMount + the selector's onclick) rather than via
+ // $effect, because loadUsage writes bot.usage — an effect that also read it
+ // would re-run itself (update-depth loop). For "yesterday" we also need the
+ // today-bound bucket to subtract, so fetch both.
   let loading = $state(false);
+ // Generation counter discards stale spinner-resets: rapid range clicks
+ // (today → 7d → today) let the first Promise to settle flip
+ // loading=false while a later fetch is still in flight, hiding the
+ // spinner prematurely. Only the freshest fetch may flip loading off.
+  let fetchGen = 0;
   async function fetchRange(k: RangeKey) {
     const bnd = boundsFor(k);
+    const gen = ++fetchGen;
     loading = true;
     try {
       const calls = [store.loadUsage(bnd.since)];
       if (k === "yesterday") calls.push(store.loadUsage(bnd.until)); // today's bucket, to subtract
       await Promise.all(calls);
     } finally {
-      loading = false;
+      if (gen === fetchGen) loading = false;
     }
   }
   onMount(() => fetchRange(range));
@@ -63,8 +68,8 @@
 
   const bots = $derived(store.bots);
   const ZERO: BotUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0, turns: 0 };
-  // Usage for the active range. "Yesterday" is the today-bound minus the
-  // today-bucket (until = today's midnight), derived from two `since` queries.
+ // Usage for the active range. "Yesterday" is the today-bound minus the
+ // today-bucket (until = today's midnight), derived from two `since` queries.
   function usageFor(b: { usage?: Record<number, BotUsage> }): BotUsage {
     const at = (s: number) => b.usage?.[s];
     if (range === "yesterday") {
@@ -85,7 +90,7 @@
     };
   }
 
-  // Grand total across all bots for the active range.
+ // Grand total across all bots for the active range.
   const total = $derived.by(() => {
     const t = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0, turns: 0 };
     for (const b of bots) {
@@ -102,7 +107,7 @@
 
   const anyUsage = $derived(total.turns > 0);
 
-  // Compact number: 1_284_500 → "1.28M", 96_120 → "96.1K".
+ // Compact number: 1_284_500 → "1.28M", 96_120 → "96.1K".
   function fmt(n: number): string {
     if (n < 1000) return String(n);
     if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
@@ -115,18 +120,19 @@
 </script>
 
 <div class="scrim" onclick={onclose} role="presentation">
-  <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
+ <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab; this onclick only stops propagation) -->
   <div class="modal" use:modal={{ onclose }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Token 用量" tabindex="-1">
-    <SettingsHeader active="usage" {onclose} onnav={(fn) => { onclose(); fn(); }} {onedit} {onskills} {onworkflows}>
-      {#snippet children()}
-        <span class="spin" class:on={loading} aria-hidden="true"></span>
-        <div class="range" role="tablist" aria-label="时间范围">
-          {#each RANGES as r (r.key)}
-            <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
-          {/each}
-        </div>
-      {/snippet}
-    </SettingsHeader>
+    <header>
+      <h2>Token 用量</h2>
+      <span class="spin" class:on={loading} aria-hidden="true"></span>
+      <span class="hspacer"></span>
+      <div class="range" role="tablist" aria-label="时间范围">
+        {#each RANGES as r (r.key)}
+          <button role="tab" aria-selected={range === r.key} class:on={range === r.key} onclick={() => pickRange(r.key)}>{r.label}</button>
+        {/each}
+      </div>
+      <button class="x" onclick={onclose} aria-label="关闭">✕</button>
+    </header>
 
     <div class="body">
       {#if bots.length === 0}
@@ -135,7 +141,7 @@
         <div class="empty">该区间暂无用量</div>
       {:else}
         <div class="wrap" class:loading>
-          <!-- Grand total card -->
+ <!-- Grand total card -->
           <div class="total">
             <span class="tlabel">全部 Bot</span>
             <div class="tstats">
@@ -147,7 +153,7 @@
             </div>
           </div>
 
-          <!-- Per-bot table -->
+ <!-- Per-bot table -->
           <div class="tablewrap">
             <table>
               <thead>
@@ -191,7 +197,15 @@
   .scrim { position: fixed; inset: 0; z-index: 50; background: var(--window-grad); display: block; }
   .modal { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: none; border-radius: 0; box-shadow: none; overflow: hidden; color: var(--ink); font-family: var(--ui); }
 
-  /* Time-range selector (lives in the shared header via the children snippet). */
+  header { display: flex; align-items: center; gap: 12px; height: var(--header-h); padding: 0 18px 0 92px; -webkit-app-region: drag; border-bottom: 1px solid var(--border-soft, var(--hairline)); }
+  header h2 { font-size: 17px; font-weight: 600; margin: 0; }
+  header .hspacer { flex: 1; }
+  header .range, header .range button, header .x { -webkit-app-region: no-drag; }
+  header .x { width: 30px; height: 30px; display: grid; place-items: center; background: none; border: none; border-radius: 8px; color: var(--ink-soft); font-size: 15px; transition: background .14s ease, color .14s ease; }
+  header .x:hover { background: var(--ink-bg-hover); color: var(--ink); }
+  header .x:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+ /* Time-range selector (lives in the shared header via the children snippet). */
   .range { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
   .range button {
     font-size: 12px; padding: 5px 11px; border: none; background: transparent;
@@ -207,14 +221,14 @@
   .wrap { width: 100%; max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; transition: opacity .2s ease; }
   .wrap.loading { opacity: 0.5; }
 
-  /* Range-switch spinner — sits left of the time-range selector in the header. */
+ /* Range-switch spinner — sits left of the time-range selector in the header. */
   .spin { width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent); border-top-color: var(--accent); opacity: 0; transition: opacity .15s ease; }
   .spin.on { opacity: 1; animation: tu-spin 0.7s linear infinite; }
   @keyframes tu-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin.on { animation-duration: 1.5s; } .wrap { transition: none; } }
   .empty { color: var(--ink-faint); font-size: 13px; padding: 32px 8px; text-align: center; line-height: 1.5; margin: auto; }
 
-  /* Grand-total card */
+ /* Grand-total card */
   .total {
     border: 1px solid var(--hairline); border-radius: 8px; padding: 16px 18px;
     background: color-mix(in srgb, var(--accent) 6%, var(--surface));
@@ -226,7 +240,7 @@
   .big .n { font-family: var(--mono); font-size: 20px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
   .big .k { font-size: 11px; color: var(--ink-soft); }
 
-  /* Per-bot table */
+ /* Per-bot table */
   .tablewrap { border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: right; padding: 9px 14px; font-size: 13px; }

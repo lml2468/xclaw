@@ -9,7 +9,7 @@ import (
 	"github.com/lml2468/xclaw/core/sandbox"
 )
 
-// setHome points workspace.Dir() (os.UserHomeDir) at a temp dir on every OS:
+// setHome points workspace.Dir (os.UserHomeDir) at a temp dir on every OS:
 // UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows, so set both.
 func setHome(t *testing.T) string {
 	t.Helper()
@@ -114,19 +114,16 @@ func TestSymlinkNotFollowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
-	var esc *Node
+	// symlinks are now skipped from the workspace
+	// listing entirely (matches skills/workflows policy). Tampering
+	// signals don't get rendered as click-targets that resolve to
+	// "refusing to read symlink" errors.
 	for _, c := range tree.Children {
 		if c.Name == "escape" {
-			esc = c
+			t.Fatalf("symlink entry must be skipped from tree, got %+v", c)
 		}
 	}
-	if esc == nil {
-		t.Fatal("symlink entry missing from tree")
-	}
-	if esc.IsDir || esc.Children != nil {
-		t.Fatalf("symlink must be a non-descended leaf, got %+v", esc)
-	}
-	// File() must refuse to read through the symlink.
+	// File must refuse to read through the symlink.
 	if _, err := File("bot1", "u1", "escape/secret.txt"); err == nil {
 		t.Fatal("File must not read through a symlink")
 	}

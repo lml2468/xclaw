@@ -6,7 +6,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/gateway"
@@ -41,7 +44,10 @@ type Connector struct {
 	// runCtx is the context passed to Run; the sink/inbound callbacks (which the
 	// gateway.Sink interface does not thread a context through) tie their work to
 	// it, so a cancelled Run aborts in-flight turns and outbound REST calls.
-	runCtx context.Context
+	// Stored as atomic.Pointer because Run writes it once at startup while the
+	// receipt worker / heartbeat / callback goroutines read it concurrently —
+	// the plain field was a data race under -race.
+	runCtx atomic.Pointer[context.Context]
 
 	mu      sync.Mutex
 	targets map[string]replyTarget   // sessionKey → where to send the reply
@@ -50,7 +56,7 @@ type Connector struct {
 	closed  bool
 
 	// turnQueues serializes turn dispatch PER session key so the WS read loop is
-	// never blocked by a running turn (H3): onInbound hands the turn to a per-key
+	// never blocked by a running turn: onInbound hands the turn to a per-key
 	// worker goroutine and returns immediately, so the read loop keeps acking
 	// frames, answering pings, and observing other channels while a long turn runs.
 	// Same-key turns stay strictly FIFO (one worker drains its queue in order);
@@ -79,9 +85,32 @@ type Connector struct {
 	// (BotRegisterResp.owner_uid). Used to gate owner-only features (cron).
 	onOwner func(ownerUID string)
 
+	// turnsWG tracks every in-flight drainTurns goroutine so the daemon can
+	// wait for them before closing the store. Without this barrier, SIGTERM
+	// fires `defer st.Close` while a turn is still mid-flush —
+	// gateway.Handle's resume-id save / usage-add hit "database is closed",
+	// silently breaking resume continuity AND losing accounting.
+	turnsWG sync.WaitGroup
+
 	// reconnect/backoff
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
+
+	// receiptCh buffers read-receipt requests for a single worker goroutine
+	// (see receiptWorker). Replaces the prior fan-out where each inbound
+	// message spawned its own short-lived goroutine — under a burst of
+	// messages that produced N concurrent REST POSTs and N goroutine
+	// allocations. Buffered so a slow API back-end can't backpressure the
+	// inbound read loop; full buffer drops the receipt (logged) rather than
+	// blocking.
+	receiptCh chan readReceiptReq
+}
+
+// readReceiptReq is a queued ack request handled by receiptWorker.
+type readReceiptReq struct {
+	channelID   string
+	channelType ChannelType
+	messageID   string
 }
 
 // maxToolNotices caps how many "🔧 Running …" notices a single turn may emit, so
@@ -106,32 +135,65 @@ const awaitTokenPoll = 2 * time.Second
 const defaultTypingInterval = 5 * time.Second
 
 // OnStatus registers a connection-state callback (used by the daemon's bot
-// registry to surface per-bot status over the control bus).
-func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) { c.onStatus = fn }
+// supervisor + control-bus). The setter takes c.mu so a late caller can't
+// race notifyStatus reading the field. In practice runBot
+// wires this before connector.Run, but tests / future callers may not.
+func (c *Connector) OnStatus(fn func(connected bool, lastErr string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onStatus = fn
+}
 
 // OnOwner registers a callback invoked with the bot owner uid after each
 // (re)registration. The owner uid gates owner-only features (cron create/delete).
-func (c *Connector) OnOwner(fn func(ownerUID string)) { c.onOwner = fn }
-
-// RegisterReplyTarget binds a session key to a delivery channel so OnReply knows
-// where to send. Real inbound messages do this in onInbound; the cron fire hook
-// uses it so a scheduled task whose session never received a live message still
-// has its reply delivered to the bound channel.
-func (c *Connector) RegisterReplyTarget(sessionKey, channelID string, channelType ChannelType) {
+// Same lock discipline as OnStatus.
+func (c *Connector) OnOwner(fn func(ownerUID string)) {
 	c.mu.Lock()
-	c.targets[sessionKey] = replyTarget{channelID: channelID, channelType: channelType}
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	c.onOwner = fn
+}
+
+// EnqueueCron enqueues a cron-fired turn onto the per-session worker so it
+// serializes with real inbound on the same key. The
+// target — including any persona on-behalf-of binding — travels with the
+// queued turn so OnReply reads exactly the target the cron fire intended,
+// even if a real inbound enqueued in between and tried to write its own
+// target into the global map.
+//
+// Returns immediately. The actual gw.Handle call happens on the worker
+// goroutine that drainTurns owns; the bot's shutdown chain
+// (connector.WaitTurns + cm.Wait) ensures the in-flight turn finishes
+// before the store closes.
+//
+// Persona-grantor stamp: when persona is configured, the cron reply
+// speaks `on_behalf_of` the configured grantor — same identity as live
+// replies. The trust boundary is cron.SetOwnerUID's foreign-CreatedBy
+// prune: any task that survives that fence is
+// operator-authored on this bot, and the operator-configured persona is
+// allowed to speak for it. The persona is the cron's identity by design.
+func (c *Connector) EnqueueCron(sessionKey, channelID string, channelType ChannelType, inbound router.InboundMessage) {
+	tgt := replyTarget{channelID: channelID, channelType: channelType}
+	if c.persona.UID != "" {
+		tgt.onBehalfOf = c.persona.UID
+	}
+	c.enqueueTurn(sessionKey, inbound, tgt)
 }
 
 func (c *Connector) setStatus(connected bool, lastErr string) {
-	if c.onStatus != nil {
-		c.onStatus(connected, lastErr)
+	c.mu.Lock()
+	fn := c.onStatus
+	c.mu.Unlock()
+	if fn != nil {
+		fn(connected, lastErr)
 	}
 }
 
 func (c *Connector) notifyOwner(ownerUID string) {
-	if c.onOwner != nil && ownerUID != "" {
-		c.onOwner(ownerUID)
+	c.mu.Lock()
+	fn := c.onOwner
+	c.mu.Unlock()
+	if fn != nil && ownerUID != "" {
+		fn(ownerUID)
 	}
 }
 
@@ -161,14 +223,29 @@ func NewConnector(rest *RESTClient) *Connector {
 		turnQueues:    make(map[string]*turnQueue),
 		reconnectBase: 3 * time.Second,
 		reconnectMax:  60 * time.Second,
+		receiptCh:     make(chan readReceiptReq, 64),
 	}
 }
 
 // turnQueue is the per-session-key serial dispatch state (guarded by Connector.mu).
 // pending holds turns awaiting execution in arrival order; running marks whether
-// a worker goroutine is draining them. See enqueueTurn/drainTurns (H3).
+// a worker goroutine is draining them. See enqueueTurn/drainTurns.
+//
+// Each pending entry carries its OWN reply target: the
+// prior contract stored a SINGLE target per session key in c.targets, which
+// onInbound and RegisterReplyTarget both wrote. Real inbound + a concurrent
+// cron fire on the same session key would stomp the map and produce a
+// mis-delivered reply + a silently-dropped one. With the target traveling
+// with the queued turn, drainTurns is the only writer to c.targets, the
+// write happens immediately before gw.Handle, and the per-turn OnReply
+// reads exactly the target the producer attached.
+type queuedTurn struct {
+	inbound router.InboundMessage
+	tgt     replyTarget
+}
+
 type turnQueue struct {
-	pending []router.InboundMessage
+	pending []queuedTurn
 	running bool
 }
 
@@ -253,9 +330,11 @@ func (c *Connector) SetMentionFreeGroups(channelIDs []string) {
 // until ctx is cancelled. The initial registration is retried with backoff so a
 // transient API outage at startup doesn't kill the bot.
 func (c *Connector) Run(ctx context.Context) error {
-	c.runCtx = ctx
+	c.setCtx(ctx)
 	// REST heartbeat loop (30s), separate from the WS ping.
 	go c.heartbeatLoop(ctx)
+	// Single-worker read-receipt sender (see receiptCh comment).
+	go c.receiptWorker(ctx)
 
 	backoff := c.reconnectBase
 	var reg RegisterResponse
@@ -283,7 +362,7 @@ func (c *Connector) Run(ctx context.Context) error {
 				}
 				c.setStatus(false, err.Error())
 				sleep(ctx, backoff)
-				backoff = minDur(backoff*2, c.reconnectMax)
+				backoff = min(backoff*2, c.reconnectMax)
 				continue
 			}
 			reg = r
@@ -305,9 +384,13 @@ func (c *Connector) Run(ctx context.Context) error {
 		c.setStatus(false, errStr)
 
 		// Connection dropped: back off, then force a fresh registration (token
-		// may have expired) before reconnecting.
+		// may have expired) before reconnecting. Re-check ctx after the sleep so
+		// a shutdown that races the back-off doesn't issue a wasted Register.
 		sleep(ctx, backoff)
-		backoff = minDur(backoff*2, c.reconnectMax)
+		backoff = min(backoff*2, c.reconnectMax)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if fresh, rerr := c.rest.Register(ctx, true); rerr == nil {
 			reg = fresh
 			c.setUID(reg.RobotID)
@@ -330,8 +413,8 @@ func sleep(ctx context.Context, d time.Duration) {
 
 func (c *Connector) connectOnce(ctx context.Context, reg RegisterResponse) error {
 	// onError logs socket-level events (poison-drop, kicks) that are not fatal to
-	// the read loop — previously a no-op, which silently swallowed them (H4). The
-	// server DISCONNECT case ends the read loop via run() returning, which Run's
+	// the read loop — previously a no-op, which silently swallowed them. The
+	// server DISCONNECT case ends the read loop via run returning, which Run's
 	// reconnect path handles; this hook is for the informational drops.
 	sock := newSocketConn(reg.WSURL, reg.RobotID, reg.IMToken, c.onInbound, func(err error) {
 		c.logf("socket: %v", err)
@@ -352,10 +435,16 @@ func (c *Connector) connectOnce(ctx context.Context, reg RegisterResponse) error
 // ctx returns the Run context, falling back to Background if a callback somehow
 // fires before Run set it (defensive — a nil context would panic downstream).
 func (c *Connector) ctx() context.Context {
-	if c.runCtx != nil {
-		return c.runCtx
+	if p := c.runCtx.Load(); p != nil {
+		return *p
 	}
 	return context.Background()
+}
+
+// setCtx stores ctx as the runCtx. Used by Run at startup and by tests that
+// invoke methods on the connector outside of a Run call.
+func (c *Connector) setCtx(ctx context.Context) {
+	c.runCtx.Store(&ctx)
 }
 
 // setUID / uid guard botUID with c.mu: Run rewrites it on (re)registration while
@@ -480,10 +569,11 @@ func (c *Connector) onInbound(m BotMessage) {
 		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(uid)) {
 		tgt.onBehalfOf = c.persona.UID
 	}
-	// issue #98 auto-reroute, computed ONCE at registration (not on every target()
-	// read): if a thread session's reply target is the bare parent group, rewrite
-	// it to the thread so the reply lands in the sub-topic. Restricted to
-	// group-like targets so a DM is never rewritten into a CommunityTopic.
+	// Per-turn target travels with the queued turn so drainTurns can set
+	// c.targets[key] AT pop-time — the prior contract had onInbound write the
+	// global map directly here, which raced cron's RegisterReplyTarget. The
+	// reroute is computed once here so it isn't recomputed on every target
+	// read.
 	if tgt.channelType != ChannelDM {
 		if rerouted, did := RerouteTarget(key, tgt.channelID); did {
 			c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", key, tgt.channelID, rerouted)
@@ -491,28 +581,31 @@ func (c *Connector) onInbound(m BotMessage) {
 			tgt.channelType = ChannelCommunityTopic
 		}
 	}
-	c.mu.Lock()
-	c.targets[key] = tgt
-	c.mu.Unlock()
+	// NB: also wrote c.targets[key] here "for the persona tests" —
+	// that put the race back, just for inbound-during-a-mid-flight-turn
+	// instead of cron-vs-inbound. If the gateway's in-flight Handle for a
+	// PRIOR turn emits OnReply / onToolProgress / startTyping after this
+	// onInbound runs but before its drainTurns pop, those callbacks read
+	// the wrong target. Map writes now ONLY happen in drainTurns
+	// (sole-writer invariant); the persona tests probe the queued item.
 
 	// Acknowledge receipt (fire-and-forget) once we've decided to process it.
 	c.sendReadReceipt(m)
 
-	if c.gateway == nil {
-		return
-	}
 	// A group message that doesn't trigger the bot is background context, not a
 	// turn: observe it so it becomes a later @-mention's delta. (The router
 	// would drop it anyway; observing first preserves group context.) Background
 	// context is stored history, so it carries the plain resolved text WITHOUT
 	// the quoted-reply prefix. Observe is a fast in-memory cache write, so it runs
-	// inline (not worth a worker goroutine).
+	// inline (not worth a worker goroutine). A nil gateway (tests) skips it.
 	//
 	// Exception (G12): in a mention-free channel an unmentioned message IS a turn
 	// — hand it to the gateway so the router applies the mention-free + bot-loop
 	// policy. runTurn caches it into group context itself, so do NOT also Observe.
 	if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned && !c.mentionFree[m.ChannelID] {
-		c.gateway.Observe(inbound)
+		if c.gateway != nil {
+			c.gateway.Observe(inbound)
+		}
 		return
 	}
 	// Prepend the quoted-reply context to the CURRENT turn only (never stored
@@ -522,16 +615,18 @@ func (c *Connector) onInbound(m BotMessage) {
 		inbound.Text = prefix + inbound.Text
 	}
 	// Dispatch the turn on the per-key worker so the WS read loop is not blocked
-	// for the whole (possibly multi-minute) turn (H3). The router still serializes
+	// for the whole (possibly multi-minute) turn. The router still serializes
 	// same-session turns; the per-key queue guarantees they reach the router in
-	// arrival order despite running on a goroutine.
-	c.enqueueTurn(key, inbound)
+	// arrival order despite running on a goroutine. drainTurns skips dispatch
+	// when gateway is nil (tests), but the queue is still populated so the
+	// persona tests can assert via peekQueuedTarget.
+	c.enqueueTurn(key, inbound, tgt)
 }
 
 // enqueueTurn appends a turn to the per-session-key serial queue, starting a
 // worker goroutine for the key if none is running. Same-key turns run FIFO; the
 // worker exits when its queue drains, so idle keys hold no goroutine.
-func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
+func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage, tgt replyTarget) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -542,9 +637,19 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
 		q = &turnQueue{}
 		c.turnQueues[key] = q
 	}
-	q.pending = append(q.pending, inbound)
+	q.pending = append(q.pending, queuedTurn{inbound: inbound, tgt: tgt})
 	start := !q.running
 	q.running = true
+	// turnsWG.Add(1) MUST happen under c.mu so it cannot race WaitTurns:
+	// WaitTurns sets c.closed=true under the same mu before calling
+	// turnsWG.Wait(). With Add() outside the lock, a goroutine that passed
+	// the closed check and was preempted could call Add(1) after WaitTurns
+	// observed counter==0 and returned — that's sync.WaitGroup misuse
+	// (Add concurrently with Wait) and the spawned drainTurns would run
+	// gw.Handle on a closed store.
+	if start {
+		c.turnsWG.Add(1)
+	}
 	c.mu.Unlock()
 
 	if start {
@@ -555,7 +660,28 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage) {
 // drainTurns runs queued turns for one session key in order, then retires the
 // queue. New arrivals during a turn are picked up before the worker exits, so a
 // burst is handled by a single worker with no lost messages.
+// WaitTurns blocks until every drainTurns goroutine spawned by this
+// connector has finished its queue. Call this on graceful shutdown AFTER
+// the Run-ctx is cancelled (which closes the WS read loop and stops new
+// turns from being enqueued) and BEFORE closing the store / gateway / driver.
+//
+// Idempotent: a connector that has never enqueued a turn returns immediately.
+//
+// Sets the `closed` flag first so any late enqueueTurn call (a cron tick
+// that landed between Run returning and the bot's cm.Stop firing) is
+// refused at the door rather than spawning a fresh drainTurns into a
+// freshly-closed store. The flag was declared + checked in but
+// never actually set (`grep 'c\.closed =' returned nothing` per the
+// Go audit) — wiring it here closes the last shutdown gap.
+func (c *Connector) WaitTurns() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.turnsWG.Wait()
+}
+
 func (c *Connector) drainTurns(key string) {
+	defer c.turnsWG.Done()
 	for {
 		c.mu.Lock()
 		q := c.turnQueues[key]
@@ -566,11 +692,22 @@ func (c *Connector) drainTurns(key string) {
 			c.mu.Unlock()
 			return
 		}
-		inbound := q.pending[0]
+		item := q.pending[0]
 		q.pending = q.pending[1:]
+		// Set the per-turn target IMMEDIATELY before releasing the lock and
+		// running gw.Handle, so OnReply (which reads via c.target(key))
+		// observes exactly the target the producer attached. drainTurns is
+		// the sole writer to c.targets, so cron+inbound concurrent enqueues
+		// no longer race.
+		c.targets[key] = item.tgt
 		c.mu.Unlock()
 
-		dec, err := c.gateway.Handle(c.ctx(), inbound)
+		// Tests may enqueue without setting a gateway; skip dispatch in
+		// that case so the queue still drains cleanly.
+		if c.gateway == nil {
+			continue
+		}
+		dec, err := c.gateway.Handle(c.ctx(), item.inbound)
 		if err != nil {
 			c.logf("handle turn for %s: %v", key, err)
 		}
@@ -578,9 +715,9 @@ func (c *Connector) drainTurns(key string) {
 		// guard, or it turned out not to be mention-free after all) is still group
 		// chatter the agent should see later — observe it as background. runTurn
 		// already cached it on the Accepted path, so only observe on these drops.
-		if inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned &&
+		if item.inbound.ChannelType == router.ChannelGroup && !item.inbound.Mentioned &&
 			(dec == router.DroppedBot || dec == router.DroppedNotMentioned) {
-			c.gateway.Observe(inbound)
+			c.gateway.Observe(item.inbound)
 		}
 	}
 }
@@ -613,17 +750,34 @@ func oboReplyTarget(p MessagePayload, grantorUID string) replyTarget {
 	return replyTarget{channelID: channelID, channelType: chType, onBehalfOf: grantorUID}
 }
 
-// sendReadReceipt acks the message as read, fire-and-forget (api.ts
-// sendReadReceipt). Failures are logged but never block the turn.
+// sendReadReceipt enqueues an ack for the bounded receipt worker (api.ts
+// sendReadReceipt). Failures are logged but never block the turn; if the
+// buffer is saturated (REST back-end is slow and a burst of messages is
+// arriving) the receipt is dropped — read-receipts are best-effort.
 func (c *Connector) sendReadReceipt(m BotMessage) {
 	if m.MessageID == "" {
 		return
 	}
-	go func() {
-		if err := c.rest.SendReadReceipt(c.ctx(), m.ChannelID, m.ChannelType, []string{m.MessageID}); err != nil {
-			c.logf("read receipt for %s: %v", m.MessageID, err)
+	select {
+	case c.receiptCh <- readReceiptReq{m.ChannelID, m.ChannelType, m.MessageID}:
+	default:
+		c.logf("read receipt for %s dropped: queue full", m.MessageID)
+	}
+}
+
+// receiptWorker drains receiptCh serially, ending when ctx is cancelled.
+// One in-flight POST at a time bounds load on the REST API.
+func (c *Connector) receiptWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-c.receiptCh:
+			if err := c.rest.SendReadReceipt(ctx, r.channelID, r.channelType, []string{r.messageID}); err != nil {
+				c.logf("read receipt for %s: %v", r.messageID, err)
+			}
 		}
-	}()
+	}
 }
 
 // resolveAttachments extracts downloadable media/file attachments from a payload
@@ -738,7 +892,7 @@ func (c *Connector) maybeSendToolNotice(sessionKey string, ev agent.AgentEvent) 
 // entity's offset to segment-local before sending (api/stream-relay parity). For
 // a persona clone replying as the grantor, each send carries on_behalf_of so the
 // server presents it as the grantor (openclaw OBO). It also stops the typing
-// heartbeat — the end-of-turn cleanup point (stream-relay.ts deliver() finally).
+// heartbeat — the end-of-turn cleanup point (stream-relay.ts deliver finally).
 //
 // Empty reply → a no-response placeholder is sent instead of silently dropping
 // the turn (cc-channel-octo index.ts behavior).
@@ -815,9 +969,13 @@ func (c *Connector) OnReply(sessionKey string, text string) {
 
 // sendReplySegment sends one reply segment with a single bounded retry. The reply
 // is the turn's only user-visible output, so a transient send failure (network
-// blip) shouldn't silently lose it; one retry covers the common case without
-// risking duplicate delivery on a slow-but-eventually-successful send.
+// blip) shouldn't silently lose it; one retry covers the common case. The
+// client_msg_no is generated ONCE up-front and reused on retry so server-side
+// dedup (keyed on client_msg_no) actually suppresses duplicate delivery — a
+// fresh uuid per attempt defeated the dedup whenever a 5xx/timeout/TCP-reset
+// happened AFTER the server committed but BEFORE the response reached us.
 func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string, entities []MentionEntity, mentionAll bool) error {
+	msgNo := uuid.NewString()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
@@ -826,7 +984,7 @@ func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string
 				return lastErr // shutting down — don't keep retrying
 			}
 		}
-		if _, err := c.rest.SendTextAs(c.ctx(), tgt.channelID, tgt.channelType, text, uids, entities, mentionAll, tgt.onBehalfOf); err != nil {
+		if _, err := c.rest.SendTextAsWithMsgNo(c.ctx(), tgt.channelID, tgt.channelType, text, uids, entities, mentionAll, tgt.onBehalfOf, msgNo); err != nil {
 			lastErr = err
 			continue
 		}
@@ -836,7 +994,7 @@ func (c *Connector) sendReplySegment(tgt replyTarget, text string, uids []string
 }
 
 // typingTicker holds the cancel hook and the done channel of one session's
-// typing-heartbeat goroutine. stop() cancels and waits for the goroutine to
+// typing-heartbeat goroutine. stop cancels and waits for the goroutine to
 // exit so there is never a leaked goroutine after a turn.
 type typingTicker struct {
 	cancel context.CancelFunc
@@ -928,50 +1086,18 @@ func (c *Connector) target(sessionKey string) (replyTarget, bool) {
 	return t, ok
 }
 
-func minDur(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
+// peekQueuedTarget returns the target of the FIRST queued turn for sessionKey,
+// or ok=false when no turn is queued. Test-only accessor: production callers
+// read via c.target(sessionKey) (the map drainTurns mutates as it pops). This
+// gives the persona-OBO tests a way to assert "onInbound enqueued a turn with
+// THIS target" without re-introducing the racy in-onInbound map write that
+// deleted.
+func (c *Connector) peekQueuedTarget(sessionKey string) (replyTarget, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	q := c.turnQueues[sessionKey]
+	if q == nil || len(q.pending) == 0 {
+		return replyTarget{}, false
 	}
-	return b
-}
-
-// splitMessage breaks text into <=max-RUNE segments, preferring paragraph,
-// newline, then space boundaries before a hard cut (stream-relay parity).
-//
-// DEPRECATED / not used in production. OnReply uses splitMessageProtected, which
-// counts in UTF-16 code units (the Octo wire contract) and never cuts through a
-// resolved @mention span. Do NOT call this for outbound delivery — its rune-based
-// length disagrees with the wire's UTF-16 offsets for astral-plane characters.
-// Retained only because its boundary-preference logic is unit-tested.
-func splitMessage(text string, max int) []string {
-	runes := []rune(text)
-	if len(runes) <= max {
-		return []string{text}
-	}
-	var out []string
-	for len(runes) > max {
-		cut := max
-		// prefer a boundary within the window
-		window := string(runes[:max])
-		if i := strings.LastIndex(window, "\n\n"); i > 0 {
-			cut = len([]rune(window[:i]))
-		} else if i := strings.LastIndex(window, "\n"); i > 0 {
-			cut = len([]rune(window[:i]))
-		} else if i := strings.LastIndex(window, " "); i > 0 {
-			cut = len([]rune(window[:i]))
-		}
-		if cut <= 0 {
-			cut = max
-		}
-		out = append(out, strings.TrimRight(string(runes[:cut]), " \n"))
-		runes = runes[cut:]
-		// skip leading whitespace of the next segment
-		for len(runes) > 0 && (runes[0] == '\n' || runes[0] == ' ') {
-			runes = runes[1:]
-		}
-	}
-	if len(runes) > 0 {
-		out = append(out, string(runes))
-	}
-	return out
+	return q.pending[0].tgt, true
 }

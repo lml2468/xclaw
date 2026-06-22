@@ -3,8 +3,8 @@
 // It wires the full pipeline — store + router + gateway + agent driver — and
 // drives it from an inbound source. Two front ends:
 //
-//	xclawd                              # REPL on stdin (claude driver)
-//	xclawd -control /tmp/xclaw.sock    # serve the control bus (for the GUI app)
+//	xclawd # REPL on stdin (claude driver)
+//	xclawd -control /tmp/xclaw.sock # serve the control bus (for the GUI app)
 //
 // With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
 // so the desktop app (or any client) can send commands and receive the live
@@ -29,6 +29,7 @@ import (
 
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/control/wire"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
 	"github.com/lml2468/xclaw/core/im/octo"
@@ -74,7 +75,7 @@ func main() {
 	// Run context: cancelled on SIGINT/SIGTERM so an in-flight control-bus turn
 	// (session.send) and the IM connector shut down cleanly and the deferred
 	// cleanup (socket removal, store close) actually runs — previously a bare
-	// context meant Ctrl-C killed the process with defers unexecuted (H7).
+	// context meant Ctrl-C killed the process with defers unexecuted.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -119,7 +120,7 @@ func main() {
 		if token == "" {
 			fatal("-octo-api set but no token (use -octo-token or XCLAW_OCTO_TOKEN)")
 		}
-		_ = sec.Set(secretKindOcto, token)
+		_ = sec.Set(wire.SecretKindOcto, token)
 		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, sec.OctoToken))
 		sinks = append(sinks, connector)
 	}
@@ -133,13 +134,24 @@ func main() {
 	}
 
 	if srv != nil {
-		srv.SetHandler(makeCommandHandler(ctx, gw, st, drv, sec, srv, started))
+		handler, target := makeCommandHandler(ctx, gw, st, drv, sec, srv, started)
+		srv.SetHandler(handler)
 		configureBusAuth(srv, *authStdin) // arm the capability-token gate before serving
+		// Wait for control-bus turns to finish before defer st.Close fires.
+		// Defers are LIFO; the actual single-bot shutdown chain is:
+		//   connector.WaitTurns (registered below)
+		//   → close control listener (serveControlBus) — refuses new commands
+		//   → wait for in-flight session.send (target.turnsWG, here)
+		//   → signal stop()
+		//   → st.Close (the earliest defer at the top of main)
+		defer target.turnsWG.Wait()
 		defer serveControlBus(srv, *controlSock)()
 	}
 
 	if connector != nil {
 		connector.SetGateway(gw)
+		// Wait for any in-flight drainTurns workers before st.Close fires.
+		defer connector.WaitTurns()
 		go func() {
 			if err := connector.Run(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "octo connector: %v\n", err)
@@ -281,7 +293,11 @@ func (m multiSink) OnReply(key, text string) {
 // makeCommandHandler builds the single-bot control-bus dispatcher. All command
 // logic lives in the shared makeHandler; this only supplies the fixed target,
 // the synthetic one-bot roster, and the broadcast hook.
-func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Store, drv agent.Driver, sec *secretStore, srv *control.Server, started time.Time) control.CommandHandler {
+//
+// Returns the handler AND the shared target so the caller can block on
+// target.turnsWG before closing the store on shutdown (turns in flight under
+// session.send would otherwise race the deferred st.Close).
+func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Store, drv agent.Driver, sec *secretStore, srv *control.Server, started time.Time) (control.CommandHandler, *botTarget) {
 	target := &botTarget{gateway: gw, store: st, secrets: sec}
 	var broadcast func(string, any)
 	if srv != nil {
@@ -298,5 +314,5 @@ func makeCommandHandler(ctx context.Context, gw *gateway.Gateway, st *store.Stor
 		},
 		resolve:   func(string) (*botTarget, error) { return target, nil },
 		broadcast: broadcast,
-	})
+	}), target
 }

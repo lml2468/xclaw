@@ -2,6 +2,7 @@ package octo
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -96,4 +97,36 @@ func TestRecvackFrame(t *testing.T) {
 	if id != 0x1122334455667788 || seq != 0x09 {
 		t.Fatalf("recvack body: id=%x seq=%d", id, seq)
 	}
+}
+
+// TestNextFrameSentinels exercises the exported error sentinels so callers
+// (and any downstream metric scraper) can rely on errors.Is matching them.
+// This is the regression for the commit that promoted the prior
+// fmt.Errorf strings to exported sentinels — exported API surface without
+// an Is-consumer is a contract claim without a test.
+func TestNextFrameSentinels(t *testing.T) {
+	t.Run("unknown packet type", func(t *testing.T) {
+		// Header byte with packet type 0 (below pktConnect=1) — must reject.
+		_, _, _, _, err := nextFrame([]byte{0x00})
+		if !errors.Is(err, ErrUnknownPacketType) {
+			t.Fatalf("want ErrUnknownPacketType, got %v", err)
+		}
+	})
+	t.Run("varint too long", func(t *testing.T) {
+		// pktSend header + 5 continuation bytes (one over maxVarlenBytes=4).
+		pkt := []byte{byte(pktSend) << 4, 0x80, 0x80, 0x80, 0x80, 0x80}
+		_, _, _, _, err := nextFrame(pkt)
+		if !errors.Is(err, ErrVarintTooLong) {
+			t.Fatalf("want ErrVarintTooLong, got %v", err)
+		}
+	})
+	t.Run("frame body too large", func(t *testing.T) {
+		// pktSend header + varint encoding maxFrameBodyBytes+1.
+		body := []byte{byte(pktSend) << 4}
+		body = append(body, encodeVariableLength(maxFrameBodyBytes+1)...)
+		_, _, _, _, err := nextFrame(body)
+		if !errors.Is(err, ErrFrameBodyTooLarge) {
+			t.Fatalf("want ErrFrameBodyTooLarge, got %v", err)
+		}
+	})
 }

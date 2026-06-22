@@ -6,14 +6,14 @@
 // WITHOUT downloading (it has no session cwd). The gateway materializes them in
 // runTurn AFTER the session cwd is resolved and BEFORE driver.Query:
 //
-//   - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.xclaw-media/ so the
-//     agent's Read tool can open them natively, and a Read hint is appended to
-//     THIS turn's prompt body (not stored history).
-//   - Small text files (<20 KiB) are inlined as base64 inside a <file_content>
-//     wrapper — base64's alphabet can't forge the closing tag, defeating the
-//     "--- file end ---" prompt-injection break-out (file-inline-wrap.ts S2).
-//   - Larger / binary files are downloaded to <cwd>/.xclaw-media/ and described
-//     with a path hint.
+// - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.xclaw-media/ so the
+// agent's Read tool can open them natively, and a Read hint is appended to
+// THIS turn's prompt body (not stored history).
+// - Small text files (<20 KiB) are inlined as base64 inside a <file_content>
+// wrapper — base64's alphabet can't forge the closing tag, defeating the
+// "--- file end ---" prompt-injection break-out (file-inline-wrap.ts S2).
+// - Larger / binary files are downloaded to <cwd>/.xclaw-media/ and described
+// with a path hint.
 //
 // SSRF: every download (and every redirect hop) is re-validated against
 // config.AssertPublicURL. The bot Authorization header is scoped per hop via the
@@ -40,6 +40,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/core/safety"
 )
 
@@ -96,18 +97,18 @@ type MediaAuth func(url string) string
 
 // mediaHTTPClient is the media downloader's transport.
 //
-//   - redirect: manual — we walk the chain ourselves so each hop is
-//     SSRF-revalidated and the Authorization header is recomputed per hop
-//     (fetchWithRedirectGuard parity).
-//   - DialControl: the actual socket address chosen by the resolver is
-//     re-checked against the private/local ranges at *dial time*. This closes the
-//     DNS-rebinding TOCTOU: AssertPublicURL resolves once for the policy check,
-//     but the transport resolves again to dial — a hostile authoritative DNS
-//     could return a public IP to the first lookup and 169.254.169.254 / a
-//     private IP to the second. Validating in Control (which runs on the exact
-//     address being connected) makes the check authoritative for the connection.
-//   - explicit Transport timeouts + per-host conn cap so a slow/hostile endpoint
-//     can't tie up connections (the ctx deadline still bounds the whole fetch).
+// - redirect: manual — we walk the chain ourselves so each hop is
+// SSRF-revalidated and the Authorization header is recomputed per hop
+// (fetchWithRedirectGuard parity).
+// - DialControl: the actual socket address chosen by the resolver is
+// re-checked against the private/local ranges at *dial time*. This closes the
+// DNS-rebinding TOCTOU: AssertPublicURL resolves once for the policy check,
+// but the transport resolves again to dial — a hostile authoritative DNS
+// could return a public IP to the first lookup and 169.254.169.254 / a
+// private IP to the second. Validating in Control (which runs on the exact
+// address being connected) makes the check authoritative for the connection.
+// - explicit Transport timeouts + per-host conn cap so a slow/hostile endpoint
+// can't tie up connections (the ctx deadline still bounds the whole fetch).
 var mediaHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -199,8 +200,16 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 		wg.Add(1)
 		go func(i int, att router.Attachment) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			// Bound by mediaConcurrency, but honor ctx so a per-turn cancel
+			// (timeout / shutdown) releases the goroutine immediately
+			// instead of waiting on a busy slot whose holder may be slow
+			// to observe cancellation itself.
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
 			switch att.Kind {
 			case router.AttachmentImage:
 				rel, err := g.downloadImage(ctx, cwd, att.URL)
@@ -251,7 +260,8 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download failed HTTP %d", resp.StatusCode)
 	}
-	rawType := strings.ToLower(strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0]))
+	ct, _, _ := strings.Cut(resp.Header.Get("Content-Type"), ";")
+	rawType := strings.ToLower(strings.TrimSpace(ct))
 	ext, ok := allowedImageTypes[rawType]
 	if !ok {
 		if rawType == "" {
@@ -260,13 +270,18 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 		return "", fmt.Errorf("unsupported image type: %s", rawType)
 	}
 
-	dir := filepath.Join(cwd, InboundMediaDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// agent owns `cwd` (Bash + bypass) — bare MkdirAll
+	// would follow an agent-planted `.xclaw-media → ~/.ssh/` and the
+	// subsequent writeCapped would land attacker-supplied IM bytes under
+	//.ssh/. safepath's dirfd walk refuses the symlinked entry. cwd
+	// itself is operator-trusted as the sandbox root.
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir media dir: %w", err)
 	}
 	name := fmt.Sprintf("%s-image.%s", uuid.NewString(), ext)
+	dir := filepath.Join(cwd, InboundMediaDir)
 	localPath := filepath.Join(dir, name)
-	if err := writeCapped(localPath, resp.Body, maxImageBytes); err != nil {
+	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, name), resp.Body, maxImageBytes); err != nil {
 		return "", err
 	}
 	rel, err := filepath.Rel(cwd, localPath)
@@ -323,15 +338,18 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	if cwd == "" {
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
-	dir := filepath.Join(cwd, InboundMediaDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// dirfd-walk MkdirAll refuses an agent-planted
+	// `.xclaw-media → ~/.ssh/` redirect; same fix as the image path above.
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return fmt.Sprintf("[文件: %s - 下载错误: %v]", filename, err)
 	}
+	dir := filepath.Join(cwd, InboundMediaDir)
 	safeName := sanitizeFileBaseName(filename)
-	localPath := filepath.Join(dir, fmt.Sprintf("%s-%s", uuid.NewString(), safeName))
+	leaf := fmt.Sprintf("%s-%s", uuid.NewString(), safeName)
+	localPath := filepath.Join(dir, leaf)
 	// Concatenate the already-read head with the remaining body, capped.
 	body := io.MultiReader(strings.NewReader(string(head)), resp.Body)
-	if err := writeCapped(localPath, body, maxFileDownloadBytes); err != nil {
+	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, leaf), body, maxFileDownloadBytes); err != nil {
 		_ = os.Remove(localPath)
 		return fmt.Sprintf("[文件: %s - %v]", filename, err)
 	}
@@ -417,31 +435,26 @@ func (b *cancelOnCloseBody) Close() error {
 	return err
 }
 
-// writeCapped streams src into path, deleting the partial file and returning an
-// error if more than max bytes arrive.
-func writeCapped(path string, src io.Reader, max int64) error {
-	f, err := os.Create(path)
+// writeCapped reads src into memory (capped at max bytes) and writes it via
+// safepath.SafeWrite anchored at `root` — symlink-safe (refuses a planted
+// leaf-symlink AND dirfd-walks every component from `root`), atomic
+// temp+rename. Caller passes `root` = the operator-trusted sandbox cwd and
+// `rel` = the leaf path inside it; for cwdBase configured outside $HOME
+// SafeWriteAbs's fallback skipped the dirfd walk entirely, leaving the
+// .xclaw-media exfil race open. Taking root explicitly closes that path.
+func writeCapped(root, rel string, src io.Reader, max int64) error {
+	buf, err := io.ReadAll(io.LimitReader(src, max+1))
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return fmt.Errorf("read body: %w", err)
 	}
-	// limit = max+1 so we can detect overflow without reading unboundedly.
-	n, err := io.Copy(f, io.LimitReader(src, max+1))
-	closeErr := f.Close()
-	if err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("write file: %w", err)
-	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close file: %w", closeErr)
-	}
-	if n > max {
-		_ = os.Remove(path)
+	if int64(len(buf)) > max {
 		return fmt.Errorf("exceeds size cap %s", formatBytes(max))
 	}
-	if n == 0 {
-		_ = os.Remove(path)
+	if len(buf) == 0 {
 		return fmt.Errorf("empty response")
+	}
+	if err := safepath.SafeWrite(root, rel, buf, 0o600); err != nil {
+		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
 }

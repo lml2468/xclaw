@@ -1,15 +1,25 @@
 <script lang="ts">
   import { store } from "../store.svelte";
+  import { isImeComposing } from "../keys";
 
   let draft = $state("");
   let ta: HTMLTextAreaElement;
 
-  const canSend = $derived(draft.trim().length > 0 && !!store.selectedBotId);
+  // Gated on `awaiting` so Enter-spam while the typing indicator is up
+  // doesn't queue duplicate user bubbles + Send RPCs. The daemon's per-
+  // session lock serializes them, but the UI shouldn't accept a burst
+  // the operator only intended once.
+  const canSend = $derived(draft.trim().length > 0 && !!store.selectedBotId && !store.currentSession?.awaiting);
 
   export function setDraft(text: string) {
     draft = text;
     ta?.focus();
-    autogrow();
+ // Wait for Svelte to commit the new bind:value before measuring
+ // ta.scrollHeight — running autogrow synchronously here measured the
+ // OLD textarea content, so a long EmptyState prompt landed at 1 row
+ // until the next keystroke. Matches the send
+ // pattern below.
+    requestAnimationFrame(autogrow);
   }
   function autogrow() {
     if (!ta) return;
@@ -23,7 +33,29 @@
     requestAnimationFrame(autogrow);
   }
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+ // Skip during IME composition (CJK Pinyin / Wubi / Kana / Hangul commit
+ // candidates with Enter, delivered as keydown with isComposing=true).
+ // Without this guard the handler swallows the commit and ships a
+ // half-typed pinyin/romaji string — every other message for Chinese,
+ // Japanese, Korean users.
+    if (isImeComposing(e)) return;
+ // ⌘↩ / Ctrl-↩ is the canonical "force send" — bypass the Shift-Enter
+ // newline path and send even if a newline character is present
+ // (matches Slack/Discord/Linear muscle memory). Require !shiftKey AND
+ // !altKey too so Shift+Cmd+Enter retains the prior insert-newline
+ // behavior, and so Cmd+Alt+Enter (operator holds Alt to type a
+ // newline and happens to also hold Cmd) doesn't silently force-send a
+ // half-drafted message.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      send();
+      return;
+    }
+ // Plain Enter sends; Shift / Alt / Option-Enter insert a newline.
+ // previously only Shift was excluded, so Alt+Enter
+ // (VS Code "quick fix" muscle memory) and Option+Enter would silently
+ // force-send a half-drafted message.
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey) { e.preventDefault(); send(); }
   }
 </script>
 
@@ -34,6 +66,8 @@
       bind:value={draft}
       rows="1"
       placeholder="给 agent 发消息…"
+      aria-label="消息"
+      maxlength="32768"
       oninput={autogrow}
       onkeydown={onKey}
     ></textarea>

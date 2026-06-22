@@ -37,7 +37,10 @@ mkdir -p "$out"
 
 echo "▸ cross-compiling xclawd (zero-cgo)…"
 build_xclawd() { # $1=GOOS $2=GOARCH $3=out
-  ( cd "$core" && CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -ldflags "-s -w" -o "$3" ./cmd/xclawd )
+  # -trimpath strips the operator's $HOME / module-cache from binary paths,
+  # -buildvcs=false omits the local git-dirty flag — both required for any
+  # third party trying to reproduce a release artifact byte-for-byte.
+  ( cd "$core" && CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$3" ./cmd/xclawd )
 }
 # Daemon binaries for all four platforms (CI picks these up for win/linux).
 build_xclawd darwin  arm64 "$out/xclawd-darwin-arm64"
@@ -104,6 +107,12 @@ if [[ -n "$octo_tag" ]]; then
   # non-code file would break the bundle signature.
   mkdir -p "$bundle/Contents/Resources"
   cp "$out/octo-cli.version" "$bundle/Contents/Resources/octo-cli.version"
+  # SHA-256 sidecar (round 11 Sec) — EnsureInstalled verifies the helper
+  # against this before copying it to ~/.xclaw/bin. Without it, anyone with
+  # write access to Helpers/ (admin, tampered .zip, post-install attacker)
+  # could swap the binary and have it silently executed as the user on
+  # next launch. Sits in Resources so it's sealed as data, not signed code.
+  ( cd "$bundle/Contents/Helpers" && shasum -a 256 octo-cli ) > "$bundle/Contents/Resources/octo-cli.sha256"
 fi
 
 if [[ -n "$sign_identity" ]]; then

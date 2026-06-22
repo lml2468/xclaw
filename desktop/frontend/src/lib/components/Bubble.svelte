@@ -2,13 +2,12 @@
   import type { Message } from "../store.svelte";
   import { renderMarkdown, onMarkdownCopyClick } from "../markdown";
   import Avatar from "./Avatar.svelte";
-  import Typewriter from "./Typewriter.svelte";
 
   let { message }: { message: Message } = $props();
 
   const isUser = $derived(message.role === "user");
   const isTool = $derived(message.role === "tool");
-  const html = $derived(!isUser && !isTool && !message.streaming ? renderMarkdown(message.text) : "");
+  const html = $derived(!isUser && !isTool ? renderMarkdown(message.text) : "");
 
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -18,6 +17,12 @@
     clearTimeout(copyTimer);
     copyTimer = setTimeout(() => (copied = false), 1200);
   }
+ // Clear the copy-confirmation timer on unmount. Without this, switching
+ // sessions / resetting the transcript within the 1200 ms window
+ // unmounts the Bubble but the setTimeout still fires, writing to a
+ // detached component's reactive state and pinning the (now-detached)
+ // closure in memory until the timer expires. Latent reactive-write leak.
+  $effect(() => () => clearTimeout(copyTimer));
 </script>
 
 {#if isTool}
@@ -29,12 +34,53 @@
     <span class="av">
       {#if isUser}<Avatar name="You" size={36} />{:else}<Avatar octopus size={36} />{/if}
     </span>
-    <div class="bubble" class:user={isUser} oncontextmenu={(e) => { e.preventDefault(); copy(); }} role="article">
+    <div
+      class="bubble"
+      class:user={isUser}
+      oncontextmenu={(e) => {
+ // Hijack right-click ONLY when the user clicked outside any
+ // interactive child (link, image, code block, table, form
+ // control, …). A bare `e.preventDefault` on the bubble would
+ // steal native context menus on agent-rendered links, leaving
+ // no way to "open in new tab" or "copy link address".
+ //
+ // UL/OL/LI/BLOCKQUOTE/H1-6 are NOT in the bail list: those
+ // elements are not interactive and have no native context-menu
+ // value worth preserving, so including them
+ // disabled copy-on-right-click for nearly every agent reply
+ // (which almost always contains lists/headings). also
+ // added FORM since an agent-emitted form's submit could navigate
+ // the host page on a stray Enter — though markdown.ts now
+ // FORBID_TAGS the whole form-control family anyway as the
+ // primary defense.
+        const t = e.target as HTMLElement | null;
+        const limit = e.currentTarget as HTMLElement;
+        const BAIL = /^(A|IMG|CODE|PRE|BUTTON|TABLE|TD|TH|SVG|DETAILS|SUMMARY|INPUT|SELECT|TEXTAREA|LABEL|FORM)$/;
+        for (let n = t; n && n !== limit; n = n.parentElement) {
+          if (BAIL.test(n.tagName)) return;
+        }
+        e.preventDefault();
+        copy();
+      }}
+      role="article"
+    >
       {#if copied}<span class="copied" aria-live="polite">已复制</span>{/if}
+ <!-- Visible focusable copy button — keyboard users tab here, sighted
+           users see it on hover. Right-click still works for muscle memory.
+           replaces the prior `tabindex` on the bubble,
+           which screen-readers announced as "article" with no actionable
+           cue. Hidden until hover or focus to keep the chat surface clean. -->
+      <button
+        class="copy-btn"
+        type="button"
+        aria-label="复制消息"
+        title="复制消息"
+        onclick={copy}
+      >
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      </button>
       {#if isUser}
         <span class="plain">{message.text}</span>
-      {:else if message.streaming}
-        <Typewriter text={message.text} />
       {:else}
         <div class="md" onclick={onMarkdownCopyClick} role="presentation">{@html html}</div>
       {/if}
@@ -68,6 +114,29 @@
     padding: 2px 8px; border-radius: 999px; box-shadow: var(--elev-1);
     animation: copied-in 0.14s ease both;
   }
+  .copy-btn {
+    position: absolute; top: 5px; right: 5px; z-index: 1;
+    width: 22px; height: 22px; padding: 0; border: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 5px; cursor: pointer;
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+ /* When hidden, pass clicks through to the markdown underneath — a link
+       in the top-right corner of a long reply would otherwise be hijacked
+       by the invisible button. Restored on hover /
+       keyboard focus so the button stays clickable when visible. */
+    opacity: 0; pointer-events: none;
+    transition: opacity .14s ease, background .14s ease;
+  }
+  .bubble:hover .copy-btn,
+  .copy-btn:focus-visible { opacity: 1; pointer-events: auto; }
+  .copy-btn:hover { background: color-mix(in srgb, var(--ink) 16%, transparent); color: var(--ink); }
+  .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .bubble.user .copy-btn {
+    color: rgba(255, 255, 255, .85);
+    background: rgba(255, 255, 255, .14);
+  }
+  .bubble.user .copy-btn:hover { background: rgba(255, 255, 255, .25); color: #fff; }
   @keyframes copied-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
   .bubble.user {
     background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); color: #fff;
@@ -90,7 +159,7 @@
   }
   .tool .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 
-  /* Markdown */
+ /* Markdown */
   .md :global(p) { margin: 0 0 7px; }
   .md :global(p:last-child) { margin-bottom: 0; }
   .md :global(code) { font-family: var(--mono); font-size: 0.88em; }
@@ -98,5 +167,5 @@
   .md :global(a) { color: var(--accent-strong); }
   .md :global(ul), .md :global(ol) { margin: 0 0 7px; padding-left: 20px; }
   .md :global(blockquote) { margin: 0 0 7px; padding-left: 11px; border-left: 3px solid var(--hairline-strong); color: var(--ink-soft); }
-  /* Code-block + syntax-token rules are shared via lib/styles/markdown.css. */
+ /* Code-block + syntax-token rules are shared via lib/styles/markdown.css. */
 </style>

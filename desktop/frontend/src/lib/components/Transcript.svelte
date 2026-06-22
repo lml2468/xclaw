@@ -11,9 +11,11 @@
 
   const session = $derived(store.currentSession);
   const messages = $derived(session?.messages ?? []);
-  // Bump on new messages, growing text, AND turn state so the view tracks the
-  // working spinner appearing/disappearing too.
-  const tick = $derived(messages.length + (messages.at(-1)?.text.length ?? 0) + (session?.awaiting ? 1 : 0));
+ // Bump on new messages and on turn-state transitions (working spinner
+ // appearing/disappearing). Replies arrive as whole-text pushes today, so
+ // the array's length is the granularity that matters; if a streaming
+ // text path is added later, mix in the last message's text length here.
+  const tick = $derived(messages.length + (session?.awaiting ? 1 : 0));
 
   function onScroll() {
     if (!scroller) return;
@@ -21,19 +23,28 @@
   }
   $effect(() => {
     tick;
-    if (atBottom && scroller) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
+    if (!atBottom || !scroller) return;
+ // Cancel any prior queued frame so a burst of new messages collapses
+ // to one scroll; the cleanup also unpins the closure
+ // when the component is destroyed mid-frame.
+    const id = requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
+    return () => cancelAnimationFrame(id);
   });
   $effect(() => {
     store.selectedKey;
     atBottom = true;
-    requestAnimationFrame(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight; });
+    const id = requestAnimationFrame(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight; });
+    return () => cancelAnimationFrame(id);
   });
 </script>
 
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
   <div class="stack">
     {#if store.lastError}
-      <div class="err" role="alert" aria-live="polite">{store.lastError}</div>
+      <div class="err" role="alert">
+        <span>{store.lastError}</span>
+        <button class="err-x" aria-label="关闭错误" title="关闭" onclick={() => store.clearLastError()}>×</button>
+      </div>
     {/if}
 
     {#if messages.length === 0}
@@ -43,7 +54,7 @@
         <Bubble message={m} />
       {/each}
       {#if session?.awaiting}
-        <!-- The answer streams into the status box (process), not here. The chat
+ <!-- The answer streams into the status box (process), not here. The chat
              shows a working indicator until the final answer lands at turn end. -->
         <div class="row">
           <Avatar octopus size={36} />
@@ -58,7 +69,9 @@
   .scroller { flex: 1; overflow-y: auto; background: transparent; }
   .stack { display: flex; flex-direction: column; gap: 14px; padding: 22px var(--gutter, 28px) 12px; max-width: var(--content-max); width: 100%; margin: 0 auto; }
 
-  .err { align-self: center; color: var(--danger); font-size: 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: var(--radius-control); padding: 7px 12px; }
+  .err { align-self: center; color: var(--danger); font-size: 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: var(--radius-control); padding: 7px 12px; display: inline-flex; align-items: center; gap: 8px; }
+  .err-x { border: 0; background: transparent; color: inherit; font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; opacity: 0.7; }
+  .err-x:hover { opacity: 1; }
 
   .row { display: flex; gap: 10px; align-items: flex-start; }
   .typing { display: inline-flex; gap: 5px; padding: 13px 14px; background: var(--in-bubble); border-radius: var(--bubble-radius); border-top-left-radius: 3px; box-shadow: 0 1px 1.5px rgba(20,22,28,0.08); }

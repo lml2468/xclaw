@@ -168,7 +168,7 @@ func TestResetCommandClearsResumeAndReplies(t *testing.T) {
 		router.InboundMessage{ChannelType: router.ChannelDM, FromUID: "u1", Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.Resume("u1"); got != "thr-1" {
+	if got, _ := st.Resume("u1", "fake"); got != "thr-1" {
 		t.Fatalf("resume not persisted before reset: %q", got)
 	}
 
@@ -182,7 +182,7 @@ func TestResetCommandClearsResumeAndReplies(t *testing.T) {
 		t.Fatalf("want accepted, got %s", d)
 	}
 	// Resume id cleared.
-	if got, _ := st.Resume("u1"); got != "" {
+	if got, _ := st.Resume("u1", "fake"); got != "" {
 		t.Fatalf("resume not cleared by /reset: %q", got)
 	}
 	// Stored conversation history cleared too (the /reset side effect, mirroring
@@ -468,7 +468,7 @@ func TestDispatchTimeoutReleasesSessionLock(t *testing.T) {
 	}
 }
 
-// --- terminal agent error (MLT-32) ---
+// --- terminal agent error ---
 
 // TestTerminalErrorDoesNotPersistPartialOrAdvanceResume asserts that a turn
 // ending in a terminal agent error (e.g. max_turns) neither persists the partial
@@ -489,7 +489,7 @@ func TestTerminalErrorDoesNotPersistPartialOrAdvanceResume(t *testing.T) {
 	}
 
 	// 1. Resume id NOT advanced — next turn must not skip past the errored work.
-	if got, _ := st.Resume("u1"); got != "" {
+	if got, _ := st.Resume("u1", "fake"); got != "" {
 		t.Fatalf("resume must not advance on a terminal error, got %q", got)
 	}
 	// 2. Partial reply NOT persisted as an assistant turn (only the user message).
@@ -539,7 +539,7 @@ func TestTransientErrorYieldsBusyReply(t *testing.T) {
 	if _, err := gw.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("transient-error path must not error the handler: %v", err)
 	}
-	if got, _ := st.Resume("u1"); got != "" {
+	if got, _ := st.Resume("u1", "fake"); got != "" {
 		t.Fatalf("resume must not advance on a transient error, got %q", got)
 	}
 	got := sink.all()
@@ -571,7 +571,7 @@ func TestRecoverableErrorDoesNotAbortTurn(t *testing.T) {
 	}
 
 	// 1. Resume id advanced — the turn completed successfully.
-	if got, _ := st.Resume("u1"); got != "thr-ok" {
+	if got, _ := st.Resume("u1", "recoverable"); got != "thr-ok" {
 		t.Fatalf("resume should advance on a recoverable error, got %q", got)
 	}
 	// 2. The reply persisted as an assistant turn.

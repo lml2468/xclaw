@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -116,7 +118,7 @@ func TestExtractTarGz(t *testing.T) {
 }
 
 // runUpgrade points the package's HTTP seams at an httptest server and HOME at a
-// temp dir (so Dir()/BinPath() never touch the real ~/.xclaw), then runs Upgrade.
+// temp dir (so Dir/BinPath never touch the real ~/.xclaw), then runs Upgrade.
 func runUpgrade(t *testing.T, h http.HandlerFunc) (string, error) {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -199,7 +201,7 @@ func TestLoginRequiresRobotIDAndToken(t *testing.T) {
 }
 
 func TestLoginMissingBinaryErrors(t *testing.T) {
-	// Point HOME at an empty temp dir so BinPath() resolves to a path that
+	// Point HOME at an empty temp dir so BinPath resolves to a path that
 	// doesn't exist; Login must refuse with a clear error rather than spawn.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -221,5 +223,101 @@ func TestLogoutNoOpOnAbsentBinary(t *testing.T) {
 	}
 	if err := Logout(context.Background(), ""); err != nil {
 		t.Errorf("Logout with empty robotID should be no-op, got %v", err)
+	}
+}
+
+func TestHasProfileMissingFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if HasProfile("any") {
+		t.Fatal("HasProfile must return false when config.json is missing")
+	}
+}
+
+func TestHasProfileFinds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := filepath.Join(home, ".octo-cli")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"profiles":{"bot_a":{"robot_id":"bot_a"},"bot_b":{"robot_id":"bot_b"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasProfile("bot_a") {
+		t.Error("HasProfile(\"bot_a\") = false, want true")
+	}
+	if HasProfile("bot_unknown") {
+		t.Error("HasProfile(\"bot_unknown\") = true, want false")
+	}
+	if HasProfile("") {
+		t.Error("empty robotID must always return false")
+	}
+}
+
+// TestRedactChildOutput exercises the security-path regex that masks
+// bf_/uk_/sk_/sk-/ANTHROPIC_ token-shaped substrings before they reach
+// logs or the desktop's error toast. The redactor is the only thing
+// standing between an octo-cli stderr regression and a logged credential.
+func TestRedactChildOutput(t *testing.T) {
+	cases := []struct {
+		name, in string
+		wantHas  []string // substrings expected in output
+		wantNot  []string // substrings that must NOT appear
+	}{
+		{
+			name:    "bare token",
+			in:      "auth login: bf_secret_abc123",
+			wantNot: []string{"bf_secret_abc123"},
+		},
+		{
+			name:    "equals-glued (Authorization=)",
+			in:      "request failed: Authorization=bf_secret_xyz",
+			wantNot: []string{"bf_secret_xyz"},
+		},
+		{
+			name:    "quoted",
+			in:      `error: header "bf_quoted_token" rejected`,
+			wantNot: []string{"bf_quoted_token"},
+		},
+		{
+			name:    "colon-glued",
+			in:      "header token:sk-ant-api03-NOTREAL",
+			wantNot: []string{"sk-ant-api03-NOTREAL"},
+		},
+		{
+			name:    "ANSI-wrapped",
+			in:      "\x1b[31mANTHROPIC_API_KEY=sk_secret\x1b[0m",
+			wantNot: []string{"sk_secret"}, // ANTHROPIC_ + sk_ both should be masked
+		},
+		{
+			name:    "non-token content preserved",
+			in:      "normal message no secrets here at all",
+			wantHas: []string{"normal", "message", "no secrets"},
+			wantNot: []string{"<redacted>"},
+		},
+		{
+			name:    "length cap with ellipsis",
+			in:      "x" + string(make([]byte, 400)),
+			wantHas: []string{"…"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactChildOutput([]byte(tc.in))
+			for _, want := range tc.wantHas {
+				if !strings.Contains(got, want) {
+					t.Errorf("output %q missing expected %q", got, want)
+				}
+			}
+			for _, leak := range tc.wantNot {
+				if strings.Contains(got, leak) {
+					t.Errorf("output %q leaked %q (should have been masked)", got, leak)
+				}
+			}
+		})
 	}
 }

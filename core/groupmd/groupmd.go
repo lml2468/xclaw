@@ -35,6 +35,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // MaxBytes caps an instruction file we will inject, keeping the prompt bounded.
@@ -124,18 +126,54 @@ func (l *Loader) Load(channelID string) (string, bool) {
 }
 
 // loadFile loads "<dir>/<id>.md" with slug-pinning, mtime caching, a size cap,
-// and a group/world-writable refusal.
+// and a group/world-writable refusal. All filesystem I/O routes through
+// safepath (per CLAUDE.md's policy on path operations under a managed root)
+// so a symlinked intermediate cannot satisfy the stat-based perm/mtime check
+// while readCapped's SafeOpen rejects the symlink — that drift would silently
+// produce no content AND never invalidate the cache slot, leaving the prior
+// content live indefinitely. SafeLstat enforces dirfd-walk through every
+// parent component AND refuses a leaf symlink, matching readCapped's view.
 func (l *Loader) loadFile(id string) (string, bool) {
 	if !isSafeID(id) {
 		return "", false
 	}
 	path := filepath.Join(l.dir, id+".md")
+	leaf := id + ".md"
 
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		// Missing/irregular: remember absence so a repeated miss is cheap, but a
-		// later create is still picked up (Stat runs on every Load).
+	st, err := safepath.SafeLstat(l.dir, leaf)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			// Surface symlink refusal / EACCES / EIO so the operator can
+			// tell "no GROUP.md" from "configured but rejected" — the prior
+			// silent empty-cache made misconfigured perms or an
+			// agent-planted symlink indistinguishable from a missing file.
+			fmt.Fprintf(os.Stderr, "[groupmd] refusing %s: %v\n", path, err)
+		}
+		// Missing, symlinked-leaf-refused, or symlinked-intermediate-refused —
+		// remember absence so a repeated miss is cheap; an unrelated load that
+		// later succeeds picks up the new content (SafeLstat runs every Load).
 		l.remember(path, cacheEntry{})
+		return "", false
+	}
+	if !st.Mode().IsRegular() {
+		l.remember(path, cacheEntry{modTime: st.ModTime().UnixNano(), size: st.Size()})
+		return "", false
+	}
+
+	// Defense-in-depth: refuse a group/world-writable file. Its contents are
+	// injected UNSANITIZED into the system prompt, so a file anyone-but-the-
+	// operator can write is an untrusted injection sink. This is NOT a substitute
+	// for proper OS perms — see the package header.
+	//
+	// Runs BEFORE the cache hot path: a `chmod 0666` that doesn't touch mtime
+	// would otherwise keep the previously-cached content live indefinitely
+	// (the perm check ran only on the slow path, so a stale cache hit
+	// silently bypassed the guard).
+	if st.Mode().Perm()&0o022 != 0 {
+		fmt.Fprintf(os.Stderr,
+			"[groupmd] refusing %s: file is group/world-writable (mode %04o). Make it writable only by the gateway user.\n",
+			path, st.Mode().Perm())
+		l.remember(path, cacheEntry{modTime: st.ModTime().UnixNano(), size: st.Size()})
 		return "", false
 	}
 
@@ -145,28 +183,20 @@ func (l *Loader) loadFile(id string) (string, bool) {
 		return cached.content, cached.content != ""
 	}
 
-	// Defense-in-depth: refuse a group/world-writable file. Its contents are
-	// injected UNSANITIZED into the system prompt, so a file anyone-but-the-
-	// operator can write is an untrusted injection sink. This is NOT a substitute
-	// for proper OS perms — see the package header.
-	if st.Mode().Perm()&0o022 != 0 {
-		fmt.Fprintf(os.Stderr,
-			"[groupmd] refusing %s: file is group/world-writable (mode %04o). Make it writable only by the gateway user.\n",
-			path, st.Mode().Perm())
-		l.remember(path, cacheEntry{modTime: mod, size: st.Size()})
-		return "", false
-	}
-
-	content := readCapped(path)
+	content := readCapped(l.dir, leaf)
 	l.remember(path, cacheEntry{modTime: mod, size: st.Size(), content: content})
 	return content, content != ""
 }
 
 // readCapped reads at most MaxBytes+1 bytes (so an oversized file can't allocate
 // unbounded memory), trims, and appends a truncation notice when over the cap.
-// A read error degrades to "".
-func readCapped(path string) string {
-	f, err := os.Open(path)
+// A read error degrades to "". opens via safepath.SafeOpen
+// (dirfd-walk + O_NOFOLLOW) so an agent with Bash that plants
+// `<groupConfigDir>/<id>.md → ~/.aws/credentials` cannot redirect the
+// operator-trusted `[Group instructions]` source — same class of attack
+// as the prior SOUL/AGENTS fix, against the SAME trusted region.
+func readCapped(dir, leaf string) string {
+	f, err := safepath.SafeOpen(dir, leaf)
 	if err != nil {
 		return ""
 	}

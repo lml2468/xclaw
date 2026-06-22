@@ -34,6 +34,16 @@ var (
 func main() {
 	preview = os.Getenv("XCLAW_PREVIEW") != ""
 
+	// All the desktop's per-bot data lives under ~/.xclaw/<id>/. If HOME is
+	// unset (rare but real on misconfigured launchd / systemd units) every
+	// `home, _ := os.UserHomeDir` site below silently lands at "/.xclaw"
+	// or even ".xclaw" relative to CWD — config writes, octo-cli installs,
+	// secret reads all scatter to the wrong place. Fail loudly at startup
+	// rather than corrupting on first use.
+	if _, err := os.UserHomeDir(); err != nil {
+		log.Fatalf("xclaw: cannot resolve user home directory: %v", err)
+	}
+
 	services := []application.Service{}
 	if !preview {
 		bridge = NewXClawService()
@@ -126,17 +136,13 @@ func setupSystemTray() {
 
 	menu := app.NewMenu()
 	menu.Add("Open Console").OnClick(func(*application.Context) { openConsole() })
-	menu.Add("Edit Bots…").OnClick(func(*application.Context) {
+	menu.Add("Settings…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-editor")
+		app.Event.Emit("xclaw:open-settings", map[string]string{"tab": "basic"})
 	})
-	menu.Add("Manage Skills…").OnClick(func(*application.Context) {
+	menu.Add("Token Usage…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-skills")
-	})
-	menu.Add("Manage Workflows…").OnClick(func(*application.Context) {
-		openConsole()
-		app.Event.Emit("xclaw:open-workflows")
+		app.Event.Emit("xclaw:open-usage")
 	})
 	menu.AddSeparator()
 	menu.Add("Restart Core").OnClick(func(*application.Context) {

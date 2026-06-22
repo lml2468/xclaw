@@ -9,8 +9,19 @@ import DOMPurify from "dompurify";
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
     const el = node as Element;
-    const href = el.getAttribute("href") ?? "";
-    if (href && !/^(https?:|mailto:|#|\/)/i.test(href.trim())) {
+    const href = (el.getAttribute("href") ?? "").trim();
+ // Allow only safe schemes / fragments / SAME-PAGE absolute paths.
+ // Scheme tests require `://` (or `:` for mailto: with an addr) so a
+ // weird input like `https:javascript:alert(1)` doesn't match the prior
+ // `^https?:` prefix-only check. Bare leading-slash that starts with
+ // `//` is protocol-relative (`//evil.com`) — reject. Mailto must
+ // carry at least one char after the colon so `mailto:` alone is no-op.
+    const safe =
+      /^https?:\/\/[^\s]/i.test(href) ||
+      /^mailto:[^\s]/i.test(href) ||
+      href.startsWith("#") ||
+      (href.startsWith("/") && !href.startsWith("//"));
+    if (href && !safe) {
       el.removeAttribute("href");
     }
     if (el.getAttribute("target")) {
@@ -91,7 +102,25 @@ export function renderMarkdown(src: string): string {
   const hit = cache.get(src);
   if (hit !== undefined) return hit;
   const raw = marked.parse(src, { async: false }) as string;
-  const clean = DOMPurify.sanitize(raw, { ADD_ATTR: ["target"] });
+ // + R21 fix: pin href/src/xlink:href to safe
+ // schemes. DOMPurify's default already blocks javascript:; we additionally
+ // block `data:` (an `<img src="data:text/html,...">` or SVG `<use
+ // xlink:href="https://tracker">` can phone home for tracking even though
+ // it can't execute — the Wails webview has no CSP). The regex accepts:
+ // - https? / mailto / tel schemes
+ // - anchors (#section)
+ // - absolute-single-slash paths (/foo, NOT //attacker.com)
+ // - bare relative paths (foo, foo/bar.png,./foo,../foo) — these
+ // are the most common idiom in agent-rendered markdown and round
+ // 20's strict regex broke them all (image/link silently dropped).
+ // Note: any href starting with `/` is checked for the second char
+ // via the negative lookahead `(?!\/)` so protocol-relative `//evil.com`
+ // is refused.
+  const clean = DOMPurify.sanitize(raw, {
+    ADD_ATTR: ["target"],
+    FORBID_TAGS: ["form"],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|#|\/(?!\/)|\.{0,2}\/|[^/:#?]+(?:[/?#]|$))/i,
+  });
   if (cache.size >= MAX) {
     const first = cache.keys().next().value;
     if (first !== undefined) cache.delete(first);

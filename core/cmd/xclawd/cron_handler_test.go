@@ -13,7 +13,7 @@ import (
 )
 
 // TestCronControlHandlers exercises cron.create/list/delete over the multi-bot
-// control handler. After MLT-29 the owner-gate keys off the SERVER-resolved
+// control handler. After the owner-gate keys off the SERVER-resolved
 // owner uid, never the body uid: a forged body uid does not change authorization
 // and the created task binds to the resolved owner. The Manager uses a fixed
 // clock so the schedule is deterministic.
@@ -24,8 +24,12 @@ func TestCronControlHandlers(t *testing.T) {
 	mgr := cron.NewManager(store, owner, func() time.Time { return clk })
 
 	reg := newBotRegistry(nil)
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr})
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "nocron"}}) // cron == nil
+	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	b1.target = &botTarget{id: "b1", cron: mgr}
+	nocron := &botRuntime{cfg: config.Resolved{BotID: "nocron"}} // cron == nil
+	nocron.target = &botTarget{id: "nocron"}
+	reg.add(b1)
+	reg.add(nocron)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 
 	call := func(typ string, body any) (any, error) {
@@ -89,7 +93,9 @@ func TestCronControlHandlersNoOwner(t *testing.T) {
 	mgr := cron.NewManager(store, "", nil) // empty owner = unresolved
 
 	reg := newBotRegistry(nil)
-	reg.add(&botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr})
+	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	b1.target = &botTarget{id: "b1", cron: mgr}
+	reg.add(b1)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 
 	raw, _ := json.Marshal(control.CronCreateBody{BotID: "b1", Schedule: "0 9 * * *", Prompt: "p"})

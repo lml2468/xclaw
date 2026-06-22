@@ -2,9 +2,9 @@
 //
 // Users control their session without leaving the chat:
 //
-//	/reset   — clear this session's conversation history
-//	/config  — show the effective per-session settings
-//	/help    — list available commands
+//	/reset — clear this session's conversation history
+//	/config — show the effective per-session settings
+//	/help — list available commands
 //
 // Commands are matched on the FIRST line of the inbound body AFTER the router
 // has stripped any leading @bot mention (so `@bot /reset` works in groups).
@@ -50,7 +50,8 @@ type parsedCommand struct {
 // merely mentions "/reset" mid-sentence is NOT treated as a command — it must
 // lead. Mirrors commands.ts parseCommand.
 func parseCommand(body string) (parsedCommand, bool) {
-	firstLine := strings.TrimSpace(strings.SplitN(body, "\n", 2)[0])
+	firstLine, _, _ := strings.Cut(body, "\n")
+	firstLine = strings.TrimSpace(firstLine)
 	m := commandRE.FindStringSubmatch(firstLine)
 	if m == nil {
 		return parsedCommand{}, false

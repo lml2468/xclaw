@@ -37,13 +37,46 @@ func envWithOctoBin() []string {
 
 // SocketPath returns the control-bus socket path for this user. Kept short to
 // stay under the ~104-byte sockaddr_un limit. On Windows, AF_UNIX still wants a
-// filesystem path (Win10 1803+), placed in the temp dir.
+// filesystem path (Win10 1803+), placed in the temp dir, and os.Getuid
+// returns -1 — so we derive a stable per-user suffix from USERNAME / USERPROFILE
+// instead.
 func SocketPath() string {
-	name := fmt.Sprintf("xclaw-%d.sock", os.Getuid())
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), name)
+		return filepath.Join(os.TempDir(), fmt.Sprintf("xclaw-%s.sock", windowsUserSuffix()))
 	}
-	return filepath.Join("/tmp", name)
+	return filepath.Join("/tmp", fmt.Sprintf("xclaw-%d.sock", os.Getuid()))
+}
+
+// windowsUserSuffix derives a short stable per-user token. USERNAME is the
+// conventional source; fall back to the basename of USERPROFILE; final
+// fallback is "anon" (still per-user via the temp dir's user prefix on
+// %LOCALAPPDATA%\Temp, but the prefix is explicit).
+func windowsUserSuffix() string {
+	if u := os.Getenv("USERNAME"); u != "" {
+		return sanitizeWinUser(u)
+	}
+	if p := os.Getenv("USERPROFILE"); p != "" {
+		return sanitizeWinUser(filepath.Base(p))
+	}
+	return "anon"
+}
+
+// sanitizeWinUser strips characters that would be illegal in a socket name
+// (anything not [A-Za-z0-9._-]), capping at 32 chars.
+func sanitizeWinUser(s string) string {
+	var b []byte
+	for i := 0; i < len(s) && len(b) < 32; i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+			b = append(b, c)
+		}
+	}
+	if len(b) == 0 {
+		return "anon"
+	}
+	return string(b)
 }
 
 // ConfigPath is the daemon's multi-bot config (~/.xclaw/config.json).
@@ -60,7 +93,7 @@ func ResolveBinary() (string, error) {
 			return override, nil
 		}
 	}
-	// Bundled next to the app executable (production): ../Helpers/xclawd.
+	// Bundled next to the app executable (production):../Helpers/xclawd.
 	if exe, err := os.Executable(); err == nil {
 		cand := filepath.Join(filepath.Dir(exe), "..", "Helpers", binName())
 		if isExec(cand) {
@@ -73,7 +106,7 @@ func ResolveBinary() (string, error) {
 	// branch above resolves first via the app's own executable path, so a hostile
 	// cwd can't substitute a binary for an installed app.
 	if dir, err := os.Getwd(); err == nil {
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			cand := filepath.Join(dir, "core", ".xclawd-dev")
 			if isExec(cand) {
 				return cand, nil
@@ -104,7 +137,8 @@ type Supervisor struct {
 
 	mu        sync.Mutex
 	cmd       *exec.Cmd
-	authToken string // capability token minted for the current daemon (MLT-37)
+	exited    chan struct{} // closed when the reaper goroutine has Wait()ed on cmd
+	authToken string        // capability token minted for the current daemon
 }
 
 // Token returns the control-bus capability token for the currently running
@@ -135,7 +169,7 @@ func (s *Supervisor) startLocked() error {
 	// private pipe wired to the daemon's stdin (-control-auth-stdin), never an env
 	// var or argv (both world-readable via /proc on Linux). The daemon launches
 	// the agent CLI with its own stdin, so the spawned agent never inherits this
-	// fd and cannot read the token. Held in daemon memory only. (MLT-37)
+	// fd and cannot read the token. Held in daemon memory only.
 	token, err := randomToken()
 	if err != nil {
 		return fmt.Errorf("mint control token: %w", err)
@@ -163,6 +197,18 @@ func (s *Supervisor) startLocked() error {
 
 	s.cmd = cmd
 	s.authToken = token
+	// Spawn a reaper goroutine so a daemon that exits on its own (crash,
+	// panic, OOM) is Wait()ed promptly — without it, the kernel keeps the
+	// child as a zombie on Linux until stopLocked runs (which may be never
+	// if the desktop process stays up but the daemon dies). stopLocked
+	// blocks on this channel so a deliberate stop after a crash doesn't
+	// race the reaper.
+	exited := make(chan struct{})
+	s.exited = exited
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 
 	// Wait (briefly) for the daemon to bind the socket before clients dial.
 	deadline := time.Now().Add(5 * time.Second)
@@ -188,21 +234,28 @@ func (s *Supervisor) stopLocked() {
 		return
 	}
 	_ = s.cmd.Process.Signal(os.Interrupt)
-	done := make(chan struct{})
-	go func() { _, _ = s.cmd.Process.Wait(); close(done) }()
+	// The reaper goroutine (spawned in startLocked) is the sole Waiter
+	// on cmd; observe its exit channel instead of starting a second
+	// Wait (which would error with "Wait already called").
+	done := s.exited
+	if done == nil {
+		// Defensive — pre-reaper invocation shouldn't happen.
+		done = make(chan struct{})
+		close(done)
+	}
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		_ = s.cmd.Process.Kill()
-		// Wait for the Wait() goroutine to reap the killed process, so it doesn't
-		// linger as a zombie and the goroutine doesn't leak. Kill makes Wait return
-		// promptly; bound it so a truly stuck process can't hang Stop forever.
+		// Kill makes Wait return promptly; bound it so a truly stuck
+		// process can't hang Stop forever.
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
 		}
 	}
 	s.cmd = nil
+	s.exited = nil
 	_ = os.Remove(s.SocketPath)
 }
 

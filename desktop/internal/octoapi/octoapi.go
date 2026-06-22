@@ -5,11 +5,11 @@
 // /newbot) and paste it in.
 //
 // One server call:
-//   - create: POST {apiURL}/v1/user/bots, authenticated with the uk_ key as
-//     Authorization: Bearer uk_…, body {name, username?} → {robot_id,
-//     bot_token:"bf_…"}. This is octo-server's existing user-bot endpoint
-//     (modules/botfather/api_user.go createUserBot); the response is a direct
-//     JSON object (no envelope).
+// - create: POST {apiURL}/v1/user/bots, authenticated with the uk_ key as
+// Authorization: Bearer uk_…, body {name, username?} → {robot_id,
+// bot_token:"bf_…"}. This is octo-server's existing user-bot endpoint
+// (modules/botfather/api_user.go createUserBot); the response is a direct
+// JSON object (no envelope).
 //
 // The uk_ key authenticates the operator; it stays in process memory and is
 // never logged.
@@ -21,10 +21,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/desktop/internal/safehttp"
 )
+
+// ValidRobotID is the strictest character class we can put on a value that's
+// about to flow into argv. octo-cli accepts robot ids that are short alnum
+// tokens (e.g. "1234567890ab"); we additionally refuse:
+// - leading `-` so a hostile / MITM'd server can't slip a flag-shaped
+// string into `--bot-id <robotID>`;
+// - leading `.` so values like "." / ".." / ".config" can't address a
+// hidden file or the parent directory inside any future octo-cli
+// "profile dir per bot" storage scheme. The exact
+// literals "." and ".." would also have been accepted by the prior
+// `[A-Za-z0-9._][A-Za-z0-9._-]{0,127}` class.
+//
+// The bot_token returned alongside is also bf_-prefix-checked.
+var ValidRobotID = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 
 // httpTimeout bounds the provisioning request.
 const httpTimeout = 30 * time.Second
@@ -33,17 +52,16 @@ const httpTimeout = 30 * time.Second
 // client-side for a clearer error than a server 401.
 const userAPIKeyPrefix = "uk_"
 
-// validBaseURL applies the same hygiene configstore enforces on apiUrl: https,
-// or http only for localhost/loopback. Keeps the wizard from POSTing the API key
-// to an arbitrary plaintext host (SSRF / credential-leak guard).
+// validBaseURL applies the same SSRF policy configstore enforces on apiUrl
+// (config.IsAllowedURL): https to any non-private host, or http only to a true
+// loopback host. Reusing the canonical check keeps the wizard honest — a
+// hand-rolled `HasPrefix("http://localhost")` would accept the lookalike host
+// `http://localhost.evil.com` and exfiltrate the operator's uk_ API Key.
 func validBaseURL(s string) error {
-	if strings.HasPrefix(s, "https://") {
-		return nil
+	if !config.IsAllowedURL(s) {
+		return fmt.Errorf("API URL 须为 https://（或 http://localhost）")
 	}
-	if strings.HasPrefix(s, "http://localhost") || strings.HasPrefix(s, "http://127.0.0.1") {
-		return nil
-	}
-	return fmt.Errorf("API URL 须为 https://（或 http://localhost）")
+	return nil
 }
 
 // BotResult is the provisioned bot's identity returned to the wizard.
@@ -71,7 +89,51 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 		return BotResult{}, fmt.Errorf("请填写 Bot 名称")
 	}
 
-	cli := &http.Client{Timeout: httpTimeout}
+	// the wizard's apiURL is operator-typed but can be
+	// social-engineered ("paste this URL"). IsAllowedURL only validates IP
+	// literals, so a hostname like "imds.attacker.tld" that resolves to
+	// 169.254.169.254 (cloud metadata) sails through and our uk_ bearer
+	// would land on the metadata service. AssertPublicURL DNS-resolves and
+	// rejects any address inside the private/loopback/link-local/CGN ranges.
+	// http://localhost paths skip the public-host requirement (dev gateways
+	// are allowed by design — IsAllowedURL above already restricted these
+	// to literal loopback / "localhost").
+	if strings.HasPrefix(apiURL, "https://") {
+		if err := config.AssertPublicURL(ctx, apiURL); err != nil {
+			return BotResult{}, fmt.Errorf("API URL 不可达公网：%w", err)
+		}
+	}
+
+	cli := &http.Client{
+		Timeout: httpTimeout,
+		Transport: &http.Transport{
+			// Dial-time guard defends against DNS rebinding between the
+			// AssertPublicURL resolve above and the actual TCP connect (the
+			// resolver can return a different IP at dial time). For
+			// http://localhost we still allow loopback dials; for any other
+			// host we refuse private/local addresses. Shared with octocli
+			// via safehttp.Guard.
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+				Control:   safehttp.Guard(safehttp.Options{Tag: "octoapi", AllowLoopback: strings.HasPrefix(apiURL, "http://")}),
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+		// Refuse to follow redirects: this POST carries the operator's uk_
+		// User API Key in Authorization. Go strips Authorization only on a
+		// cross-host redirect, so a same-host or sibling-subdomain 302 keeps
+		// the key (a server-side bug or compromise at the operator's
+		// octo-server host could exfiltrate the key to a sibling path). The
+		// endpoint is single-shot (no legitimate redirect contract), so any
+		// 3xx is itself the failure signal.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	reqBody := map[string]any{"name": name}
 	var out struct {
@@ -83,6 +145,21 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 	}
 	if out.RobotID == "" || out.BotToken == "" {
 		return BotResult{}, fmt.Errorf("创建 Bot 失败：服务返回不完整")
+	}
+	// The robot_id flows verbatim into octocli's argv as `--bot-id <id>`,
+	// and the bf_ token flows into the keychain + later as a bearer. Both
+	// come from the server's JSON response, so a hostile / MITM'd server
+	// could try to slip a flag-shaped string ("-config=/tmp/x", "-h", …)
+	// that octo-cli's flag parser would consume as a flag for the previous
+	// arg or for the command itself. Refuse anything that isn't a clean
+	// slug. bot_token is validated structurally too —
+	// it must start with the bf_ prefix; otherwise something is wrong on
+	// the server side and we'd persist a useless token.
+	if !ValidRobotID.MatchString(out.RobotID) {
+		return BotResult{}, fmt.Errorf("创建 Bot 失败：服务返回的 robot_id 含非法字符")
+	}
+	if !strings.HasPrefix(out.BotToken, "bf_") {
+		return BotResult{}, fmt.Errorf("创建 Bot 失败：服务返回的 bot_token 缺少 bf_ 前缀")
 	}
 	return BotResult{RobotID: out.RobotID, BotToken: out.BotToken}, nil
 }
@@ -108,6 +185,11 @@ func postJSON(ctx context.Context, cli *http.Client, url, apiKey string, body, o
 
 	// Cap the read so a misbehaving endpoint can't balloon memory.
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A 3xx is treated as failure (see CheckRedirect above): we never want
+	// the wizard to silently follow a redirect with the bearer attached.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf("API URL 拒绝直接 POST（HTTP %d 重定向）", resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("API Key 无效或已失效")
@@ -127,13 +209,36 @@ func postJSON(ctx context.Context, cli *http.Client, url, apiKey string, body, o
 }
 
 // serverMsg extracts octo-server's error message field ({"msg":"…"}) for a
-// human-readable failure, if present.
+// human-readable failure, if present. The value is untrusted server output —
+// control chars are stripped and length is clamped so a hostile or
+// MITM-tampered response can't smuggle ANSI escapes / very large text into
+// the UI's error toast.
 func serverMsg(data []byte) string {
 	var e struct {
 		Msg string `json:"msg"`
 	}
-	if json.Unmarshal(data, &e) == nil {
-		return strings.TrimSpace(e.Msg)
+	if json.Unmarshal(data, &e) != nil {
+		return ""
 	}
-	return ""
+	return sanitizeServerText(e.Msg)
+}
+
+// sanitizeServerText strips control chars (except TAB/LF) and caps the result
+// at 256 chars. Exposed as a separate helper so future server-string
+// surfaces use the same fence.
+func sanitizeServerText(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || r == '\n' || (r >= 0x20 && r != 0x7f) {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	const maxLen = 256
+	if len(out) > maxLen {
+		out = out[:maxLen] + "…"
+	}
+	return out
 }

@@ -139,12 +139,24 @@ type UsageStats struct {
 	Turns            int64   `json:"turns"`
 }
 
+// SecretKind enumerates the categories of secret carried over secret.inject.
+// Owned by wire so both ends of the bus (and any future tool) refer to one
+// canonical contract instead of duplicating string literals at the call site.
+// String-typed (rather than an int) so the JSON shape stays human-readable
+// and the wire surface doesn't have to grow an enum codec.
+type SecretKind string
+
+const (
+	SecretKindOcto    SecretKind = "octoToken"
+	SecretKindGateway SecretKind = "gatewayToken"
+)
+
 // SecretInjectBody carries a single secret into the core (proto: secret.inject).
 // The value is held in memory only — never persisted, never logged.
 type SecretInjectBody struct {
-	BotID string `json:"botId,omitempty"`
-	Kind  string `json:"kind"` // e.g. "octoToken" | "gatewayToken"
-	Value string `json:"value"`
+	BotID string     `json:"botId,omitempty"`
+	Kind  SecretKind `json:"kind"`
+	Value string     `json:"value"`
 	// Clear, when true, explicitly removes the stored token for Kind (the GUI's
 	// "log out / clear credentials" action). Without it an empty Value is ignored,
 	// so seeding from an absent config field never clobbers an injected token.

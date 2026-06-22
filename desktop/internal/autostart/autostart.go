@@ -1,8 +1,8 @@
 // Package autostart manages the "launch at login" toggle on macOS via a per-user
 // LaunchAgent plist under ~/Library/LaunchAgents/. Enabled when the plist
-// exists; Enable() writes it and bootstraps it into the gui session so it loads
-// immediately AND on next login; Disable() reverses both. The plist always
-// points at the .app bundle the daemon is currently running from — moving the
+// exists; Enable writes it and bootstraps it into the gui session so it loads
+// immediately AND on next login; Disable reverses both. The plist always
+// points at the.app bundle the daemon is currently running from — moving the
 // app or running from a dev path will refuse with a clear error.
 //
 // On non-darwin platforms every method is a safe no-op (Enabled → false,
@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 const label = "com.xclaw.desktop"
@@ -26,8 +28,8 @@ func plistPath() string {
 	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
 }
 
-// appBundlePath resolves the .app bundle the daemon is running from
-// (/Applications/XClaw.app or wherever). Refuses if not inside a .app, so we
+// appBundlePath resolves the.app bundle the daemon is running from
+// (/Applications/XClaw.app or wherever). Refuses if not inside a.app, so we
 // don't autostart a dev-build binary at some ephemeral cache path.
 func appBundlePath() (string, error) {
 	exe, err := os.Executable()
@@ -90,20 +92,28 @@ func Enable() error {
 </dict>
 </plist>
 `, label, exe)
-	path := plistPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// was `os.MkdirAll + os.WriteFile` which follows
+	// symlinks at every component. An agent with Bash on the operator's
+	// account plants `~/Library/LaunchAgents/<label>.plist → <attacker
+	// plist or another service's plist>`; next Enable rewrites that
+	// file with our ProgramArguments under the operator's uid. Symlink
+	// creation in ~/Library/LaunchAgents requires no privilege.
+	// safepath walks via dirfd; refuses any symlinked component.
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, "Library/LaunchAgents", 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
+	if err := safepath.SafeWrite(home, "Library/LaunchAgents/"+label+".plist", []byte(plist), 0o644); err != nil {
 		return err
 	}
 	// Reload: bootout any stale registration (might point at an old bundle
 	// path), then bootstrap fresh. bootout exits non-zero when nothing is
 	// loaded — that's fine, ignore.
 	uid := strconv.Itoa(os.Getuid())
+	path := plistPath()
 	_ = exec.Command("launchctl", "bootout", "gui/"+uid, path).Run()
 	if out, err := exec.Command("launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %v: %s", err, string(out))
+		return fmt.Errorf("launchctl bootstrap: %w (output: %s)", err, string(out))
 	}
 	return nil
 }

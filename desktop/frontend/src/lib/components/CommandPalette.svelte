@@ -1,9 +1,11 @@
 <script lang="ts">
-  // ⌘K command palette — search Spaces (bots) + conversations and jump, or run
-  // a command (open settings / skills / workflows / token usage). Wired to the
-  // real store; no mock data. Fully keyboard-driven: ↑/↓ to move, Enter to pick,
-  // Esc to close.
+ // ⌘K command palette — search Spaces (bots) + conversations and jump, or run
+ // a command (open settings / skills / workflows / token usage). Wired to the
+ // real store; no mock data. Fully keyboard-driven: ↑/↓ to move, Enter to pick,
+ // Esc to close.
   import { store } from "../store.svelte";
+  import { isImeComposing } from "../keys";
+  import { untrack } from "svelte";
   import Avatar from "./Avatar.svelte";
 
   let { onclose, onedit, onskills, onworkflows, onusage }:
@@ -14,7 +16,14 @@
   let input: HTMLInputElement;
   let listEl: HTMLDivElement;
 
-  $effect(() => { setTimeout(() => input?.focus(), 40); });
+ // Focus the input one microtask after mount — Svelte needs a tick to commit
+ // the bind:this. setTimeout returns a handle we clear in cleanup so a
+ // double-⌘K that closes the palette within 40 ms doesn't pin a closure to
+ // a detached node.
+  $effect(() => {
+    const id = setTimeout(() => input?.focus(), 40);
+    return () => clearTimeout(id);
+  });
 
   const ql = $derived(q.trim().toLowerCase());
   const bots = $derived(store.bots.filter((b) => !ql || b.id.toLowerCase().includes(ql)));
@@ -37,16 +46,22 @@
     | { kind: "session"; label: string; sub: string; avatar: string; run: () => void }
     | { kind: "cmd"; label: string; run: () => void };
 
-  // Flat, index-addressable list across all three sections for keyboard nav.
+ // Flat, index-addressable list across all three sections for keyboard nav.
   const items = $derived<Item[]>([
     ...bots.map((b) => ({ kind: "space" as const, label: b.id, sub: b.connected ? "在线" : "离线", avatar: b.id, run: () => gotoBot(b.id) })),
     ...sessions.map((s) => ({ kind: "session" as const, label: s.title, sub: s.botId, avatar: s.title, run: () => gotoSession(s.botId, s.key) })),
     ...commands.map((c) => ({ kind: "cmd" as const, label: c.label, run: () => runCmd(c.run) })),
   ]);
 
-  // Keep the highlight in range and reset to the top whenever the query changes.
-  $effect(() => { ql; active = 0; });
-  $effect(() => { if (active >= items.length) active = Math.max(0, items.length - 1); });
+ // Keep the highlight in range and reset to the top whenever the query changes.
+  $effect(() => { ql; untrack(() => { active = 0; }); });
+  $effect(() => {
+    items.length;
+ // Read `active` only via untrack so the corrective write below doesn't
+ // re-trigger this effect on its own update — would race with the
+ // ql-reset effect above when items shrink mid-query.
+    untrack(() => { if (active >= items.length) active = Math.max(0, items.length - 1); });
+  });
   $effect(() => {
     active;
     listEl?.querySelector<HTMLElement>(".pitem.active")?.scrollIntoView({ block: "nearest" });
@@ -57,12 +72,16 @@
   function runCmd(fn: () => void) { onclose(); fn(); }
 
   function onKey(e: KeyboardEvent) {
+ // Skip during IME composition. See lib/keys.ts isImeComposing — CJK
+ // commit Enter would otherwise pick the highlighted palette item
+ // mid-pinyin/kana entry.
+    if (isImeComposing(e)) return;
     if (e.key === "Escape") { e.preventDefault(); onclose(); }
     else if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) active = (active + 1) % items.length; }
     else if (e.key === "ArrowUp") { e.preventDefault(); if (items.length) active = (active - 1 + items.length) % items.length; }
     else if (e.key === "Enter") { e.preventDefault(); items[active]?.run(); }
   }
-  // Section header shown before the first item of each kind.
+ // Section header shown before the first item of each kind.
   function headFor(i: number): string | null {
     const k = items[i].kind;
     if (i > 0 && items[i - 1].kind === k) return null;
@@ -71,7 +90,7 @@
 </script>
 
 <div class="scrim" onclick={onclose} role="presentation">
-  <!-- svelte-ignore a11y_click_events_have_key_events (scrim handles keys; this onclick only stops propagation) -->
+ <!-- svelte-ignore a11y_click_events_have_key_events (scrim handles keys; this onclick only stops propagation) -->
   <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板" tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <div class="pinput">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--ink-faint)"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>

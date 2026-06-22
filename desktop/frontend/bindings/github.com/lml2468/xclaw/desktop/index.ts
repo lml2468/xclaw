@@ -5,3 +5,7 @@ import * as XClawService from "./xclawservice.js";
 export {
     XClawService
 };
+
+export {
+    OctoCliStatus
+} from "./models.js";

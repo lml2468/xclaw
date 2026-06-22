@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -75,7 +76,7 @@ func (c *client) writeLoop() {
 }
 
 // enqueue queues a line for the client. Never blocks and never panics: sendCh is
-// never closed (close() signals via the separate done channel), so a send here
+// never closed (close signals via the separate done channel), so a send here
 // can only fill the buffer (dropped via default) or lose the select to done (the
 // client is going away) — neither sends on a closed channel.
 func (c *client) enqueue(line []byte) {
@@ -203,6 +204,14 @@ func (s *Server) handleConn(c *client) {
 			continue // server ignores non-commands from clients
 		}
 		s.dispatch(c, env)
+	}
+	// Surface scanner failure (oversized frame → bufio.ErrTooLong, framing
+	// truncation, …) instead of silently dropping the client. Routine EOFs
+	// (io.EOF on client disconnect) are normal; everything else is worth a
+	// log line for the operator who later wonders why a peer's session ended.
+	if err := sc.Err(); err != nil && err != io.EOF {
+		s.writeTo(c, Envelope{Kind: KindEvent, Type: "error", TS: s.now().Unix(),
+			Body: mustJSON(ErrorBody{Scope: "wire", Message: err.Error()})})
 	}
 }
 

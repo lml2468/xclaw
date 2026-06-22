@@ -7,7 +7,9 @@
 package groupctx
 
 import (
-	"sort"
+	"cmp"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -184,6 +186,19 @@ func (g *GroupContext) SetCursor(channelID string, lastID int64) {
 	}
 }
 
+// RewindCursor unconditionally sets the cursor — the only path that may
+// move it backward. Used by gateway.runTurn to roll back the cursor when
+// the turn aborts AFTER buildGroupPrompt has already advanced past the
+// current message (e.g. AppendUser failed). Without this the bumped
+// cursor would silently exclude the un-persisted message from every
+// subsequent [Recent group messages] delta even though every other
+// group member saw it on IM.
+func (g *GroupContext) RewindCursor(channelID string, lastID int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cursors[channelID] = lastID
+}
+
 // BuildContextSince renders the messages strictly newer than sinceID, capped by
 // the char budget (UTF-16 units), and returns the rendered RAW block plus the
 // highest id seen (the new cursor). The delta is split into two segments by
@@ -309,11 +324,7 @@ func (g *GroupContext) MemberMap(channelID string) map[string]string {
 	if len(src) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(src))
-	for name, uid := range src {
-		out[name] = uid
-	}
-	return out
+	return maps.Clone(src)
 }
 
 // IsMember reports whether uid is a known member of the channel. Mirrors
@@ -372,11 +383,11 @@ func (g *GroupContext) Members(channelID string) []Member {
 	for uid, name := range m {
 		out = append(out, Member{UID: uid, Name: name})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
+	slices.SortFunc(out, func(a, b Member) int {
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
 		}
-		return out[i].UID < out[j].UID
+		return cmp.Compare(a.UID, b.UID)
 	})
 	return out
 }

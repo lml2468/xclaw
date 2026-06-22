@@ -169,3 +169,52 @@ func TestCacheRefreshOnEdit(t *testing.T) {
 		t.Fatalf("after edit load = %q, want refreshed content", got)
 	}
 }
+
+// TestPermCheckRunsBeforeCacheHotPath is the regression for the F2
+// bug: the cache hot path returned cached content when (mtime, size) matched,
+// but the world-writable defense only ran on the slow path. A `chmod 0666`
+// that doesn't touch mtime kept returning the previously-cached content
+// indefinitely — silently bypassing the defense-in-depth guard.
+func TestPermCheckRunsBeforeCacheHotPath(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "g1.md")
+	if err := os.WriteFile(p, []byte("good content"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	l := New(dir)
+	if got, _ := l.Load("g1"); got != "good content" {
+		t.Fatalf("initial load = %q", got)
+	}
+	// Operator (or attacker who got the file open) flips the mode without
+	// changing mtime or size. The next Load must refuse.
+	if err := os.Chmod(p, 0o666); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got, _ := l.Load("g1"); got != "" {
+		t.Fatalf("Load after chmod 0666 must return empty, got %q (perm check bypassed by cache hot path)", got)
+	}
+}
+
+// TestSymlinkRefused is the regression fora symlink in
+// groupConfigDir whose target is 0600 would otherwise pass the
+// world-writable perm check (Stat follows the link) and silently inject
+// attacker-controlled content as [Group instructions]. The loader must
+// refuse symlinks regardless of the target's mode.
+func TestSymlinkRefused(t *testing.T) {
+	dir := t.TempDir()
+	// Real file (could even be operator-trusted content elsewhere).
+	target := filepath.Join(t.TempDir(), "evil.md")
+	if err := os.WriteFile(target, []byte("agent-controlled content"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	// Symlink at the groupConfigDir entry.
+	linkPath := filepath.Join(dir, "g1.md")
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	l := New(dir)
+	got, ok := l.Load("g1")
+	if ok || got != "" {
+		t.Errorf("symlinked groupmd entry must be refused, got ok=%v content=%q", ok, got)
+	}
+}

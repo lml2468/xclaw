@@ -20,7 +20,7 @@ func TestRegisterRequestAndResponse(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		_, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(RegisterResponse{
-			RobotID: "robot1", IMToken: "imtok", WSURL: "wss://x/ws",
+			RobotID: "robot1", IMToken: "imtok", WSURL: "ws://" + r.Host + "/ws",
 			APIURL: "https://x", OwnerUID: "owner", OwnerChannelID: "oc",
 		})
 	}))
@@ -37,7 +37,7 @@ func TestRegisterRequestAndResponse(t *testing.T) {
 	if gotPath != "/v1/bot/register?force_refresh=true" {
 		t.Fatalf("path = %q", gotPath)
 	}
-	if reg.RobotID != "robot1" || reg.IMToken != "imtok" || reg.WSURL != "wss://x/ws" {
+	if reg.RobotID != "robot1" || reg.IMToken != "imtok" {
 		t.Fatalf("response mapped wrong: %+v", reg)
 	}
 }
@@ -162,7 +162,7 @@ func TestRESTClientTokenRotation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewEncoder(w).Encode(RegisterResponse{
-			RobotID: "r", IMToken: "imtok", WSURL: "wss://x/ws",
+			RobotID: "r", IMToken: "imtok", WSURL: "ws://" + r.Host + "/ws",
 			APIURL: "https://x", OwnerUID: "owner", OwnerChannelID: "oc",
 		})
 	}))
@@ -216,5 +216,81 @@ func TestSendMessageResultFlexMessageID(t *testing.T) {
 				t.Fatalf("MessageID = %q, want %q", got.MessageID, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateWSURL(t *testing.T) {
+	cases := []struct {
+		name, ws, api string
+		ok            bool
+	}{
+		{"wss to same host", "wss://api.example/ws", "https://api.example", true},
+		// Dev mode: same loopback host AND same port (port equality is part
+		// of the new defense-in-depth check; a real dev deployment terminates
+		// REST and WS on the same listener).
+		{"ws to loopback dev", "ws://127.0.0.1:8080/ws", "http://127.0.0.1:8080", true},
+		// Same loopback host but a DIFFERENT port: refused. A compromised
+		// dev server could otherwise redirect the credentialed handshake to
+		// an attacker-controlled port on localhost.
+		{"reject same-host different-port", "ws://127.0.0.1:9090/ws", "http://127.0.0.1:8080", false},
+		{"reject plaintext over https api", "ws://api.example/ws", "https://api.example", false},
+		{"reject cross-host (sibling subdomain hop)", "wss://logger.example/ws", "https://api.example", false},
+		{"reject bogus scheme", "http://api.example/ws", "https://api.example", false},
+		{"reject empty host", "wss:///ws", "https://api.example", false},
+		{"reject unparseable", "::not-a-url", "https://api.example", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateWSURL(tc.ws, tc.api)
+			if tc.ok && err != nil {
+				t.Fatalf("want ok, got err: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("want err, got ok")
+			}
+		})
+	}
+}
+
+// TestSendTextAsWithMsgNoUsesCallerID is the regression for the duplicate-IM
+// hazard rounds 1-7 chased: when sendReplySegment retried after a transient
+// failure, the old SendTextAs path generated a fresh client_msg_no per call,
+// defeating server-side dedup. The fix is the caller passing a stable id;
+// this test pins the contract that the caller's id reaches the wire body
+// unchanged across calls.
+func TestSendTextAsWithMsgNoUsesCallerID(t *testing.T) {
+	var seenIDs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		seenIDs = append(seenIDs, body["client_msg_no"].(string))
+		_ = json.NewEncoder(w).Encode(SendMessageResult{MessageID: "m", MessageSeq: 1})
+	}))
+	defer srv.Close()
+	c := NewRESTClient(srv.URL, tok("bf"))
+	// Two calls with the same caller-supplied id simulate retry; server must
+	// observe the same id both times (its dedup key).
+	const stable = "fixed-uuid-for-test"
+	if _, err := c.SendTextAsWithMsgNo(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, "", stable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendTextAsWithMsgNo(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, "", stable); err != nil {
+		t.Fatal(err)
+	}
+	if len(seenIDs) != 2 || seenIDs[0] != stable || seenIDs[1] != stable {
+		t.Fatalf("client_msg_no must be the caller-supplied id on every call, got %v", seenIDs)
+	}
+	// And the legacy SendTextAs path should still generate a fresh id per call
+	// (that's the contract for one-shot non-retried sends).
+	prev := len(seenIDs)
+	if _, err := c.SendTextAs(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendTextAs(context.Background(), "c1", ChannelDM, "hi", nil, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if seenIDs[prev] == seenIDs[prev+1] || seenIDs[prev] == stable {
+		t.Fatalf("SendTextAs should generate fresh ids, got %v", seenIDs[prev:])
 	}
 }

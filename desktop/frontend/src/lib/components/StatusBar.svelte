@@ -1,14 +1,14 @@
 <script lang="ts">
-  // The live activity strip: a single compact line pinned just above the
-  // composer, showing the agent's current step in the running turn — the latest
-  // tool call or a thinking marker. It shows ONE record (the newest), and by
-  // construction it carries no model prose: the store never routes answer text
-  // here, so the final answer cannot leak into the strip. Cleared on the reply.
+ // The live activity strip: a single compact line pinned just above the
+ // composer, showing the agent's current step in the running turn — the latest
+ // tool call or a thinking marker. It shows ONE record (the newest), and by
+ // construction it carries no model prose: the store never routes answer text
+ // here, so the final answer cannot leak into the strip. Cleared on the reply.
   import { store } from "../store.svelte";
 
   type Current = { kind: "tool" | "thinking"; text: string } | null;
 
-  // Newest record = the last process step (tool / thinking). Null when idle.
+ // Newest record = the last process step (tool / thinking). Null when idle.
   const current = $derived.by<Current>(() => {
     const p = store.currentSession?.proc;
     if (!p?.active) return null;
@@ -18,7 +18,10 @@
 </script>
 
 {#if current}
-  <div class="strip" role="status" aria-live="polite">
+ <!-- No role="status" / aria-live: a tool-heavy turn fires N events,
+       and SR users do not need every tool name read aloud. The pulse +
+       aria-label below is the silent visual cue. -->
+  <div class="strip">
     <div class="inner">
       <span class="pulse" class:tool={current.kind === "tool"} aria-label={current.kind === "tool" ? "正在调用工具" : "思考中"}></span>
       {#if current.kind === "tool"}
@@ -46,7 +49,7 @@
     min-width: 0;
   }
 
-  /* A soft breathing dot — the single "still working" affordance in this strip
+ /* A soft breathing dot — the single "still working" affordance in this strip
      (the chat keeps the typing bubble). */
   .pulse {
     flex: 0 0 auto;

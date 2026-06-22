@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lml2468/xclaw/core/agent"
@@ -246,8 +247,8 @@ func kindFor(ct router.ChannelType) sandbox.Kind {
 //
 // Friendly drop replies (ported from cc-channel session-router.ts) are emitted
 // here, through the Sink, so every caller benefits without re-implementing them:
-//   - DroppedTooLong → "消息过长，请缩短后重试"
-//   - RateLimited    → "请稍后再试" (deduped per rate-limit window; see router)
+// - DroppedTooLong → "消息过长，请缩短后重试"
+// - RateLimited → "请稍后再试" (deduped per rate-limit window; see router)
 //
 // DroppedNotMentioned / DroppedUnroutable stay silent (legitimate group chatter
 // or an unroutable payload — no user-facing reply).
@@ -296,12 +297,17 @@ const (
 var errDispatchTimeout = errors.New("dispatch idle timeout")
 
 // idleGuard wraps the per-turn idle deadline plumbing. Reset on every event;
-// expired() reports whether OUR timer fired (vs a parent cancellation). When
+// expired reports whether OUR timer fired (vs a parent cancellation). When
 // the timeout is <=0 every method is a no-op so callers stay branch-free.
 type idleGuard struct {
 	timeout time.Duration
 	cancel  context.CancelCauseFunc
 	timer   *time.Timer
+	// done is set by the runTurn loop when it observes a successful
+	// terminal event. expired() honors it so a race between AfterFunc
+	// firing and the success event can't reroute a completed turn into
+	// the timeout-reply branch.
+	done atomic.Bool
 }
 
 // newIdleGuard returns a child ctx and a guard. With timeout <=0 the guard is
@@ -312,9 +318,9 @@ func newIdleGuard(parent context.Context, timeout time.Duration) (context.Contex
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	g := &idleGuard{timeout: timeout, cancel: cancel}
-	// time.AfterFunc fires once after the idle window; reset() Resets it. The
+	// time.AfterFunc fires once after the idle window; reset Resets it. The
 	// closure captures `cancel` so an expiry tags the cancellation with our
-	// sentinel, letting expired() tell our own timeout apart from a parent
+	// sentinel, letting expired tell our own timeout apart from a parent
 	// cancellation (M9).
 	g.timer = time.AfterFunc(timeout, func() { cancel(errDispatchTimeout) })
 	return ctx, g
@@ -327,14 +333,32 @@ func (g *idleGuard) reset() {
 }
 
 func (g *idleGuard) stop() {
-	if g.timer != nil {
-		g.timer.Stop()
+	if g.timer == nil {
+		return
+	}
+	// Only cancel with a nil cause when WE preempted the timer (Stop returns
+	// true). If Stop returns false the AfterFunc has already fired (or is in
+	// flight) and is about to call cancel(errDispatchTimeout); racing it with
+	// cancel(nil) here would mis-classify a fired timer as a clean stop,
+	// confusing context.Cause readers. cancel(nil) after a
+	// non-nil cancel cause is a no-op, so this is safe either way — but
+	// preferring "don't race" keeps the invariant explicit.
+	if g.timer.Stop() {
 		g.cancel(nil)
 	}
 }
 
+func (g *idleGuard) markDone() {
+	if g.timer != nil {
+		g.done.Store(true)
+	}
+}
+
 func (g *idleGuard) expired(ctx context.Context) bool {
-	return g.timer != nil && errors.Is(context.Cause(ctx), errDispatchTimeout)
+	if g.timer == nil || g.done.Load() {
+		return false
+	}
+	return errors.Is(context.Cause(ctx), errDispatchTimeout)
 }
 
 // Observe caches a non-triggering group message into the group context so it
@@ -423,11 +447,12 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 	return b.String()
 }
 
-// resolveSandbox resolves the per-session sandbox (cwd + memory dir) and links
-// the bot's skills/workflows into it. Returns ("", "", nil) when the sandbox is
-// disabled. A non-nil error means the cwd could not be built — the caller MUST
-// abort the turn rather than fall back to the process cwd (which would leak
-// across sessions).
+// resolveSandbox resolves the per-session sandbox (cwd + memory dir). Returns
+// ("", "", nil) when the sandbox is disabled. A non-nil error means the cwd
+// could not be built — the caller MUST abort the turn rather than fall back to
+// the process cwd (which would leak across sessions). Skills + workflows are
+// auto-loaded by the CLI from CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude/),
+// not symlinked in per-turn — see CLAUDE.md.
 func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (cwd, memDir string, err error) {
 	if g.cwdBase == "" {
 		return "", "", nil
@@ -445,8 +470,8 @@ func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (
 
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
-	// Ensure the session row exists (refreshes TTL). Touch avoids the extra
-	// read-back the turn doesn't use.
+	// Ensure the session row exists and bump updated_at (drives ListSessions
+	// ordering). Touch avoids the extra read-back the turn doesn't use.
 	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
 		return g.failTurn(sessionKey, "store.Touch", err)
 	}
@@ -466,6 +491,29 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Build the prompt. For group messages this injects the [Recent group
 	// messages] delta as untrusted background and demarcates the real request
 	// with the current-message anchor; DM messages pass through unchanged.
+	// Snapshot the pre-build group cursor for this channel and defer a
+	// conditional rewind. buildGroupPrompt advances the cursor past the
+	// current message; any turn-aborting failure BEFORE we've actually
+	// produced + delivered a reply must roll it back, or the unanswered
+	// message silently drops from every subsequent [Recent group messages]
+	// delta. Set turnDelivered=true once the reply is on its way out so the
+	// happy path keeps the cursor advanced.
+	var (
+		preCursor      int64
+		hasGroupCursor bool
+		turnDelivered  bool
+	)
+	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
+		preCursor = g.groups.Cursor(msg.ChannelID)
+		hasGroupCursor = true
+		defer func() {
+			if hasGroupCursor && !turnDelivered {
+				// SetCursor is monotonic (refuses backward moves), so use the
+				// dedicated rewind path.
+				g.groups.RewindCursor(msg.ChannelID, preCursor)
+			}
+		}()
+	}
 	prompt := g.buildGroupPrompt(sessionKey, msg)
 
 	// Persist the (original) user message.
@@ -476,7 +524,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Resume the agent's prior session if we have one. A real read error (not
 	// "no row") degrades the turn to a fresh session — acceptable, but log it so
 	// silent loss of conversation continuity is diagnosable.
-	resumeID, err := g.store.Resume(sessionKey)
+	resumeID, err := g.store.Resume(sessionKey, g.driver.Name())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[gateway] resume %s: %v\n", sessionKey, err)
 	}
@@ -556,7 +604,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		termHint = ""
 		resumeBad := false
 		// On a resume attempt the stream may turn out doomed (stale resume id). To
-		// avoid leaking a doomed attempt's events to the sink (H6) — the
+		// avoid leaking a doomed attempt's events to the sink — the
 		// ResumeInvalid signal arrives on stderr while content arrives on stdout,
 		// with no ordering guarantee between the two reader goroutines — we GATE
 		// sink emission: buffer events until the session proves valid (first
@@ -611,10 +659,27 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			case agent.KindTurnDone:
 				// Accumulate this turn's token usage into the bot's persistent
 				// total (best-effort: a write failure must not fail the turn).
-				if ev.Usage != nil {
+				// skip when termErr was set earlier in this
+				// turn (the parser emits KindError before KindTurnDone for an
+				// is_error=true result, e.g. max_turns) — billing tokens +
+				// bumping the turns counter for a turn the user is told failed
+				// over-attributes both metrics.
+				//
+				// Also skip when resumeBad is set: the doomed attempt's Usage
+				// is from a stale-resume run we're about to retry, and the
+				// retry's KindTurnDone will commit a fresh Usage line. Without
+				// this gate the same logical turn double-billed tokens, cost,
+				// AND turn count on every self-heal.
+				if termErr == "" && !resumeBad && ev.Usage != nil {
 					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
 						fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
 					}
+				}
+				// Mark the idle guard done so a concurrent AfterFunc firing
+				// in the same tick as this success event can't reroute the
+				// post-loop expired() check into the timeout-reply branch.
+				if termErr == "" && !resumeBad {
+					idle.markDone()
 				}
 			case agent.KindError:
 				// Terminal (non-recoverable) errors abort the turn: a result
@@ -639,7 +704,11 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
 		if resumeBad && resume != "" && attempt == 0 {
 			fmt.Fprintf(os.Stderr, "[gateway] stale resume id for %s; clearing and retrying fresh\n", sessionKey)
-			_ = g.store.ClearResume(sessionKey)
+			// Per-agent clear: self-heal only nukes THIS driver's
+			// row, not every agent's. the prior composite-PK promise was
+			// that two drivers can hold concurrent resume ids; a blanket
+			// ClearResume(sessionKey) would have crossed that boundary.
+			_ = g.store.ClearResumeForAgent(sessionKey, g.driver.Name())
 			resume = ""
 			continue
 		}
@@ -647,12 +716,13 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	// If the turn was cut short by the dispatch timeout (not the caller's own
-	// cancellation), apologize and release the lock. The guard's expired()
+	// cancellation), apologize and release the lock. The guard's expired
 	// returns true ONLY when our idle timer fired (its cancel cause is our
 	// sentinel) — a parent cancellation propagates the parent's cause instead,
 	// so this is unambiguous even if both fire near-simultaneously (M9).
 	if idle.expired(turnCtx) {
 		fmt.Fprintf(os.Stderr, "[gateway] dispatch idle timeout after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
+		turnDelivered = true // bot processed but went silent; don't replay
 		g.sink.OnReply(sessionKey, timeoutReply)
 		return nil
 	}
@@ -670,9 +740,13 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			if termHint != "" {
 				reply = busyReply + "（" + termHint + " 后恢复）"
 			}
+			turnDelivered = true // bot saw the message and we told the user the upstream is busy
 			g.sink.OnReply(sessionKey, reply)
 			return nil
 		}
+		// Non-transient terminal agent error: leave turnDelivered=false so the
+		// deferred RewindCursor lets the message reappear in the next [Recent
+		// group messages] delta — the bot didn't usefully process this turn.
 		fmt.Fprintf(os.Stderr, "[gateway] terminal agent error (session=%s): %s\n", sessionKey, termErr)
 		g.sink.OnReply(sessionKey, errorReply)
 		return nil
@@ -693,6 +767,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	if err := g.store.AppendAssistant(sessionKey, text, g.driver.Name()); err != nil {
 		fmt.Fprintf(os.Stderr, "[gateway] append assistant %s: %v\n", sessionKey, err)
 	}
+	turnDelivered = true
 	g.sink.OnReply(sessionKey, text)
 
 	// Advance the answered/new cursor (cc G10 / openclaw lastBotReplySeqMap): record

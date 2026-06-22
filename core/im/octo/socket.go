@@ -3,6 +3,7 @@ package octo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -22,7 +23,7 @@ func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
 //
 // Concurrency invariant: onRecv, handleDecryptFailure, dispatch, and the
 // aesKey/aesIV/srvVer/decryptFails fields are ONLY ever touched from the single
-// run() read-loop goroutine, so they need no lock. (writeRaw is the exception —
+// run read-loop goroutine, so they need no lock. (writeRaw is the exception —
 // it may be called from the ping loop and the read loop, so conn/closed are
 // guarded by mu.) The connector dispatches turns onto its OWN worker goroutines
 // AFTER onMessage returns (see Connector.enqueueTurn), so those goroutines never
@@ -84,8 +85,8 @@ func (s *socketConn) connect(ctx context.Context) error {
 
 	// Send CONNECT.
 	deviceID := uuid.NewString() + "W"
-	ts := uint64(time.Now().UnixMilli())
-	if err := s.writeRaw(encodeConnect(deviceID, s.uid, s.token, ts, kp.pubKeyBase64())); err != nil {
+	timestampMs := uint64(time.Now().UnixMilli())
+	if err := s.writeRaw(encodeConnect(deviceID, s.uid, s.token, timestampMs, kp.pubKeyBase64())); err != nil {
 		c.Close()
 		return err
 	}
@@ -100,8 +101,14 @@ func (s *socketConn) connect(ctx context.Context) error {
 
 func (s *socketConn) close() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	s.closed = true
-	s.mu.Unlock()
+	// Close the underlying conn under the same lock as the flag flip so a
+	// concurrent writeRaw can't observe closed=false and then race past
+	// s.conn.Close into WriteMessage on a half-closed conn.
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
@@ -111,12 +118,20 @@ func (s *socketConn) writeRaw(b []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.conn == nil {
-		return fmt.Errorf("socket closed")
+		return ErrSocketClosed
 	}
 	return s.conn.WriteMessage(websocket.BinaryMessage, b)
 }
 
 func (s *socketConn) readConnack() error {
+	// Bound the CONNACK wait. The ctx-watcher goroutine that calls
+	// s.close() on cancellation is only started later in run(); without
+	// a deadline here, a peer that completes the HTTP upgrade but never
+	// sends the first frame blocks the dial forever and wedges daemon
+	// shutdown (Connector.Run blocks → runBot blocks → defer chain
+	// can't fire → SIGTERM ineffective without SIGKILL).
+	_ = s.conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	defer s.conn.SetReadDeadline(time.Time{})
 	_, data, err := s.conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read connack: %w", err)
@@ -216,6 +231,11 @@ func (s *socketConn) run(ctx context.Context) error {
 // errServerDisconnect is returned by run when the server sends a DISCONNECT
 // packet, so Run's reconnect path re-registers instead of hanging on a dead WS.
 var errServerDisconnect = fmt.Errorf("server sent disconnect")
+
+// ErrSocketClosed is returned by writeRaw after the socket has been closed.
+// Exported as a sentinel so callers (connector outbound retry, tests) can
+// errors.Is against it to distinguish from a WebSocket I/O failure.
+var ErrSocketClosed = errors.New("socket closed")
 
 func (s *socketConn) pingLoop(done chan struct{}) {
 	t := time.NewTicker(wsPingInterval)
@@ -349,7 +369,7 @@ func (s *socketConn) handleDecryptFailure(idStr string, messageID uint64, messag
 }
 
 // parsePayload decodes the decrypted JSON into a MessagePayload, defaulting
-// type to 0 when absent (socket.ts builds { type: type ?? 0, ... }).
+// type to 0 when absent (socket.ts builds { type: type ?? 0,... }).
 func parsePayload(b []byte) (MessagePayload, error) {
 	var p MessagePayload
 	if err := jsonUnmarshal(b, &p); err != nil {

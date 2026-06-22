@@ -14,6 +14,7 @@ import (
 	"github.com/lml2468/xclaw/core/agent"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/xclaw/core/control/wire"
 	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
 	"github.com/lml2468/xclaw/core/groupctx"
@@ -21,6 +22,7 @@ import (
 	"github.com/lml2468/xclaw/core/im/octo"
 	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/core/store"
 )
 
@@ -53,6 +55,12 @@ type botRuntime struct {
 	store   *store.Store
 	secrets *secretStore  // in-memory tokens (seeded from cfg, updated by secret.inject)
 	cron    *cron.Manager // nil when agent.cron is disabled
+
+	// target is the per-bot control-handler target, owned for the runtime's
+	// lifetime so the embedded turnsWG is shared across all session.send
+	// goroutines for this bot (a fresh botTarget per resolve would give
+	// each goroutine its own WaitGroup and defeat the shutdown barrier).
+	target *botTarget
 
 	mu        sync.Mutex
 	connected bool
@@ -134,12 +142,25 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 
 	var srv *control.Server
 	reg := newBotRegistry(nil)
+	var stopControl func()
 	if controlSock != "" {
 		srv = control.NewServer(nil)
 		reg.srv = srv
 		srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
 		configureBusAuth(srv, authStdin) // arm the capability-token gate before serving
-		defer serveControlBus(srv, controlSock)()
+		cleanup := serveControlBus(srv, controlSock)
+		var once sync.Once
+		stopControl = func() { once.Do(cleanup) }
+		defer stopControl() // belt-and-suspenders: if the ctx-watcher misses it
+		// Close the control listener as soon as shutdown begins so no late
+		// session.send can land and race a per-bot target.turnsWG.Add(1)
+		// AFTER that bot's turnsWG.Wait has already returned 0 — which both
+		// violates the WaitGroup contract and would dispatch to a bot whose
+		// store has already been closed by runBot's deferred st.Close.
+		go func() {
+			<-ctx.Done()
+			stopControl()
+		}()
 	}
 
 	fmt.Printf("xclawd — config mode: %d bot(s)\n", len(bots))
@@ -189,13 +210,22 @@ func registerFailedBot(reg *botRegistry, cfg config.Resolved, errMsg string) {
 // agent events are also broadcast to the control bus tagged with the bot id, and
 // the bot is registered for command routing + bots.list. Blocks until ctx done.
 func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *control.Server) error {
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+	// SafeMkdirAllAbs walks the parent chain via dirfd, refusing any
+	// symlinked intermediate with ErrSymlink. An agent (Bash + bypass)
+	// in any existing bot's cwd could otherwise plant
+	// `~/.xclaw/<newbotID>` as a symlink to `~/.ssh/` BEFORE the operator
+	// adds the new bot; a bare MkdirAll would silently follow it, and
+	// store.Open would then create xclaw.db/.wal/.shm under .ssh. When
+	// DataDir is outside $HOME (operator-supplied absolute path)
+	// SafeMkdirAllAbs falls back to bare MkdirAll — that boundary is
+	// operator-trusted.
+	if err := safepath.SafeMkdirAllAbs(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("bot %s: mkdir data: %w", cfg.BotID, err)
 	}
 	// Isolated per-bot CLAUDE_CONFIG_DIR (unless inheriting the operator's
 	// ~/.claude). Created here so the agent's config root exists before it spawns.
 	if cfg.ClaudeConfigDir != "" && !cfg.Agent.InheritUserConfig {
-		if err := os.MkdirAll(cfg.ClaudeConfigDir, 0o700); err != nil {
+		if err := safepath.SafeMkdirAllAbs(cfg.ClaudeConfigDir, 0o700); err != nil {
 			return fmt.Errorf("bot %s: mkdir claude config dir: %w", cfg.BotID, err)
 		}
 	}
@@ -236,14 +266,14 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// Per-bot secret store: seed from the config file (the headless fallback),
 	// then let secret.inject (from the GUI's Keychain) override at runtime.
 	sec := &secretStore{}
-	_ = sec.Set(secretKindOcto, cfg.OctoToken)
-	_ = sec.Set(secretKindGateway, cfg.Agent.GatewayToken)
+	_ = sec.Set(wire.SecretKindOcto, cfg.OctoToken)
+	_ = sec.Set(wire.SecretKindGateway, cfg.Agent.GatewayToken)
 
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
 	drv := agent.NewClaudeDriver("")
 	// Resolve the gateway token lazily per turn so an injected token takes effect.
-	drv.EnvFn = func() []string { return cfg.DriverEnvForOcto(sec.GatewayToken(), sec.OctoToken()) }
+	drv.EnvFn = func() []string { return cfg.DriverEnv(sec.GatewayToken(), sec.OctoToken()) }
 
 	if cfg.APIURL == "" {
 		return fmt.Errorf("bot %s: config mode requires apiUrl", cfg.BotID)
@@ -280,7 +310,54 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithMediaAuth(connector.MediaAuth())
 	connector.SetGateway(gw)
 
-	rtBot := &botRuntime{cfg: cfg, gateway: gw, store: st, secrets: sec}
+	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
+	// tasks through the gateway as synthetic CronFire messages. The owner uid that
+	// gates create/delete is resolved from the bot registration (owner_uid).
+	// Declared at this scope so the post-Run shutdown chain below can Wait on it,
+	// and so it can be wired into botRuntime/target BEFORE reg.add — that way
+	// the resolve handler doesn't have to lock-free write `bot.target.cron`
+	// on every call, which raced concurrent control commands.
+	var cm *cron.Manager
+	if cfg.Agent.Cron {
+		cm = cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
+		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
+		cm.OnFire(func(f cron.Fire) {
+			fireCronTask(connector, f.Task)
+		})
+		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
+	}
+
+	// Eager-init the per-bot control-handler target so its embedded turnsWG is
+	// pinned for runBot's shutdown barrier: the lazy-init in
+	// resolve left target nil for bots that no control-bus command ever
+	// reached (headless-mode operator, octo+cron-only bot), which then
+	// nil-derefs on `rtBot.target.turnsWG.Wait` in the shutdown chain. The
+	// resolver still races on first call (two control commands could both see
+	// nil), which would silently split session.send goroutines across two
+	// targets — one outside the wait barrier. Setting it here ensures a single
+	// target shared by every codepath. cron is also wired in upfront so the
+	// resolve-side per-call write was racing concurrent reads.
+	rtBot := &botRuntime{
+		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
+		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
+	}
+	// Single drain defer covers both happy path and panic. Earlier code
+	// expressed the same sequence THREE times (defer for connector/target,
+	// defer for cron, and an explicit tail chain) with paragraph-long
+	// rationale. All four steps are idempotent so the defer can be the
+	// only call site:
+	//   1. cm.Stop+Wait — no fresh tick, in-flight safeFire drained
+	//   2. connector.WaitTurns — drainTurns workers done
+	//   3. target.turnsWG.Wait — control-bus session.send done
+	//   4. (defer st.Close from top of function fires last on LIFO)
+	defer func() {
+		if cm != nil {
+			cm.Stop()
+			cm.Wait()
+		}
+		connector.WaitTurns()
+		rtBot.target.turnsWG.Wait()
+	}()
 	if reg != nil {
 		reg.add(rtBot)
 	}
@@ -291,34 +368,25 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		}
 	})
 
-	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
-	// tasks through the gateway as synthetic CronFire messages. The owner uid that
-	// gates create/delete is resolved from the bot registration (owner_uid).
-	if cfg.Agent.Cron {
-		cm := cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
-		cm.SetLabel(fmt.Sprintf("[%s] ", cfg.BotID))
-		cm.OnFire(func(f cron.Fire) {
-			fireCronTask(ctx, gw, connector, f.Task)
-		})
-		connector.OnOwner(func(ownerUID string) { cm.SetOwnerUID(ownerUID) })
-		rtBot.cron = cm
+	if cm != nil {
 		cm.Start()
-		defer cm.Stop()
 		fmt.Printf("[%s] cron scheduler armed (tick %s)\n", cfg.BotID, cron.CronTickInterval)
 	}
 
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
-	return connector.Run(ctx)
+	err = connector.Run(ctx)
+	return err
 }
 
 // fireCronTask delivers one due cron task through the full turn pipeline. It
-// binds the connector's reply target to the task's session, then hands the
-// task's stored prompt to the gateway as a synthetic CronFire message (which the
-// router accepts past the group @mention gate and the rate limit). Best-effort:
-// a failed fire is logged, never propagated, so the scheduler loop survives.
-func fireCronTask(ctx context.Context, gw *gateway.Gateway, connector *octo.Connector, t cron.Task) {
+// enqueues a synthetic CronFire message onto the connector's per-session worker
+// so it serializes with any concurrent real inbound on the same sessionKey
+// (direct gw.Handle here used to race onInbound's target
+// write, mis-delivering one reply and dropping the other). Best-effort: a
+// failed enqueue is logged, never propagated, so the scheduler loop survives.
+func fireCronTask(connector *octo.Connector, t cron.Task) {
 	chType := router.ChannelDM
 	octoType := octo.ChannelDM
 	if t.ChannelType == cron.ChannelKind(router.ChannelGroup) {
@@ -338,10 +406,7 @@ func fireCronTask(ctx context.Context, gw *gateway.Gateway, connector *octo.Conn
 		fmt.Fprintf(os.Stderr, "cron: task %s has unroutable coords: %v\n", t.ID, err)
 		return
 	}
-	connector.RegisterReplyTarget(key, t.ChannelID, octoType)
-	if _, err := gw.Handle(ctx, inbound); err != nil {
-		fmt.Fprintf(os.Stderr, "cron: task %s fire failed: %v\n", t.ID, err)
-	}
+	connector.EnqueueCron(key, t.ChannelID, octoType, inbound)
 }
 
 // makeMultiBotHandler routes control-bus commands by botId across the registry.
@@ -357,7 +422,25 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot == nil {
 				return nil, fmt.Errorf("unknown bot %q", botID)
 			}
-			return &botTarget{id: bot.cfg.BotID, gateway: bot.gateway, store: bot.store, secrets: bot.secrets, cron: bot.cron}, nil
+			// A bot whose startup failed (registerFailedBot stub) carries a
+			// nil gateway/store + a populated LastError. Without this check
+			// the resolve-fallback would wire nil into a botTarget, and the
+			// first handler dereferencing `t.gateway` / `t.store` would nil-
+			// deref the whole daemon. Test fixtures also
+			// carry nil gateway/store but no LastError, so they keep using
+			// the test-friendly lazy fallback below.
+			if bot.gateway == nil && bot.info().LastError != "" {
+				return nil, fmt.Errorf("bot %q failed to start: %s", botID, bot.info().LastError)
+			}
+			// runBot eager-initializes target AND cron; production never
+			// sees nil here. Tests that build a botRuntime by hand must
+			// set target explicitly or go through runBot — surfacing a
+			// clear error beats a lock-free lazy write that would race
+			// concurrent control commands.
+			if bot.target == nil {
+				return nil, fmt.Errorf("bot %q not initialised", botID)
+			}
+			return bot.target, nil
 		},
 		broadcast: func(eventType string, body any) {
 			if reg.srv != nil {

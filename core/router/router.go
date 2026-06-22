@@ -1,13 +1,13 @@
 // Package router routes inbound messages to per-session handlers with three
 // guarantees ported from cc-channel's session-router:
 //
-//  1. SessionKey derivation — DM is per-peer, group is per-channel (a group is
-//     one shared session, not N private ones).
-//  2. Per-session serial execution — messages within a session run FIFO; across
-//     sessions they run concurrently (a mutex-per-key, the Go analogue of
-//     cc-channel's promise-chain lock).
-//  3. Rate limiting — three token buckets (global / per-user / per-session),
-//     all must pass.
+// 1. SessionKey derivation — DM is per-peer, group is per-channel (a group is
+// one shared session, not N private ones).
+// 2. Per-session serial execution — messages within a session run FIFO; across
+// sessions they run concurrently (a mutex-per-key, the Go analogue of
+// cc-channel's promise-chain lock).
+// 3. Rate limiting — three token buckets (global / per-user / per-session),
+// all must pass.
 //
 // It is agent- and IM-agnostic: the IM layer produces InboundMessage values.
 package router
@@ -245,6 +245,8 @@ const (
 	RateLimitedSilent            // rejected but already notified this window → stay silent
 )
 
+// String returns the lowercase tag for the routing outcome (used in logs
+// and metrics). Keep these stable — operators grep for them.
 func (d Decision) String() string {
 	switch d {
 	case Accepted:

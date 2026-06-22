@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Bottom-of-modal error bar shared by the per-bot settings panels. The host
-  // owns the error state; this just renders + emits dismiss. Hidden when
-  // `error` is empty so the host can include it unconditionally.
+ // Bottom-of-modal error bar shared by the per-bot settings panels. The host
+ // owns the error state; this just renders + emits dismiss. Hidden when
+ // `error` is empty so the host can include it unconditionally.
   let { error, onclear }: { error: string; onclear: () => void } = $props();
 </script>
 

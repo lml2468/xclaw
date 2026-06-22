@@ -105,7 +105,7 @@ func TestServerBroadcast(t *testing.T) {
 
 // TestBroadcastDuringDisconnect stresses the path that used to crash the daemon:
 // a client disconnecting (which closes its send channel) while Broadcast is
-// mid-fan-out. With sendCh closed by close(), enqueue's `c.sendCh <- line` would
+// mid-fan-out. With sendCh closed by close, enqueue's `c.sendCh <- line` would
 // panic "send on closed channel" (select/default does NOT catch a closed send).
 // The fix stops the write loop via a separate done channel and never closes
 // sendCh, so this must run clean (a panic in the enqueue goroutine would crash
@@ -130,7 +130,7 @@ func TestBroadcastDuringDisconnect(t *testing.T) {
 	}()
 
 	// Churn clients: connect then immediately close, racing the broadcaster's
-	// snapshot→enqueue window against client.close().
+	// snapshot→enqueue window against client.close.
 	for i := 0; i < 200; i++ {
 		c := ln.dial()
 		for srv.ConnCount() == 0 {
@@ -167,7 +167,7 @@ func sendCmd(t *testing.T, conn net.Conn, sc *bufio.Scanner, id, typ string, bod
 	return env
 }
 
-// TestCapabilityTokenGate is the MLT-37 regression: privileged commands require
+// TestCapabilityTokenGate is the regression: privileged commands require
 // the GUI capability token; read-only commands do not. It exercises the four
 // required cases — (i) privileged without/with a wrong token is rejected, (ii)
 // privileged with the valid token is accepted, (iii) a read-only command works

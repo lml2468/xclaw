@@ -57,11 +57,18 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- Maps a logical sessionKey to the agent's resume id (Claude session id /
 -- Codex thread id). Separate lifecycle from sessions; cleared on /reset.
+-- Composite PK on (session_key, agent) so two drivers can hold concurrent
+-- resume ids for the same logical session without one overwriting the
+-- other; Resume() filters by agent so a Claude id is never silently
+-- handed to a Codex driver. Existing legacy DBs with
+-- the old single-column-PK shape are rebuilt by Open's
+-- migrateAgentSessions BEFORE this DDL runs.
 CREATE TABLE IF NOT EXISTS agent_sessions (
-  session_key TEXT PRIMARY KEY,
+  session_key TEXT NOT NULL,
   agent       TEXT NOT NULL,
   resume_id   TEXT NOT NULL,
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (session_key, agent)
 );
 
 -- Group answered/new segmentation cursor (cc G10 / openclaw lastBotReplySeqMap):
@@ -94,9 +101,30 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 `
 
 // Open initializes the database (creating the schema) at path.
+//
+// pre-check each of xclaw.db / xclaw.db-wal / xclaw.db-shm
+// for a leaf symlink before SQLite opens them. An agent (Bash + bypass)
+// that plants `<dataDir>/xclaw.db → ~/Documents/important.sqlite` would
+// otherwise have SQLite open through the symlink and run schema
+// migrations (ALTER, DROP TABLE agent_sessions_legacy, INSERT) on the
+// operator's unrelated DB — data destruction / cross-DB write.
 func Open(path string) (*Store, error) {
+	for _, leaf := range []string{"", "-wal", "-shm"} {
+		if err := refuseSymlinkLeaf(path + leaf); err != nil {
+			return nil, fmt.Errorf("open store %s: %w", path+leaf, err)
+		}
+	}
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
+		return nil, err
+	}
+	// Run pre-schema migrations FIRST so the schema's IF-NOT-EXISTS DDL
+	// (which can't ALTER an existing table) doesn't lock us into the old
+	// shape. agent_sessions in particular went from single-column PK
+	// (legacy) to composite PK in; the IF-NOT-EXISTS form
+	// is a no-op against the legacy shape, so SaveResume's ON CONFLICT(...)
+	// fails until we destructively rebuild the table.
+	if err := migrateAgentSessions(db); err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
@@ -106,6 +134,91 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// migrateAgentSessions rebuilds the agent_sessions table when it carries the
+// legacy single-column PK shape. SQLite has no portable ALTER for PK,
+// so we copy → drop → recreate via the current schema (run by Open right
+// after) → restore the rows. Idempotent: a no-op when the table already has
+// the composite shape (or when it doesn't exist yet — a fresh DB).
+//
+// We preserve the existing rows verbatim; legacy rows are all
+// single-(session_key) so the de-dup-into-composite-PK collision can't fire.
+//
+// Detection uses PRAGMA table_info / index_list rather than substring-matching
+// the DDL text: sqlite_master.sql is preserved as authored, but
+// different SQLite versions or whitespace-rewritten DDL would defeat a literal
+// substring match — an undetected legacy shape would either keep running with
+// the broken PK or re-run the migration and fail on the second pass because
+// the RENAME-then-rollback path isn't always atomic for DDL.
+func migrateAgentSessions(db *sql.DB) error {
+	// 1. Does the table exist at all? (Fresh DB → skip; schema below creates it.)
+	var hasTable int
+	err := db.QueryRow(
+		`SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions'`,
+	).Scan(&hasTable)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("agent_sessions detect: %w", err)
+	}
+	// 2. Already composite? Ask SQLite which columns are PK members via
+	// PRAGMA table_info — the `pk` column is 0 for non-PK, 1+ for PK members
+	// in order. Composite = >= 2 PK columns; legacy = exactly 1.
+	rows, err := db.Query(`PRAGMA table_info(agent_sessions)`)
+	if err != nil {
+		return fmt.Errorf("agent_sessions table_info: %w", err)
+	}
+	pkCols := 0
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("agent_sessions table_info scan: %w", err)
+		}
+		if pk > 0 {
+			pkCols++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("agent_sessions table_info rows: %w", err)
+	}
+	rows.Close()
+	if pkCols >= 2 {
+		return nil // already composite
+	}
+	// 3. Legacy shape — rebuild. Wrap in a tx so a crash mid-migration can't
+	// orphan the data.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("agent_sessions migrate tx: %w", err)
+	}
+	defer tx.Rollback()
+	stmts := []string{
+		`ALTER TABLE agent_sessions RENAME TO agent_sessions_legacy`,
+		`CREATE TABLE agent_sessions (
+		   session_key TEXT NOT NULL,
+		   agent       TEXT NOT NULL,
+		   resume_id   TEXT NOT NULL,
+		   updated_at  INTEGER NOT NULL,
+		   PRIMARY KEY (session_key, agent)
+		 )`,
+		`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at)
+		 SELECT session_key, agent, resume_id, updated_at FROM agent_sessions_legacy`,
+		`DROP TABLE agent_sessions_legacy`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("agent_sessions migrate: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateTokenUsage folds the legacy single-row token_usage aggregate (pre
@@ -123,7 +236,7 @@ func migrateTokenUsage(db *sql.DB) error {
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("migrate token_usage tx: %w", err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(
@@ -149,7 +262,7 @@ func migrateTokenUsage(db *sql.DB) error {
 // the first. foreign_keys is connection-scoped, so setting it once via Exec left
 // other pooled connections with FK enforcement OFF, letting an orphaned insert
 // or a missed ON DELETE CASCADE slip through on whichever connection the pool
-// happened to hand out (MLT-33). busy_timeout is likewise per-connection;
+// happened to hand out. busy_timeout is likewise per-connection;
 // journal_mode=WAL is a persistent database setting but is cheap and idempotent
 // to assert per-connection.
 func dsn(path string) string {
@@ -384,12 +497,18 @@ func (s *Store) usageWhere(cond string, args ...any) (TokenUsage, error) {
 
 // --- resume map ---
 
-// SaveResume records (or replaces) the resume id for a session key.
+// SaveResume records (or replaces) the resume id for a (sessionKey, agent)
+// pair. The agent name is part of the conflict key: a resume id minted by
+// the claude CLI must not be silently fed back to a different driver
+// (Codex / Gemini) that can't honor it (store key-by-agent fix).
 func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
+	if agent == "" {
+		return fmt.Errorf("save resume: agent name required")
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at)
 		 VALUES(?,?,?,?)
-		 ON CONFLICT(session_key) DO UPDATE SET agent=excluded.agent,
+		 ON CONFLICT(session_key, agent) DO UPDATE SET
 		   resume_id=excluded.resume_id, updated_at=excluded.updated_at;`,
 		sessionKey, agent, resumeID, s.now().Unix())
 	if err != nil {
@@ -398,10 +517,18 @@ func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
 	return nil
 }
 
-// Resume returns the stored resume id for a session key ("" if none).
-func (s *Store) Resume(sessionKey string) (string, error) {
+// Resume returns the stored resume id for a (sessionKey, agent) pair, or ""
+// if none. The agent filter is load-bearing: prior code keyed on sessionKey
+// alone and would silently return a Claude resume id to a Codex driver
+// (latent multi-driver bug — only one driver exists today, but the seam is
+// documented as additive). Empty agent argument returns "" (and would have
+// matched anything in the old schema).
+func (s *Store) Resume(sessionKey, agent string) (string, error) {
+	if agent == "" {
+		return "", nil
+	}
 	var id string
-	err := s.db.QueryRow(`SELECT resume_id FROM agent_sessions WHERE session_key=?`, sessionKey).Scan(&id)
+	err := s.db.QueryRow(`SELECT resume_id FROM agent_sessions WHERE session_key=? AND agent=?`, sessionKey, agent).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -411,10 +538,29 @@ func (s *Store) Resume(sessionKey string) (string, error) {
 	return id, nil
 }
 
-// ClearResume drops the resume mapping (used by /reset).
+// ClearResume drops EVERY agent's resume mapping for sessionKey. Used by
+// /reset (the user-facing reset), which intentionally severs continuity
+// across all drivers — a /reset on a session means "start fresh, regardless
+// of which agent was last in charge."
 func (s *Store) ClearResume(sessionKey string) error {
 	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=?`, sessionKey); err != nil {
 		return fmt.Errorf("clear resume: %w", err)
+	}
+	return nil
+}
+
+// ClearResumeForAgent drops the resume mapping for ONE (sessionKey, agent)
+// pair. Used by the gateway self-heal path: when ONE driver
+// emits ResumeInvalid, only ITS row should be cleared — nuking every
+// driver's row would contradict the composite-PK promise that
+// two drivers can hold concurrent resume ids without one feeding the
+// other a stale id.
+func (s *Store) ClearResumeForAgent(sessionKey, agent string) error {
+	if agent == "" {
+		return fmt.Errorf("clear resume: agent name required")
+	}
+	if _, err := s.db.Exec(`DELETE FROM agent_sessions WHERE session_key=? AND agent=?`, sessionKey, agent); err != nil {
+		return fmt.Errorf("clear resume (agent): %w", err)
 	}
 	return nil
 }

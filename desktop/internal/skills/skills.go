@@ -6,17 +6,20 @@
 // skills, period.
 //
 // Backs the desktop Skills window: list/create/edit/delete per-bot skills with
-// slug + path-traversal validation.
+// slug + path-traversal validation. All file ops go through safepath, which
+// owns the symlink-refusal + structural-containment invariants — this file
+// has no Lstat / EvalSymlinks / O_NOFOLLOW concerns of its own.
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // botDir is ~/.xclaw/<botID>/.claude/skills — the bot's skills dir, sitting
@@ -29,33 +32,25 @@ func botDir(botID string) (string, error) {
 	return filepath.Join(home, ".xclaw", botID, ".claude", "skills"), nil
 }
 
-// skillDirIn resolves and validates a skill's directory inside a given root.
-func skillDirIn(root, name string) (string, error) {
+// bundleRoot composes <root>/<name> as the validated per-bundle root, so the
+// user-supplied `rel` flows DIRECTLY into safepath (without sanitization)
+// and ResolveLexical correctly rejects absolute /.. paths instead of
+// silently re-rooting them under the bundle.
+func bundleRoot(root, name string) (string, error) {
 	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid skill name %q — letters, digits, . _ - only", name)
 	}
 	return filepath.Join(root, name), nil
 }
 
-// resolveInSkill validates that rel is a clean relative path inside the skill
-// dir (under root) and returns the absolute path. Rejects empty, absolute, and
-// any ".." segment outright (lexical), plus a real-path symlink-escape check so
-// an intermediate symlinked component can't redirect a write outside the bundle.
-func resolveInSkill(root, name, rel string) (string, error) {
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return "", err
+// translateSymlink converts safepath.ErrSymlink into a user-facing message
+// scoped to the operation, so the GUI surfaces tampering without leaking
+// the (possibly attacker-influenced) symlink target.
+func translateSymlink(verb string, rel string, err error) error {
+	if errors.Is(err, safepath.ErrSymlink) {
+		return fmt.Errorf("refusing to %s symlink: %q", verb, rel)
 	}
-	full, err := safepath.ResolveLexical(dir, rel)
-	if err != nil {
-		return "", err
-	}
-	// dirOnly: the file itself may not exist yet (a create), so check the parent
-	// chain in real-path space.
-	if err := safepath.AssertNoSymlinkEscape(dir, full, true); err != nil {
-		return "", err
-	}
-	return full, nil
+	return err
 }
 
 // SkillInfo summarizes a per-bot skill for the list view.
@@ -65,9 +60,11 @@ type SkillInfo struct {
 	Files       int    `json:"files"`
 }
 
-// listIn returns every skill bundle directly under root.
+// listIn returns every skill bundle directly under root. Symlinked entries
+// are silently skipped — listing them would let an attacker make a tampered
+// link appear as a real bundle.
 func listIn(root string) ([]SkillInfo, error) {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.SafeReadDir(root, "")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []SkillInfo{}, nil
@@ -77,12 +74,8 @@ func listIn(root string) ([]SkillInfo, error) {
 	out := []SkillInfo{}
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") || e.Type()&os.ModeSymlink != 0 || !e.IsDir() {
 			continue
-		}
-		info, statErr := os.Stat(filepath.Join(root, name))
-		if statErr != nil || !info.IsDir() {
-			continue // stray file or unreadable — not a skill
 		}
 		files, _ := filesIn(root, name)
 		out = append(out, SkillInfo{
@@ -96,12 +89,14 @@ func listIn(root string) ([]SkillInfo, error) {
 }
 
 // descriptionIn extracts the `description:` from a skill's SKILL.md frontmatter.
+// Returns empty string for any failure (missing file, symlink, parse error) —
+// the GUI shows "(no description)" rather than surfacing a per-bundle error.
 func descriptionIn(root, name string) string {
-	dir, err := skillDirIn(root, name)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	b, err := safepath.SafeRead(br, "SKILL.md", 1<<20) // 1 MiB cap; SKILL.md is tiny
 	if err != nil {
 		return ""
 	}
@@ -121,27 +116,39 @@ func descriptionIn(root, name string) string {
 }
 
 // filesIn lists the relative paths of every file in a skill bundle (sorted).
+// Walks via SafeReadDir recursively so symlinks are skipped at every level.
 func filesIn(root, name string) ([]string, error) {
-	dir, err := skillDirIn(root, name)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
-	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	var walk func(rel string) error
+	walk = func(rel string) error {
+		entries, err := safepath.SafeReadDir(br, rel)
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
+		for _, e := range entries {
+			if e.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			child := e.Name()
+			childRel := child
+			if rel != "" {
+				childRel = rel + "/" + child
+			}
+			if e.IsDir() {
+				if werr := walk(childRel); werr != nil {
+					return werr
+				}
+				continue
+			}
+			out = append(out, childRel)
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		out = append(out, filepath.ToSlash(rel))
 		return nil
-	})
-	if err != nil {
+	}
+	if err := walk(""); err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
 		}
@@ -152,49 +159,62 @@ func filesIn(root, name string) ([]string, error) {
 }
 
 func readFileIn(root, name, rel string) (string, error) {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(full)
+	b, err := safepath.SafeRead(br, rel, 0)
 	if err != nil {
-		return "", err
+		return "", translateSymlink("read", rel, err)
 	}
 	return string(b), nil
 }
 
 func writeFileIn(root, name, rel, content string) error {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return err
+	// Ensure parent dir exists (safepath.SafeWrite refuses an absent
+	// parent chain). MkdirAll is idempotent and itself symlink-safe.
+	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rel)))
+	if parent != "." && parent != "" {
+		if err := safepath.SafeMkdirAll(br, parent, 0o755); err != nil {
+			return translateSymlink("write through", rel, err)
+		}
 	}
-	return os.WriteFile(full, []byte(content), 0o644)
+	if err := safepath.SafeWrite(br, rel, []byte(content), 0o600); err != nil {
+		return translateSymlink("write through", rel, err)
+	}
+	return nil
 }
 
 func deleteFileIn(root, name, rel string) error {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(full)
+	if err := safepath.SafeRemove(br, rel); err != nil {
+		return translateSymlink("delete through", rel, err)
+	}
+	return nil
 }
 
 func createIn(root, name string) error {
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return err
+	if !safepath.ValidSlug(name) {
+		return fmt.Errorf("invalid skill name %q", name)
 	}
-	if _, err := os.Lstat(dir); err == nil {
+	if safepath.SafeExists(root, name) {
 		return fmt.Errorf("skill %q already exists", name)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if err := safepath.SafeMkdirAll(root, name, 0o755); err != nil {
+		return translateSymlink("create through", name, err)
 	}
 	tmpl := fmt.Sprintf("---\nname: %s\ndescription: One line on when the agent should use this skill.\n---\n\n# %s\n\nDescribe what this skill does and how to use it.\n", name, name)
-	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(tmpl), 0o644)
+	if err := safepath.SafeWrite(root, name+"/SKILL.md", []byte(tmpl), 0o644); err != nil {
+		return translateSymlink("write through", name+"/SKILL.md", err)
+	}
+	return nil
 }
 
 // ---- Per-bot skills (~/.xclaw/<id>/.claude/skills) ----
@@ -250,10 +270,28 @@ func BotCreate(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	// the prior `os.MkdirAll(root, 0o755)` followed any
+	// symlinked intermediate component — an agent that planted
+	// `~/.xclaw/<id>/.claude → /etc` would silently get `/etc/skills`
+	// created before the SafeMkdirAll guard inside createIn could refuse.
+	// Walk from $HOME via dirfd so every component is O_NOFOLLOW-checked.
+	if err := ensureBotSkillsDir(botID); err != nil {
 		return err
 	}
 	return createIn(root, name)
+}
+
+// ensureBotSkillsDir creates ~/.xclaw/<botID>/.claude/skills via the
+// dirfd-walk SafeMkdirAll so every intermediate component is symlink-refused.
+// Skipping a regular MkdirAll here closes Sec #4.
+func ensureBotSkillsDir(botID string) error {
+	if !safepath.ValidSlug(botID) {
+		return fmt.Errorf("invalid bot id %q", botID)
+	}
+	home, _ := os.UserHomeDir()
+	// `~/` is operator-trusted (operator shell == operator's own dirs);
+	// every component below is agent-reachable and gets checked.
+	return safepath.SafeMkdirAll(home, ".xclaw/"+botID+"/.claude/skills", 0o755)
 }
 
 // BotDelete removes one of the bot's skill bundles entirely.
@@ -262,9 +300,11 @@ func BotDelete(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return err
+	if !safepath.ValidSlug(name) {
+		return fmt.Errorf("invalid skill name %q", name)
 	}
-	return os.RemoveAll(dir)
+	if err := safepath.SafeRemoveAll(root, name); err != nil {
+		return translateSymlink("delete", name, err)
+	}
+	return nil
 }

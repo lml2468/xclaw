@@ -24,19 +24,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/xclaw/desktop/internal/octoapi"
+	"github.com/lml2468/xclaw/desktop/internal/safehttp"
 )
 
 const repo = "Mininglamp-OSS/octo-cli"
 
+// userAgent is sent on every HTTP request so the server can attribute traffic
+// (also lets GitHub's anti-abuse return clearer errors than "blank UA").
+const userAgent = "xclaw-desktop/octocli (+https://github.com/lml2468/xclaw)"
+
 // Injectable seams for tests. Production uses the real GitHub API over the
-// default HTTP client; tests point these at an httptest server.
+// hardened HTTP client (dial-time SSRF guard); tests point these at an
+// httptest server.
 var (
-	httpClient = http.DefaultClient
+	httpClient = newSafeClient()
 	apiBase    = "https://api.github.com"
 )
+
+// newSafeClient returns an HTTP client whose dialer rejects connections to
+// private/loopback/link-local/CGN addresses (mirrors core/gateway's media
+// downloader). The download URLs (GitHub API + asset CDN) are public, but
+// they redirect to S3 / Fastly hosts — a poisoned DNS or compromised mirror
+// could redirect to 169.254.169.254 (cloud metadata) or a private internal
+// address; this dial guard turns that into a connect-refused.
+func newSafeClient() *http.Client {
+	return safehttp.NewClient(safehttp.Options{Tag: "octocli"})
+}
 
 func binName() string {
 	if runtime.GOOS == "windows" {
@@ -54,23 +75,28 @@ func Dir() string {
 // BinPath is ~/.xclaw/bin/octo-cli.
 func BinPath() string { return filepath.Join(Dir(), binName()) }
 
-func versionFile() string { return filepath.Join(Dir(), "octo-cli.version") }
-
 // InstalledVersion returns the recorded version of the installed binary, or ""
-// if octo-cli isn't installed.
+// if octo-cli isn't installed. routed through SafeRead so
+// an agent-planted `~/.xclaw/bin/octo-cli.version → ~/.ssh/known_hosts`
+// can't surface arbitrary file contents in the tray as a "version" string.
 func InstalledVersion() string {
 	if !isFile(BinPath()) {
 		return ""
 	}
-	b, err := os.ReadFile(versionFile())
+	b, err := safepath.SafeRead(Dir(), "octo-cli.version", 256)
 	if err != nil {
 		return "" // installed but version unknown
 	}
 	return strings.TrimSpace(string(b))
 }
 
+// writeVersion records the installed octo-cli version. // routed through safepath.SafeWrite so an agent-planted
+// `~/.xclaw/bin/octo-cli.version → ~/Library/LaunchAgents/x.plist` can't
+// hijack the write into operator-launched plists. (The bare
+// os.WriteFile would have followed the symlink and written
+// attacker-chosen content under the operator's uid.)
 func writeVersion(v string) {
-	_ = os.WriteFile(versionFile(), []byte(strings.TrimSpace(v)+"\n"), 0o644)
+	_ = safepath.SafeWrite(Dir(), "octo-cli.version", []byte(strings.TrimSpace(v)+"\n"), 0o644)
 }
 
 // bundledBinary returns the octo-cli shipped inside the app bundle
@@ -99,6 +125,24 @@ func bundledBinary() (path, version string) {
 // (an app update) — but never downgrades a binary the user upgraded via Upgrade.
 // Best-effort: a dev build with no bundle is a no-op (the user can still
 // Upgrade to download octo-cli).
+//
+// Verifies the bundled binary's SHA-256 against a sha256 sidecar shipped
+// alongside the version file (Contents/Resources/octo-cli.sha256), so a
+// post-build / post-install tamper of the helper — anyone with write access
+// to XClaw.app/Contents/Helpers/ on a non-Developer-signed bundle, e.g. an
+// admin user, a tampered.zip downloaded over HTTP, a malicious package
+// extractor — fails closed instead of getting silently installed and
+// executed (Sec). A production bundle is detected by the presence
+// of the version file (Resources/octo-cli.version, shipped by
+// package-desktop.sh alongside the sidecar); a production bundle MUST carry
+// the sidecar (: missing-sidecar previously fell open). A
+// dev build (no version file, no sidecar) keeps the install path open with
+// a stderr warning so local builds can iterate.
+//
+// Read-once-then-install: the bundled bytes are read into
+// a buffer, hashed, then handed to installBinary which writes the SAME
+// buffer — closes the TOCTOU window between hash-from-disk and copy-from-disk
+// that an attacker with write access to Contents/Helpers/ could race.
 func EnsureInstalled() error {
 	src, bundledVer := bundledBinary()
 	if src == "" {
@@ -108,16 +152,80 @@ func EnsureInstalled() error {
 	if isFile(BinPath()) && !(bundledVer != "" && compareVersions(bundledVer, installed) > 0) {
 		return nil // already installed and not older than the bundle
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	buf, err := verifyBundledBytes(src, bundledVer != "")
+	if err != nil {
+		return fmt.Errorf("EnsureInstalled: bundled octo-cli integrity check failed: %w", err)
+	}
+	// H1 /: was `os.MkdirAll(Dir, 0o755)` which follows
+	// symlinks at every intermediate. Agent plants `~/.xclaw/bin → ~/.ssh/`;
+	// MkdirAll silently follows; subsequent installBinary writes the 0o700
+	// octo-cli executable under.ssh. SafeMkdirAll walks via dirfd.
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
 		return err
 	}
-	if err := installBinary(src, nil); err != nil {
+	if err := installBinary("", buf); err != nil {
 		return err
 	}
 	if bundledVer != "" {
 		writeVersion(bundledVer)
 	}
 	return nil
+}
+
+// verifyBundledBytes reads src into a buffer, hashes the SAME buffer (no
+// re-open between hash and install), and compares to the expected sha256
+// written in the app bundle's Resources/octo-cli.sha256 sidecar (one hex
+// digest per line; the first token wins so the file can carry an optional
+// filename suffix in shasum -a 256 format). Returns the buffer for the
+// caller to install verbatim — never re-read from disk after this point.
+//
+// When isProduction is true the sidecar MUST exist and verify; a missing
+// sidecar is an error. When isProduction is false (no
+// version file shipped, i.e. dev build), a missing sidecar logs a warning
+// and returns the buffer unverified — local iteration stays unblocked.
+func verifyBundledBytes(src string, isProduction bool) ([]byte, error) {
+	buf, err := os.ReadFile(src)
+	if err != nil {
+		return nil, fmt.Errorf("read bundled binary: %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		// We located src via Executable a moment ago; if it now errors the
+		// process is in an unusual state. Fail closed in production rather
+		// than ship an unverified buffer.
+		if isProduction {
+			return nil, fmt.Errorf("cannot locate bundle for sidecar lookup: %w", err)
+		}
+		return buf, nil
+	}
+	contents := filepath.Dir(filepath.Dir(exe))
+	shaPath := filepath.Join(contents, "Resources", "octo-cli.sha256")
+	raw, err := os.ReadFile(shaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if isProduction {
+				return nil, fmt.Errorf("production bundle is missing %s — refusing to install unverified binary", shaPath)
+			}
+			fmt.Fprintf(os.Stderr, "[octocli] WARNING: %s missing — installing bundled binary without integrity check (dev build)\n", shaPath)
+			return buf, nil
+		}
+		return nil, fmt.Errorf("read sha256 sidecar: %w", err)
+	}
+	// an empty / whitespace-only sidecar previously panicked on
+	// `strings.Fields(...)[0]`. Treat empty as malformed.
+	parts := strings.Fields(string(raw))
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("sha256 sidecar empty or whitespace-only")
+	}
+	want := strings.ToLower(parts[0])
+	if len(want) != 64 {
+		return nil, fmt.Errorf("sha256 sidecar malformed: expected 64 hex chars, got %d", len(want))
+	}
+	if got := sha256hex(buf); got != want {
+		return nil, fmt.Errorf("bundled octo-cli sha256 mismatch: have %s, want %s", got, want)
+	}
+	return buf, nil
 }
 
 type ghRelease struct {
@@ -136,7 +244,7 @@ func latestRelease(ctx context.Context) (ghRelease, error) {
 		return r, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "xclaw-desktop")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return r, err
@@ -152,12 +260,6 @@ func latestRelease(ctx context.Context) (ghRelease, error) {
 		return r, fmt.Errorf("github releases: no tag in latest release")
 	}
 	return r, nil
-}
-
-// LatestVersion returns the latest published release tag (for update checks).
-func LatestVersion(ctx context.Context) (string, error) {
-	r, err := latestRelease(ctx)
-	return r.TagName, err
 }
 
 // assetName is the GoReleaser archive name for this platform, e.g.
@@ -218,14 +320,20 @@ func Upgrade(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	// H1 /: same dirfd-walk MkdirAll as EnsureInstalled
+	// (replacement for os.MkdirAll which follows symlinks).
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
 		return "", err
 	}
-	// Snapshot the current binary as .prev before replacing it, so a bad upgrade
+	// Snapshot the current binary as.prev before replacing it, so a bad upgrade
 	// (verified checksum but non-functional binary) has a known-good rollback
 	// point. Best-effort: a missing current binary (first install) just skips it.
-	if cur, rerr := os.ReadFile(BinPath()); rerr == nil {
-		_ = os.WriteFile(BinPath()+".prev", cur, 0o755)
+	// routed through safepath so an agent-planted
+	// `~/.xclaw/bin/octo-cli.prev → <attacker-writable-path>` can't redirect
+	// the 0o700-mode write (executable!) to a path of the attacker's choosing.
+	if cur, rerr := safepath.SafeRead(Dir(), binName(), 64<<20); rerr == nil {
+		_ = safepath.SafeWrite(Dir(), binName()+".prev", cur, 0o700)
 	}
 	if err := installBinary("", bin); err != nil {
 		return "", err
@@ -246,15 +354,10 @@ func installBinary(srcPath string, data []byte) error {
 		}
 		data = b
 	}
-	tmp := BinPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o755); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, BinPath())
+	// 0o700 executable installed via SafeWriteAbs: dirfd-walk the parent
+	// chain (refusing any symlinked intermediate) + temp+fsync+rename.
+	// Agent-planted intermediate symlinks can't redirect the install.
+	return safepath.SafeWriteAbs(BinPath(), data, 0o700)
 }
 
 func download(ctx context.Context, url string) ([]byte, error) {
@@ -262,7 +365,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "xclaw-desktop")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -294,7 +397,7 @@ func verifyChecksum(sums, archive []byte, filename string) error {
 }
 
 // checksumFor finds the sha256 for filename in a GoReleaser checksums.txt
-// ("<sha256>  <filename>" per line).
+// ("<sha256> <filename>" per line).
 func checksumFor(sums []byte, filename string) string {
 	for _, line := range strings.Split(string(sums), "\n") {
 		f := strings.Fields(line)
@@ -305,7 +408,7 @@ func checksumFor(sums []byte, filename string) string {
 	return ""
 }
 
-// extractBinary pulls the octo-cli executable out of a .tar.gz or .zip archive.
+// extractBinary pulls the octo-cli executable out of a.tar.gz or.zip archive.
 func extractBinary(archive []byte, name string) ([]byte, error) {
 	if strings.HasSuffix(name, ".zip") {
 		return extractZip(archive)
@@ -328,8 +431,23 @@ func extractTarGz(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// only regular files, never symlinks / hardlinks /
+		// directories with the binName as basename (a malicious archive can
+		// ship a symlink or empty hardlink to silently install a 0-byte
+		// binary or a body the attacker controls).
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		// Reject any traversal segment — the archive should only contain
+		// flat or single-level paths under a well-known directory, and a
+		// `../../../` name is never something we want to honor. Match
+		// real path segments (split on /), not substrings: a benign name
+		// like "foo..bar" should not trip the gate.
+		if hasTraversalSegment(h.Name) {
+			continue
+		}
 		if filepath.Base(h.Name) == binName() {
-			return io.ReadAll(io.LimitReader(tr, 64<<20))
+			return readArchiveEntry(tr, h.Name)
 		}
 	}
 	return nil, fmt.Errorf("%s not found in archive", binName())
@@ -341,16 +459,49 @@ func extractZip(archive []byte) ([]byte, error) {
 		return nil, err
 	}
 	for _, f := range zr.File {
+		// skip non-regular entries (directory, symlink) +
+		// any traversal segment in the entry name.
+		if f.FileInfo().IsDir() || f.FileInfo().Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if hasTraversalSegment(f.Name) {
+			continue
+		}
 		if filepath.Base(f.Name) == binName() {
 			rc, err := f.Open()
 			if err != nil {
 				return nil, err
 			}
 			defer rc.Close()
-			return io.ReadAll(io.LimitReader(rc, 64<<20))
+			return readArchiveEntry(rc, f.Name)
 		}
 	}
 	return nil, fmt.Errorf("%s not found in archive", binName())
+}
+
+// hasTraversalSegment reports whether any '/'-separated segment of name
+// is exactly "..". strings.Contains(name, "..") rejected harmless names
+// like "foo..bar" and accepted nothing extra a path-segment check
+// wouldn't already catch.
+func hasTraversalSegment(name string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(name), "/"), "..")
+}
+
+// readArchiveEntry reads an archive member with a hard size cap, erroring
+// rather than silently truncating. io.ReadAll(io.LimitReader(r, cap)) returns
+// at most cap bytes WITH NO ERROR when the source is ≥cap — so a binary that
+// grows past the cap would install corrupted (the outer archive checksum
+// already passed before extraction). Read cap+1 and treat >cap as an error.
+func readArchiveEntry(r io.Reader, name string) ([]byte, error) {
+	const cap = 256 << 20 // 256 MiB headroom — current octo-cli is ~20 MiB.
+	buf, err := io.ReadAll(io.LimitReader(r, cap+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > cap {
+		return nil, fmt.Errorf("archive entry %q exceeds %d byte cap", name, cap)
+	}
+	return buf, nil
 }
 
 // compareVersions compares dotted versions (leading "v" ignored). Returns
@@ -400,6 +551,14 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 	if robotID == "" {
 		return fmt.Errorf("octocli.Login: robotID is required")
 	}
+	// octoapi.AddBot validated server-returned robot_id,
+	// but the operator-typed OCTO_BOT_ID env value reaches the same argv
+	// path via OctoCliRelogin / SaveConfig. A free-text "-config=/tmp/x"
+	// or "-h" here would be reinterpreted as a flag for `--bot-id`'s
+	// previous arg or for the command itself. Same regex; refuse early.
+	if !octoapi.ValidRobotID.MatchString(robotID) {
+		return fmt.Errorf("octocli.Login: robotID %q has illegal characters (must match %s)", robotID, octoapi.ValidRobotID.String())
+	}
 	if token == "" {
 		return fmt.Errorf("octocli.Login: token is required")
 	}
@@ -415,9 +574,35 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 	cmd.Stdin = strings.NewReader(token)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("octo-cli auth login (%s): %v: %s", robotID, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("octo-cli auth login (%s): %w (output: %s)", robotID, err, redactChildOutput(out))
 	}
 	return nil
+}
+
+// redactChildOutput truncates and redacts a child process's CombinedOutput
+// before it is bubbled into an error returned to the desktop process. The
+// concrete risk: octo-cli (or any helper invoked here in future) could echo a
+// bearer token in a verbose-mode error path — currently it does not, but a
+// regression would otherwise plumb the token straight into our logs and the
+// SaveConfig UI error toast. The redactor masks any token-shaped substring
+// (greedy — see tokenShapedRE) and clamps the result to 256 chars.
+// tokenShapedRE matches any token-prefix substring anywhere in the input —
+// NOT word-boundary-anchored — so glued forms (`Authorization=bf_xxx`,
+// `token:bf_x`, `"bf_x"`, `[bf_x]`, ANSI-wrapped `\x1b[31mbf_x`) all redact.
+// The greedy posture is deliberate: defense-in-depth against an octo-cli
+// stderr regression that echoes a bearer. The trade-off is over-redaction
+// of paths like `/api/bf_lookup/...` — acceptable in an error-toast / log
+// context since over-redaction never leaks; the only cost is debuggability.
+var tokenShapedRE = regexp.MustCompile(`(?i)(bf_|uk_|sk_|sk-|ANTHROPIC_)[A-Za-z0-9_\-]+`)
+
+func redactChildOutput(out []byte) string {
+	s := strings.TrimSpace(string(out))
+	s = tokenShapedRE.ReplaceAllString(s, "<redacted>")
+	const maxLen = 256
+	if len(s) > maxLen {
+		s = s[:maxLen] + "…"
+	}
+	return s
 }
 
 // Logout removes the per-robot-id profile from octo-cli's credential store.
@@ -425,6 +610,13 @@ func Login(ctx context.Context, robotID, token, apiURL string) error {
 // run this on bot deletion without worrying about preconditions.
 func Logout(ctx context.Context, robotID string) error {
 	if robotID == "" {
+		return nil
+	}
+	// same argv-smuggling guard as Login. A free-text
+	// OCTO_BOT_ID of "-config=/tmp/x" would flag-inject through the
+	// logout invocation too. Refuse early — there's nothing to log out
+	// of for an invalid id anyway.
+	if !octoapi.ValidRobotID.MatchString(robotID) {
 		return nil
 	}
 	bin := BinPath()
@@ -439,7 +631,32 @@ func Logout(ctx context.Context, robotID string) error {
 		if strings.Contains(string(out), "no profile found") {
 			return nil
 		}
-		return fmt.Errorf("octo-cli auth logout (%s): %v: %s", robotID, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("octo-cli auth logout (%s): %w (output: %s)", robotID, err, redactChildOutput(out))
 	}
 	return nil
+}
+
+// HasProfile reports whether ~/.octo-cli/config.json has an entry for robotID.
+// We read the JSON directly instead of shelling out to `octo-cli auth list` —
+// 10x faster for a UI poll, and a missing binary is just "no" not an error.
+// The encrypted credentials file (credentials.enc) is separate; config.json
+// is the index that lists which profiles exist.
+func HasProfile(robotID string) bool {
+	if robotID == "" {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	cfgPath := filepath.Join(home, ".octo-cli", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return false // missing file → no profiles registered
+	}
+	var cfg struct {
+		Profiles map[string]json.RawMessage `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	_, ok := cfg.Profiles[robotID]
+	return ok
 }

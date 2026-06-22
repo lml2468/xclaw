@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Custom macOS-style window controls for the frameless window. Wired to the
-  // Wails window API; the cluster shows ×/−/+ glyphs on hover (like macOS).
+ // Custom macOS-style window controls for the frameless window. Wired to the
+ // Wails window API; the cluster shows ×/−/+ glyphs on hover (like macOS).
   import { Window } from "@wailsio/runtime";
 </script>
 

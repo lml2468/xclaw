@@ -126,6 +126,19 @@ func TestCursorMonotonic(t *testing.T) {
 	}
 }
 
+func TestRewindCursor(t *testing.T) {
+	g := New(6000)
+	g.SetCursor("c1", 10)
+	g.RewindCursor("c1", 3) // unconditional, must move backward
+	if got := g.Cursor("c1"); got != 3 {
+		t.Fatalf("rewind did not roll back: got %d want 3", got)
+	}
+	g.RewindCursor("c1", 99) // unconditional forward too
+	if got := g.Cursor("c1"); got != 99 {
+		t.Fatalf("rewind forward failed: got %d want 99", got)
+	}
+}
+
 func TestPushDoubleSanitizeFallback(t *testing.T) {
 	g := New(6000)
 	// empty fromName → falls back to (sanitized) uid; bracket in uid stripped

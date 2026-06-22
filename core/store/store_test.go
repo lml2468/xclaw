@@ -20,27 +20,41 @@ func openTemp(t *testing.T) *Store {
 
 func TestResumeRoundTrip(t *testing.T) {
 	s := openTemp(t)
-	if got, _ := s.Resume("group:123"); got != "" {
+	if got, _ := s.Resume("group:123", "claude"); got != "" {
 		t.Fatalf("expected empty for unknown key, got %q", got)
 	}
 	if err := s.SaveResume("group:123", "claude", "sess-abc"); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "sess-abc" {
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-abc" {
 		t.Fatalf("got %q want sess-abc", got)
 	}
-	// upsert replaces
-	if err := s.SaveResume("group:123", "codex", "thr-def"); err != nil {
+	// Saving the same (key, agent) replaces.
+	if err := s.SaveResume("group:123", "claude", "sess-xyz"); err != nil {
 		t.Fatalf("re-save: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "thr-def" {
-		t.Fatalf("upsert failed: got %q", got)
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-xyz" {
+		t.Fatalf("upsert (same agent) failed: got %q", got)
 	}
-	// clear
+	// A DIFFERENT agent's save for the same key does NOT overwrite
+	// fix: (session_key, agent) is the composite PK so Claude and Codex
+	// drivers can hold concurrent resume ids for the same logical session
+	// without one silently feeding the other a stale id.
+	if err := s.SaveResume("group:123", "codex", "thr-def"); err != nil {
+		t.Fatalf("save second agent: %v", err)
+	}
+	if got, _ := s.Resume("group:123", "claude"); got != "sess-xyz" {
+		t.Fatalf("claude resume id should be unchanged after codex save: got %q", got)
+	}
+	if got, _ := s.Resume("group:123", "codex"); got != "thr-def" {
+		t.Fatalf("codex resume not stored: got %q", got)
+	}
+	// clear drops every agent's row for the key (a /reset clears the whole
+	// session, regardless of which driver authored it).
 	if err := s.ClearResume("group:123"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if got, _ := s.Resume("group:123"); got != "" {
+	if got, _ := s.Resume("group:123", "claude"); got != "" {
 		t.Fatalf("clear failed: got %q", got)
 	}
 }
@@ -304,5 +318,82 @@ func TestPragmasApplyPerPooledConnection(t *testing.T) {
 	}
 	if !strings.EqualFold(journalMode, "wal") {
 		t.Errorf("journal_mode = %q, want wal", journalMode)
+	}
+}
+
+// TestSaveResumeAgainstLegacySchema is the regression for the prior
+// agent_sessions migration finding: changed the table's PRIMARY KEY
+// from `(session_key)` to `(session_key, agent)`, but the schema declaration
+// uses CREATE TABLE IF NOT EXISTS, which is a no-op against legacy
+// deployments. Without the separate CREATE UNIQUE INDEX, those deployments
+// would fail every SaveResume with "ON CONFLICT clause does not match any
+// PRIMARY KEY or UNIQUE constraint" and silently lose resume continuity on
+// every turn.
+//
+// The test simulates an upgrade: open a DB with the legacy schema, close,
+// reopen via the production Open (which runs the current schema-plus-index
+// DDL via IF NOT EXISTS), then assert SaveResume works.
+func TestSaveResumeAgainstLegacySchema(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	// Step 1: create a DB with the legacy schema (single-column PK).
+	legacy, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("legacy open: %v", err)
+	}
+	// Drop the unique index + composite-PK table, recreate the table
+	// with the old single-column PK shape (post-CREATE TABLE IF NOT EXISTS is
+	// a no-op so we DROP first).
+	if _, err := legacy.db.Exec(`DROP INDEX IF EXISTS ux_agent_sessions_key_agent`); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+	if _, err := legacy.db.Exec(`DROP TABLE agent_sessions`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := legacy.db.Exec(`CREATE TABLE agent_sessions (
+		session_key TEXT PRIMARY KEY,
+		agent       TEXT NOT NULL,
+		resume_id   TEXT NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("legacy create: %v", err)
+	}
+	// Pre-existing row from a legacy daemon run.
+	if _, err := legacy.db.Exec(`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at) VALUES (?,?,?,?)`,
+		"dm:peer", "claude", "sess-legacy", 1); err != nil {
+		t.Fatalf("legacy seed: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Step 2: reopen via the production path. The current schema runs all its
+	// IF NOT EXISTS DDL (incl. the new CREATE UNIQUE INDEX) without dropping
+	// the legacy table, so the table keeps its old single-column PK but
+	// gains the composite unique index that ON CONFLICT can target.
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s.Close()
+
+	// Step 3: SaveResume must succeed. Before the fix this errored
+	// with "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
+	// constraint" and the daemon silently lost resume continuity on every
+	// existing user's first post-upgrade turn.
+	if err := s.SaveResume("dm:peer", "claude", "sess-new"); err != nil {
+		t.Fatalf("SaveResume against legacy schema must succeed: %v", err)
+	}
+	if got, _ := s.Resume("dm:peer", "claude"); got != "sess-new" {
+		t.Fatalf("Resume after upsert = %q, want sess-new", got)
+	}
+	// A different agent for the same session key should also work — that's
+	// the whole point of the composite uniqueness.
+	if err := s.SaveResume("dm:peer", "codex", "thr-new"); err != nil {
+		t.Fatalf("SaveResume for second agent must succeed: %v", err)
+	}
+	if got, _ := s.Resume("dm:peer", "codex"); got != "thr-new" {
+		t.Fatalf("Resume codex = %q, want thr-new", got)
 	}
 }

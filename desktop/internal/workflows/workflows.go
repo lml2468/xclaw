@@ -1,12 +1,16 @@
 // Package workflows manages a bot's own workflow scripts. Each workflow is a
-// single .js file (an `export const meta = {…}` header plus a body using
-// agent()/parallel()/pipeline()) living under the bot's CLAUDE_CONFIG_DIR
+// single.js file (an `export const meta = {…}` header plus a body using
+// agent/parallel/pipeline) living under the bot's CLAUDE_CONFIG_DIR
 // (~/.xclaw/<id>/.claude/workflows), so the agent's Workflow tool resolves
 // them by name on every spawn — no per-turn sandbox linking. There is no
 // shared marketplace anymore: every bot owns its own workflows, period.
+//
+// All file ops go through safepath; this file has no Lstat / EvalSymlinks /
+// O_NOFOLLOW concerns of its own.
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // botDir is ~/.xclaw/<botID>/.claude/workflows — inside CLAUDE_CONFIG_DIR so
@@ -27,18 +31,20 @@ func botDir(botID string) (string, error) {
 	return filepath.Join(home, ".xclaw", botID, ".claude", "workflows"), nil
 }
 
-// pathIn resolves and validates a workflow's .js file inside a given root. The
-// name is a single slug (no separators); the parent chain is symlink-checked so
-// an intermediate symlink can't redirect a write outside root.
-func pathIn(root, name string) (string, error) {
+// workflowRel returns "<name>.js" after slug-validating name. The result
+// is passed straight to safepath — no per-call symlink concerns here.
+func workflowRel(name string) (string, error) {
 	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid workflow name %q — letters, digits, . _ - only", name)
 	}
-	full := filepath.Join(root, name+".js")
-	if err := safepath.AssertNoSymlinkEscape(root, full, true); err != nil {
-		return "", err
+	return name + ".js", nil
+}
+
+func translateSymlink(verb, name string, err error) error {
+	if errors.Is(err, safepath.ErrSymlink) {
+		return fmt.Errorf("refusing to %s symlink: %q", verb, name)
 	}
-	return full, nil
+	return err
 }
 
 // Info summarizes a per-bot workflow for the list view.
@@ -47,11 +53,48 @@ type Info struct {
 	Description string `json:"description"`
 }
 
-var descRe = regexp.MustCompile(`description\s*:\s*["']([^"']+)["']`)
+// metaRe finds the `export const meta = { … }` block, scoping descRe's
+// search so a stray `description:` in comments or downstream code can't
+// shadow the canonical one. Uses a balanced-brace count via a helper
+// (not a single regex) because workflows' meta blocks may contain nested
+// objects/arrays — a `(.*?)\}` non-greedy match stopped at the first
+// inner `}` and truncated the capture before description: was reached
+// for any non-trivial meta.
+//
+// descRe accepts EITHER single or double quotes, with the matching
+// closing quote — the character class `[^"']+` excluded BOTH quote chars
+// and truncated descriptions like `"It's a workflow"` at the apostrophe.
+var (
+	metaRe = regexp.MustCompile(`(?s)export\s+const\s+meta\s*=\s*\{`)
+	descRe = regexp.MustCompile(`description\s*:\s*(?:"([^"]+)"|'([^']+)')`)
+)
+
+// extractMetaBlock returns the body inside the meta = { … } braces with
+// brace-counting (not greedy regex), so nested {...}/[…] survive intact.
+// Returns "" if no balanced match is found.
+func extractMetaBlock(b []byte) string {
+	loc := metaRe.FindIndex(b)
+	if loc == nil {
+		return ""
+	}
+	depth := 1
+	for i := loc[1]; i < len(b); i++ {
+		switch b[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return string(b[loc[1]:i])
+			}
+		}
+	}
+	return ""
+}
 
 // listIn returns every workflow (*.js) directly under root.
 func listIn(root string) ([]Info, error) {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.SafeReadDir(root, "")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Info{}, nil
@@ -62,6 +105,9 @@ func listIn(root string) ([]Info, error) {
 	for _, e := range entries {
 		n := e.Name()
 		if strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".js") || e.IsDir() {
+			continue
+		}
+		if e.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		name := strings.TrimSuffix(n, ".js")
@@ -75,49 +121,68 @@ func listIn(root string) ([]Info, error) {
 }
 
 func descriptionIn(root, name string) string {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(p)
+	b, err := safepath.SafeRead(root, rel, 1<<20) // 1 MiB cap; workflow headers are tiny
 	if err != nil {
 		return ""
 	}
-	if m := descRe.FindSubmatch(b); m != nil {
-		return strings.TrimSpace(string(m[1]))
+	if block := extractMetaBlock(b); block != "" {
+		if m := descRe.FindStringSubmatch(block); m != nil {
+			// Either group 1 (double-quoted) or group 2 (single-quoted) matched.
+			val := m[1]
+			if val == "" {
+				val = m[2]
+			}
+			return strings.TrimSpace(val)
+		}
 	}
 	return ""
 }
 
 func readIn(root, name string) (string, error) {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(p)
+	b, err := safepath.SafeRead(root, rel, 0)
 	if err != nil {
-		return "", err
+		return "", translateSymlink("read", name, err)
 	}
 	return string(b), nil
 }
 
 func writeIn(root, name, content string) error {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
+	if err := safepath.SafeWrite(root, rel, []byte(content), 0o600); err != nil {
+		return translateSymlink("write through", name, err)
 	}
-	return os.WriteFile(p, []byte(content), 0o644)
+	return nil
+}
+
+// ensureBotWorkflowsDir creates ~/.xclaw/<botID>/.claude/workflows via the
+// dirfd-walk SafeMkdirAll so every intermediate component is symlink-
+// refused. replaces the prior `os.MkdirAll(root, …)`
+// in writeIn that followed any symlinked intermediate component.
+func ensureBotWorkflowsDir(botID string) error {
+	if !safepath.ValidSlug(botID) {
+		return fmt.Errorf("invalid bot id %q", botID)
+	}
+	home, _ := os.UserHomeDir()
+	return safepath.SafeMkdirAll(home, ".xclaw/"+botID+"/.claude/workflows", 0o755)
 }
 
 func createIn(root, name string) error {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(p); err == nil {
+	if safepath.SafeExists(root, rel) {
 		return fmt.Errorf("workflow %q already exists", name)
 	}
 	tmpl := fmt.Sprintf(`export const meta = {
@@ -159,6 +224,9 @@ func BotWrite(botID, name, content string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureBotWorkflowsDir(botID); err != nil {
+		return err
+	}
 	return writeIn(root, name, content)
 }
 
@@ -166,6 +234,9 @@ func BotWrite(botID, name, content string) error {
 func BotCreate(botID, name string) error {
 	root, err := botDir(botID)
 	if err != nil {
+		return err
+	}
+	if err := ensureBotWorkflowsDir(botID); err != nil {
 		return err
 	}
 	return createIn(root, name)
@@ -177,9 +248,12 @@ func BotDelete(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(p)
+	if err := safepath.SafeRemove(root, rel); err != nil {
+		return translateSymlink("delete", name, err)
+	}
+	return nil
 }

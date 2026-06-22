@@ -1,8 +1,8 @@
 <script lang="ts">
-  // The XClaw wordmark — a stylized "X": a heavier back-slash and lighter
-  // forward-slash with a slight italic shear. Geometry mirrors the macOS menu
-  // bar template icon (desktop/trayicon.go) so the brand reads identically in
-  // the tray, the sidebar, and as the agent's default avatar.
+ // The XClaw wordmark — a stylized "X": a heavier back-slash and lighter
+ // forward-slash with a slight italic shear. Geometry mirrors the macOS menu
+ // bar template icon (desktop/trayicon.go) so the brand reads identically in
+ // the tray, the sidebar, and as the agent's default avatar.
   let { size = 24 }: { size?: number } = $props();
 </script>
 

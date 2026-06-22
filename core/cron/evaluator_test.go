@@ -96,7 +96,7 @@ func TestIsOneShotSchedule(t *testing.T) {
 
 func TestComputeNextRunCron(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)
-	next, ok := computeNextRun("*/15 * * * *", true, now)
+	next, ok := computeNextRun("*/15 * * * *", now)
 	if !ok {
 		t.Fatal("expected a next run")
 	}
@@ -116,7 +116,7 @@ func TestComputeNextRunOneShot(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.UTC)
 
 	future := "2999-01-01T00:00:00Z"
-	next, ok := computeNextRun(future, false, now)
+	next, ok := computeNextRun(future, now)
 	if !ok {
 		t.Fatal("future one-shot should return its instant")
 	}
@@ -125,18 +125,18 @@ func TestComputeNextRunOneShot(t *testing.T) {
 		t.Errorf("one-shot next = %v, want %v", next, want)
 	}
 
-	if _, ok := computeNextRun("2000-01-01T00:00:00Z", false, now); ok {
+	if _, ok := computeNextRun("2000-01-01T00:00:00Z", now); ok {
 		t.Error("past one-shot should return none")
 	}
 }
 
 func TestComputeNextRunInvalid(t *testing.T) {
 	now := time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)
-	if _, ok := computeNextRun("bogus expr here now", true, now); ok {
+	if _, ok := computeNextRun("bogus expr here now", now); ok {
 		t.Error("invalid cron should return none")
 	}
 	// Impossible schedule (Feb 31) must terminate the scan and return none.
-	if _, ok := computeNextRun("0 0 31 2 *", true, now); ok {
+	if _, ok := computeNextRun("0 0 31 2 *", now); ok {
 		t.Error("Feb 31 should return none")
 	}
 }
@@ -179,7 +179,7 @@ func TestParseOneShotStrict(t *testing.T) {
 }
 
 func TestComputeNextRunRejectsRolloverOneShot(t *testing.T) {
-	if _, ok := computeNextRun("2026-13-13T00:00:00Z", false, time.Now()); ok {
+	if _, ok := computeNextRun("2026-13-13T00:00:00Z", time.Now()); ok {
 		t.Error("computeNextRun must use strict one-shot parsing")
 	}
 }
@@ -201,5 +201,51 @@ func TestValidateSchedule(t *testing.T) {
 	}
 	if ValidateSchedule("2026-02-31T00:00:00Z") {
 		t.Error("rollover one-shot should not validate")
+	}
+}
+
+// TestComputeNextRunSkippingSkipsDuplicateWallclock is the regression for the
+// DST fall-back double-fire bug: in a zone with DST, wall-clock 01:00-01:59
+// occurs twice in absolute time. Without the skip, a "30 1 * * *" task fires
+// at wall-01:30 of the FIRST pass, then computeNextRun finds wall-01:30 of
+// the SECOND pass as the next match — same wall-clock minute, fired twice.
+// Once with skipKey set the scanner advances past the duplicated key.
+func TestComputeNextRunSkippingSkipsDuplicateWallclock(t *testing.T) {
+	// Simulated "after firing at this absolute time" — the call site uses the
+	// fired-at instant as `from`, so the next match must be strictly later
+	// AND must NOT carry the same wall-clock key.
+	from := time.Date(2026, 1, 15, 1, 30, 0, 0, time.UTC)
+	skip := fireKey(from)
+
+	next, ok := computeNextRunSkipping("30 1 * * *", from, skip)
+	if !ok {
+		t.Fatal("expected a next match for daily 01:30")
+	}
+	if fireKey(next) == skip {
+		t.Fatalf("computeNextRunSkipping returned the skipped key: %s", fireKey(next))
+	}
+	// And the next instant must be at least the next day (not the same
+	// wall-clock minute), so resume continuity holds even outside DST.
+	if next.Day() == from.Day() {
+		t.Fatalf("next fire should land on a different day, got %v from %v", next, from)
+	}
+}
+
+// TestComputeNextRunRecurringAdvancesAfterSkip exercises the integration: the
+// scheduler's loop calls computeNextRunSkipping(schedule, now, justFiredKey)
+// and the result must be strictly after `now` in absolute time as well as a
+// different wall-clock minute.
+func TestComputeNextRunRecurringAdvancesAfterSkip(t *testing.T) {
+	from := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	skip := fireKey(from)
+	next, ok := computeNextRunSkipping("0 9 * * *", from, skip)
+	if !ok {
+		t.Fatal("daily 09:00 should always have a next match")
+	}
+	if !next.After(from) {
+		t.Fatalf("next must be > from: from=%v next=%v", from, next)
+	}
+	if fireKey(next) == skip {
+		t.Fatalf("skipped key leaked through: %s", skip)
 	}
 }

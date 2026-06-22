@@ -14,6 +14,9 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a
@@ -67,34 +70,63 @@ func NewStore(cronJSONPath string) *Store {
 	return &Store{path: cronJSONPath}
 }
 
-// load parses cron.json. Returns an error on malformed JSON (loud, not silent).
-// The caller holds s.mu.
+// load parses cron.json. Routes through SafeReadAbs (refuses leaf symlinks,
+// caps the read at 16 MiB) so a planted `cron.json → ~/.aws/credentials`
+// can't exfiltrate target bytes via JSON-parse error messages on the
+// control bus. The caller holds s.mu.
+//
+// A malformed JSON or oversize file is preserved as
+// `cron.json.corrupt.<unix-ns>` and treated as empty for the caller:
+// returning an error would wedge cron permanently (Update bails before
+// mutating, every scheduler tick and every create/delete handler fails
+// forever). The .corrupt sidecar keeps the operator's data on disk for
+// forensic recovery rather than letting the first save after corruption
+// silently erase it. Other read errors (EIO, EACCES, symlink refusal,
+// …) are returned as errors WITHOUT quarantine so a transient I/O hiccup
+// or temporary permission flip doesn't destroy data; the caller (Update)
+// then aborts the mutation rather than committing an empty list. A
+// persistent agent that keeps clobbering cron.json is a separate
+// "agent has bash" problem.
 func (s *Store) load() ([]Task, error) {
-	raw, err := os.ReadFile(s.path)
+	raw, err := safepath.SafeReadAbs(s.path, 16<<20) // 16 MiB cap
 	if os.IsNotExist(err) {
 		return []Task{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cron: read %s: %w", s.path, err)
 	}
 	var tasks []Task
 	if err := json.Unmarshal(raw, &tasks); err != nil {
-		return nil, fmt.Errorf("cron.json is malformed (%s): %w", s.path, err)
+		s.quarantine(fmt.Errorf("malformed: %w", err))
+		return []Task{}, nil
 	}
 	return tasks, nil
 }
 
-// save atomically writes the task array (temp file + rename). The caller holds s.mu.
+// quarantine renames a corrupt cron.json to a timestamped sidecar so the
+// operator can recover their tasks; logs to stderr. Best-effort — if the
+// rename fails (e.g. the source already vanished) we still log and continue.
+// Routed through safepath.SafeRenameAbs so an agent-planted symlink at the
+// destination's parent can't redirect the corrupt-bytes elsewhere.
+func (s *Store) quarantine(reason error) {
+	sidecar := fmt.Sprintf("%s.corrupt.%d", s.path, time.Now().UnixNano())
+	if rerr := safepath.SafeRenameAbs(s.path, sidecar); rerr != nil {
+		fmt.Fprintf(os.Stderr, "cron: %s %v, resetting to empty (sidecar rename failed: %v)\n", s.path, reason, rerr)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "cron: %s %v, preserved at %s, resetting to empty\n", s.path, reason, sidecar)
+}
+
+// save atomically writes the task array via SafeWriteAbs: dirfd-walk the
+// parent chain refusing any symlinked intermediate, then temp+fsync+rename
+// to commit. An agent-planted leaf-symlink at cron.json itself is refused
+// with ErrSymlink rather than silently followed. The caller holds s.mu.
 func (s *Store) save(tasks []Task) error {
 	data, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	return safepath.SafeWriteAbs(s.path, data, 0o600)
 }
 
 // Load returns the bot's tasks ([] when the file is absent). Thread-safe.

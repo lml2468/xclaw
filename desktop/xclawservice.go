@@ -16,6 +16,7 @@ import (
 	"github.com/lml2468/xclaw/desktop/internal/control"
 	"github.com/lml2468/xclaw/desktop/internal/core"
 	"github.com/lml2468/xclaw/desktop/internal/octoapi"
+	"github.com/lml2468/xclaw/desktop/internal/octocli"
 	"github.com/lml2468/xclaw/desktop/internal/secrets"
 	"github.com/lml2468/xclaw/desktop/internal/skills"
 	"github.com/lml2468/xclaw/desktop/internal/workflows"
@@ -48,7 +49,7 @@ type XClawService struct {
 }
 
 // maxOversizedRedials bounds consecutive ErrTooLong re-dials before escalating to
-// a full reconnect (H9). The most likely cause of an over-cap frame is the daemon
+// a full reconnect. The most likely cause of an over-cap frame is the daemon
 // itself producing a large event, which a re-dial won't fix — so don't loop on it.
 const maxOversizedRedials = 3
 
@@ -68,6 +69,12 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 	x.configMode = cfg != ""
 	x.sup = &core.Supervisor{BinPath: bin, SocketPath: core.SocketPath(), ConfigPath: cfg}
 	if err := x.sup.Start(); err != nil {
+		// Start may have spawned the daemon process before the socket-wait
+		// timed out — Supervisor returns the error but leaves s.cmd set, so
+		// the reaper goroutine is alive and the daemon is running. Without
+		// this Stop, the orphaned daemon survives until -exit-with-parent
+		// kicks in (Linux only); on macOS it lingers indefinitely.
+		x.sup.Stop()
 		return err
 	}
 	if err := x.connect(); err != nil {
@@ -91,7 +98,20 @@ func (x *XClawService) connect() error {
 	x.mu.Unlock()
 
 	go func() {
+		firstEnvelope := true
 		err := client.Read(func(env control.Envelope) {
+			if firstEnvelope {
+				firstEnvelope = false
+				// Only NOW do we know the wire is healthy enough to send
+				// at least one frame. Reset the over-cap re-dial counter
+				// here rather than at connect entry — resetting on every
+				// re-dial turned the maxOversizedRedials cap into dead
+				// code (the redial→connect→reset→redial cycle accumulated
+				// no count, so the fallback full-reconnect never fired).
+				x.mu.Lock()
+				x.oversizedRetries = 0
+				x.mu.Unlock()
+			}
 			if app := application.Get(); app != nil {
 				app.Event.Emit(EventStream, env)
 			}
@@ -111,7 +131,7 @@ func (x *XClawService) connect() error {
 		// mean the daemon died. Re-dialing the LIVE daemon can clear a transient
 		// desync — but the likeliest cause is the daemon emitting a legitimately
 		// over-cap event, which a re-dial won't fix and would busy-loop on. So
-		// bound the re-dials (H9) and route them through the epoch guard (H8) so a
+		// bound the re-dials and route them through the epoch guard so a
 		// concurrent RestartCore can't be raced; after the cap, fall back to a full
 		// reconnect.
 		if errors.Is(err, bufio.ErrTooLong) {
@@ -137,10 +157,6 @@ func (x *XClawService) connect() error {
 		// Clean EOF / closed socket → the daemon exited; respawn + reconnect.
 		x.reconnect()
 	}()
-
-	x.mu.Lock()
-	x.oversizedRetries = 0 // a fresh, healthy connection clears the re-dial counter
-	x.mu.Unlock()
 
 	_, _ = client.Send(control.CmdAuth, control.AuthBody{Token: x.sup.Token()})
 	_, _ = client.Send("health", nil)
@@ -196,7 +212,7 @@ func (x *XClawService) epochCurrent(e uint64) bool {
 
 // emitConnState pushes a synthetic bridge.status event to the frontend so the UI
 // can reflect the bus connection state (connected / reconnecting) instead of
-// silently freezing on its last state when the daemon drops (H9 observability).
+// silently freezing on its last state when the daemon drops.
 func (x *XClawService) emitConnState(connected bool, detail string) {
 	app := application.Get()
 	if app == nil {
@@ -221,10 +237,10 @@ func (x *XClawService) injectSecrets(client *control.Client) {
 	}
 	for _, id := range ids {
 		if t := secrets.Get(id, secrets.OctoToken); t != "" {
-			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: string(secrets.OctoToken), Value: t})
+			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.OctoToken, Value: t})
 		}
 		if t := secrets.Get(id, secrets.GatewayToken); t != "" {
-			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: string(secrets.GatewayToken), Value: t})
+			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.GatewayToken, Value: t})
 		}
 	}
 }
@@ -313,13 +329,87 @@ func (x *XClawService) SaveConfig(bots []configstore.BotConfig, removedIDs []str
 	return configstore.Save(bots, removedIDs)
 }
 
+// --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---
+
+// OctoCliStatus is the per-bot octo-cli registration state surfaced to the
+// Octo-integration pane: registered iff ~/.octo-cli/config.json has an entry
+// for the bot's OCTO_BOT_ID. RobotID is included so the UI can show what we
+// looked up (and reveal mismatches between config and what's actually in env).
+type OctoCliStatus struct {
+	Registered bool   `json:"registered"`
+	RobotID    string `json:"robotId"`
+}
+
+// OctoCliStatus reports whether the bot's octo-cli profile is registered.
+// Reads config.json directly; no octo-cli spawn needed (cheap for a UI poll).
+func (x *XClawService) OctoCliStatus(botID string) (OctoCliStatus, error) {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return OctoCliStatus{}, err
+	}
+	return OctoCliStatus{Registered: octocli.HasProfile(robotID), RobotID: robotID}, nil
+}
+
+// OctoCliRelogin re-writes the disk profile for the bot from the keychain'd
+// bf_ token. Used to repair a missing/stale profile from the Octo-integration
+// pane without forcing the operator to re-save the whole config.
+func (x *XClawService) OctoCliRelogin(botID string) error {
+	robotID, token, apiURL, err := loadOctoBinding(botID)
+	if err != nil {
+		return err
+	}
+	if robotID == "" {
+		return fmt.Errorf("bot %q has no OCTO_BOT_ID in env", botID)
+	}
+	if token == "" {
+		return fmt.Errorf("bot %q has no bf_ token in keychain — set it via the Octo 集成 tab and re-save", botID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return octocli.Login(ctx, robotID, token, apiURL)
+}
+
+// OctoCliLogout clears the bot's disk profile. The keychain'd bf_ token is
+// left alone — re-login can restore the profile from it.
+func (x *XClawService) OctoCliLogout(botID string) error {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return err
+	}
+	if robotID == "" {
+		return nil // nothing to log out of
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return octocli.Logout(ctx, robotID)
+}
+
+// loadOctoBinding returns the bot's (robotID, bf_token, apiURL) by reading
+// configstore. Uses LoadOne so we do one config.json parse + two keychain
+// reads — not N of each for a single-bot lookup.
+func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
+	bot, ok, lerr := configstore.LoadOne(botID)
+	if lerr != nil {
+		return "", "", "", lerr
+	}
+	if !ok {
+		return "", "", "", fmt.Errorf("bot %q not found", botID)
+	}
+	return bot.Env["OCTO_BOT_ID"], bot.OctoToken, bot.APIURL, nil
+}
+
 // OctoAddBot provisions a new bot on octo-server using the operator's User API
 // Key (uk_…), returning the bot's robot id + bf_ token. The wizard then folds
 // these into a BotConfig and calls SaveConfig — so the token reaches the
 // keychain (never config.json) by the existing path. Self-service replacement
 // for the manual BotFather /newbot flow.
 func (x *XClawService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResult, error) {
-	return octoapi.AddBot(context.Background(), apiURL, apiKey, name)
+	// Bound the call so the wizard UI can't strand a request forever — the
+	// octoapi httpClient has a 30 s timeout but no caller-side ceiling
+	// (arch #7, matching the OctoCliRelogin / Logout pattern).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return octoapi.AddBot(ctx, apiURL, apiKey, name)
 }
 
 // --- skills: per-bot (~/.xclaw/<id>/.claude/skills) ---

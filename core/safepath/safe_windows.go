@@ -32,6 +32,18 @@ import (
 )
 
 func lstatChain(root, rel string) (string, error) {
+	// Empty rel = the root itself. Unix's walkToDir / SafeReadDir special-
+	// case this; mirror that here so SafeReadDir(root, "") and friends
+	// work for "list the root directory" on Windows too. Without this
+	// every workspace/skills/workflows op that targets the root returned
+	// "empty path" from ResolveLexical and broke Windows-only.
+	if rel == "" || rel == "." {
+		root = filepath.Clean(root)
+		if fi, err := os.Lstat(root); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return "", pathErrSymlink(root)
+		}
+		return root, nil
+	}
 	abs, err := ResolveLexical(root, rel)
 	if err != nil {
 		return "", err

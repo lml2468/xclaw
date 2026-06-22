@@ -101,7 +101,19 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 `
 
 // Open initializes the database (creating the schema) at path.
+//
+// Round 21 Sec H3: pre-check each of xclaw.db / xclaw.db-wal / xclaw.db-shm
+// for a leaf symlink before SQLite opens them. An agent (Bash + bypass)
+// that plants `<dataDir>/xclaw.db → ~/Documents/important.sqlite` would
+// otherwise have SQLite open through the symlink and run schema
+// migrations (ALTER, DROP TABLE agent_sessions_legacy, INSERT) on the
+// operator's unrelated DB — data destruction / cross-DB write.
 func Open(path string) (*Store, error) {
+	for _, leaf := range []string{"", "-wal", "-shm"} {
+		if err := refuseSymlinkLeaf(path + leaf); err != nil {
+			return nil, fmt.Errorf("open store %s: %w", path+leaf, err)
+		}
+	}
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, err

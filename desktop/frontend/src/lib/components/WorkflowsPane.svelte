@@ -28,17 +28,31 @@
 
   $effect(() => { botId; sel = null; content = ""; dirty = false; load(); });
 
+  // Generation counters (round 21 FE #3 — mirror SkillsPane R16/R17):
+  // discard stale list / read responses when bot or selection has moved
+  // since the call started. Otherwise: switch bot A → B, A's slower
+  // BotWorkflowsList response lands second, overwrites `wfs` with A's
+  // list while B is shown; user clicks first → reads A's content into
+  // B's editor; "保存" writes A's content under A. Same race for select().
+  let loadGen = 0;
+  let selectGen = 0;
+
   async function load() {
+    const gen = ++loadGen;
+    const capturedBot = botId;
     error = "";
     try {
+      let next: WfInfo[];
       if (isPreview) {
-        wfs = Object.entries(mockBot[botId] ?? {}).map(([name, src]) => ({ name, description: descOf(src) }));
+        next = Object.entries(mockBot[capturedBot] ?? {}).map(([name, src]) => ({ name, description: descOf(src) }));
       } else {
-        wfs = ((await XClawService.BotWorkflowsList(botId)) ?? []) as WfInfo[];
+        next = ((await XClawService.BotWorkflowsList(capturedBot)) ?? []) as WfInfo[];
       }
+      if (gen !== loadGen || capturedBot !== botId) return;
+      wfs = next;
       if (wfs.length && !wfs.find((w) => w.name === sel)) select(wfs[0].name);
       else if (!wfs.length) { sel = null; content = ""; }
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (gen === loadGen) error = errMsg(e); }
   }
 
   function descOf(src: string): string {
@@ -49,10 +63,14 @@
   async function select(name: string) {
     if (dirty && !(await confirm({ message: "放弃未保存的改动?", confirmLabel: "放弃", danger: true }))) return;
     sel = name; error = "";
+    const gen = ++selectGen;
+    const capturedBot = botId;
     try {
-      content = isPreview ? (mockBot[botId]?.[name] ?? "") : await XClawService.BotWorkflowRead(botId, name);
+      const text = isPreview ? (mockBot[capturedBot]?.[name] ?? "") : await XClawService.BotWorkflowRead(capturedBot, name);
+      if (gen !== selectGen || capturedBot !== botId || sel !== name) return;
+      content = text;
       dirty = false;
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (gen === selectGen) error = errMsg(e); }
   }
 
   async function save() {

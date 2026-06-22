@@ -15,7 +15,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/lml2468/xclaw/core/atomicfile"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a
@@ -70,9 +70,14 @@ func NewStore(cronJSONPath string) *Store {
 }
 
 // load parses cron.json. Returns an error on malformed JSON (loud, not silent).
-// The caller holds s.mu.
+// The caller holds s.mu. Round 21 Sec H4: routes through SafeReadAbs so an
+// agent-planted `<dataDir>/cron.json → ~/Library/Application Support/Claude/
+// claude.json` (or any sensitive JSON) cannot exfiltrate target bytes via
+// the malformed-JSON error path (the Go json error message includes the
+// offending token snippet, which is sent through the control bus to any
+// viewer).
 func (s *Store) load() ([]Task, error) {
-	raw, err := os.ReadFile(s.path)
+	raw, err := safepath.SafeReadAbs(s.path, 16<<20) // 16 MiB cap; cron.json is tiny
 	if os.IsNotExist(err) {
 		return []Task{}, nil
 	}
@@ -86,13 +91,17 @@ func (s *Store) load() ([]Task, error) {
 	return tasks, nil
 }
 
-// save atomically writes the task array (temp file + rename). The caller holds s.mu.
+// save atomically writes the task array (temp file + rename + symlink leaf
+// refusal). The caller holds s.mu. Round 21 Sec H4 / Arch H1: routed
+// through SafeWriteAbs so an agent-planted leaf-symlink can't redirect
+// the write (the prior atomicfile.Write's os.Rename silently replaced a
+// symlink with our content under the operator uid).
 func (s *Store) save(tasks []Task) error {
 	data, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(s.path, data, 0o600)
+	return safepath.SafeWriteAbs(s.path, data, 0o600)
 }
 
 // Load returns the bot's tasks ([] when the file is absent). Thread-safe.

@@ -22,6 +22,7 @@ import (
 	"github.com/lml2468/xclaw/core/im/octo"
 	"github.com/lml2468/xclaw/core/persona"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/core/store"
 )
 
@@ -206,13 +207,13 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// is `<home>/.xclaw/<botID>/data` — when DataDir is under $HOME we use
 	// the dirfd walk; an operator-supplied absolute path outside $HOME
 	// falls back to bare MkdirAll (operator-trusted).
-	if err := safeMkdirAll(cfg.DataDir, 0o755); err != nil {
+	if err := safepath.SafeMkdirAllAbs(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("bot %s: mkdir data: %w", cfg.BotID, err)
 	}
 	// Isolated per-bot CLAUDE_CONFIG_DIR (unless inheriting the operator's
 	// ~/.claude). Created here so the agent's config root exists before it spawns.
 	if cfg.ClaudeConfigDir != "" && !cfg.Agent.InheritUserConfig {
-		if err := safeMkdirAll(cfg.ClaudeConfigDir, 0o700); err != nil {
+		if err := safepath.SafeMkdirAllAbs(cfg.ClaudeConfigDir, 0o700); err != nil {
 			return fmt.Errorf("bot %s: mkdir claude config dir: %w", cfg.BotID, err)
 		}
 	}

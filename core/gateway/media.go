@@ -434,35 +434,27 @@ func (b *cancelOnCloseBody) Close() error {
 	return err
 }
 
-// writeCapped streams src into path, deleting the partial file and returning an
-// error if more than max bytes arrive. The file is created 0o600 with O_EXCL —
-// attacker-supplied IM media goes into a uuid-named path, so EXCL guards
-// against a same-name pre-create from a co-located attacker process, and 0o600
-// keeps the contents off other users' eyes on shared hosts where umask is
-// loose (round 13 M4).
+// writeCapped reads src into memory (capped at max bytes) and writes it via
+// safepath.SafeWriteAbs — symlink-safe (refuses a planted leaf-symlink AND
+// dirfd-walks the parent), atomic temp+rename. Round 21 H1: was bare
+// os.OpenFile that re-traversed the absolute path, so the prior R20
+// SafeMkdirAll on `.xclaw-media` was undone here by an agent racing a
+// symlink swap on the directory between the verified mkdir and the
+// O_CREATE open. SafeWriteAbs now anchors the write to the dirfd
+// returned by the same walk.
 func writeCapped(path string, src io.Reader, max int64) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL, 0o600)
+	buf, err := io.ReadAll(io.LimitReader(src, max+1))
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return fmt.Errorf("read body: %w", err)
 	}
-	// limit = max+1 so we can detect overflow without reading unboundedly.
-	n, err := io.Copy(f, io.LimitReader(src, max+1))
-	closeErr := f.Close()
-	if err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("write file: %w", err)
-	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close file: %w", closeErr)
-	}
-	if n > max {
-		_ = os.Remove(path)
+	if int64(len(buf)) > max {
 		return fmt.Errorf("exceeds size cap %s", formatBytes(max))
 	}
-	if n == 0 {
-		_ = os.Remove(path)
+	if len(buf) == 0 {
 		return fmt.Errorf("empty response")
+	}
+	if err := safepath.SafeWriteAbs(path, buf, 0o600); err != nil {
+		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
 }

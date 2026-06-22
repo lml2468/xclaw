@@ -11,6 +11,7 @@
   // for the recovery path.
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { errMsg } from "../errors";
+  import { untrack } from "svelte";
   import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
 
   let { bot = $bindable<BotConfig>(), botStatus, ondirty, isPreview = false }:
@@ -25,12 +26,20 @@
   // operator). Without this guard, the seed-effect → commitRobotId chain
   // would dirty the form just from clicking a different bot.
   let lastSeededRobotId = "";
+  // Round 21 FE #2: untrack the bot.env read so the second $effect
+  // (which writes bot.env when robotId is typed) doesn't re-trigger
+  // this seed effect — that loop reset `editBotId = false` mid-
+  // keystroke, flipping the input back to readonly and silently
+  // dropping subsequent characters. Now this only re-runs when bot.id
+  // itself changes (bot switch).
   $effect(() => {
     bot.id; // re-seed on bot switch
-    robotId = bot.env?.OCTO_BOT_ID ?? "";
-    lastSeededRobotId = robotId;
-    editBotId = false;
-    refreshCliStatus();
+    untrack(() => {
+      robotId = bot.env?.OCTO_BOT_ID ?? "";
+      lastSeededRobotId = robotId;
+      editBotId = false;
+      refreshCliStatus();
+    });
   });
   // Mirror robotId → bot.env reactively. Was wired via `oninput=commitRobotId`
   // on the bound input, which reads `robotId` BEFORE Svelte's bind:value has

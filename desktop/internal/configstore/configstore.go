@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/octocli"
@@ -269,7 +268,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	if err != nil {
 		return err
 	}
-	if err := atomicfile.Write(Path(), append(raw, '\n'), 0o600); err != nil {
+	if err := safepath.SafeWriteAbs(Path(), append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 
@@ -393,7 +392,12 @@ func readBotFile(id, name string) string {
 //     would have been silently overwritten.
 func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	if strings.TrimSpace(content) != "" {
-		return atomicfile.Write(filepath.Join(botDir(id), name), []byte(content), 0o600)
+		// Round 21 Arch H2: was atomicfile.Write (follows parent-chain
+		// symlinks). Now routes through safepath: an agent-planted
+		// `~/.xclaw/<id>/SOUL.md → /etc/cron.d/x` can't redirect this
+		// write into operator-trusted system files. Same trust region
+		// as R19's SOUL/AGENTS READ path.
+		return safepath.SafeWriteAbs(filepath.Join(botDir(id), name), []byte(content), 0o600)
 	}
 	path := filepath.Join(botDir(id), name)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

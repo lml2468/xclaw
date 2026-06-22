@@ -32,7 +32,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/octoapi"
@@ -389,7 +388,11 @@ func installBinary(srcPath string, data []byte) error {
 	// temp+chmod+rename without fsync, a fourth copy of this pattern that
 	// drifted from the others; the round-6 atomicfile pkg was created
 	// exactly to retire this kind of duplication).
-	return atomicfile.Write(BinPath(), data, 0o700)
+	// Round 21 Arch H3: switched from atomicfile.Write to safepath.SafeWriteAbs
+	// — the latter additionally walks the parent chain via dirfd + O_NOFOLLOW
+	// so an agent-planted intermediate symlink can't redirect the executable
+	// install. atomicfile is being retired in R21 in favor of safepath.
+	return safepath.SafeWriteAbs(BinPath(), data, 0o700)
 }
 
 func download(ctx context.Context, url string) ([]byte, error) {

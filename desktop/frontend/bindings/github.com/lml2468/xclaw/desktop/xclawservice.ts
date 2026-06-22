@@ -26,6 +26,9 @@ import * as control$0 from "./internal/control/models.js";
 import * as octoapi$0 from "./internal/octoapi/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as octocli$0 from "./internal/octocli/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as skills$0 from "./internal/skills/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -157,6 +160,16 @@ export function CronList(botID: string): $CancellablePromise<void> {
 }
 
 /**
+ * CronUpdate mutates a scheduled task. The body's Enabled is a pointer so the
+ * renderer's per-row enable/disable toggle can send an enabled-only update
+ * (other fields zero) without re-validating the unchanged schedule on the
+ * daemon — see core/cron Update's enabled-only fast path.
+ */
+export function CronUpdate(body: control$0.CronUpdateBody): $CancellablePromise<void> {
+    return $Call.ByID(963819619, body);
+}
+
+/**
  * EncryptSecret seals plaintext into the enc:v1:… envelope so the GUI can
  * drop it straight into BotConfig.Env and round-trip it through SaveConfig
  * without ever touching config.json in plaintext. This is the ONLY direction
@@ -171,6 +184,24 @@ export function CronList(botID: string): $CancellablePromise<void> {
  */
 export function EncryptSecret(plaintext: string): $CancellablePromise<string> {
     return $Call.ByID(3943159567, plaintext);
+}
+
+/**
+ * GroupsList enumerates the IM groups the bot is a member of, populated for
+ * the scheduled-task target picker so the operator picks "this group" from
+ * a dropdown instead of pasting a channelId. Synchronous (not fire-and-
+ * forget over the control bus) because the renderer awaits it before
+ * opening the create-task modal, same shape as OctoCliStatus.
+ * 
+ * Returns an empty list (and no error) when the bot has no groups; returns
+ * an error when octo-cli is not installed / not authenticated for this bot
+ * so the GUI can surface a meaningful "log in first" message rather than
+ * silently showing "no groups available".
+ */
+export function GroupsList(botID: string): $CancellablePromise<octocli$0.Group[]> {
+    return $Call.ByID(980157138, botID).then(($result: any) => {
+        return $$createType6($result);
+    });
 }
 
 /**
@@ -201,7 +232,7 @@ export function IsCiphertext(value: string): $CancellablePromise<boolean> {
  */
 export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
     return $Call.ByID(317365000).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
@@ -214,7 +245,7 @@ export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
  */
 export function OctoAddBot(apiURL: string, apiKey: string, name: string): $CancellablePromise<octoapi$0.BotResult> {
     return $Call.ByID(1338554973, apiURL, apiKey, name).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -241,7 +272,7 @@ export function OctoCliRelogin(botID: string): $CancellablePromise<void> {
  */
 export function OctoCliStatus(botID: string): $CancellablePromise<$models.OctoCliStatus> {
     return $Call.ByID(3212560983, botID).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -301,7 +332,7 @@ export function UsageStats(botID: string, since: number): $CancellablePromise<vo
  */
 export function WorkspaceFile(botID: string, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
     return $Call.ByID(2447146625, botID, sessionKey, relPath).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
@@ -311,7 +342,7 @@ export function WorkspaceFile(botID: string, sessionKey: string, relPath: string
  */
 export function WorkspaceTree(botID: string, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
     return $Call.ByID(710539635, botID, sessionKey).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType13($result);
     });
 }
 
@@ -321,10 +352,12 @@ const $$createType1 = skills$0.SkillInfo.createFrom;
 const $$createType2 = $Create.Array($$createType1);
 const $$createType3 = workflows$0.Info.createFrom;
 const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = configstore$0.BotConfig.createFrom;
+const $$createType5 = octocli$0.Group.createFrom;
 const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = octoapi$0.BotResult.createFrom;
-const $$createType8 = $models.OctoCliStatus.createFrom;
-const $$createType9 = workspace$0.FileContent.createFrom;
-const $$createType10 = workspace$0.Node.createFrom;
-const $$createType11 = $Create.Nullable($$createType10);
+const $$createType7 = configstore$0.BotConfig.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = octoapi$0.BotResult.createFrom;
+const $$createType10 = $models.OctoCliStatus.createFrom;
+const $$createType11 = workspace$0.FileContent.createFrom;
+const $$createType12 = workspace$0.Node.createFrom;
+const $$createType13 = $Create.Nullable($$createType12);

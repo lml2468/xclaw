@@ -69,7 +69,7 @@ func TestCronControlHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cron.list: %v", err)
 	}
-	tasks := listRes.([]control.CronTaskInfo)
+	tasks := listRes.(control.CronListResponse).Tasks
 	if len(tasks) != 1 || tasks[0].ID != info.ID {
 		t.Fatalf("list mismatch: %#v", tasks)
 	}
@@ -80,7 +80,7 @@ func TestCronControlHandlers(t *testing.T) {
 		t.Fatalf("delete gated on server owner should succeed regardless of body uid: %v", err)
 	}
 	listRes, _ = call("cron.list", control.CronListBody{BotID: "b1"})
-	if n := len(listRes.([]control.CronTaskInfo)); n != 0 {
+	if n := len(listRes.(control.CronListResponse).Tasks); n != 0 {
 		t.Fatalf("expected empty list after delete, got %d", n)
 	}
 }
@@ -107,3 +107,77 @@ func TestCronControlHandlersNoOwner(t *testing.T) {
 		t.Fatal("cron.delete with no resolved owner must be refused")
 	}
 }
+
+// cron.update success path: forged body uid is ignored (owner-gated server-
+// side), full update validates schedule + recomputes NextRun, expanded
+// CronTaskInfo response carries the new fields the GUI needs (LastRun /
+// ChannelID / ChannelType / FromName).
+func TestCronUpdateHandler(t *testing.T) {
+	const owner = "owner-1"
+	clk := time.Date(2026, 6, 9, 10, 0, 0, 0, time.Local)
+	store := cron.NewStore(filepath.Join(t.TempDir(), "cron.json"))
+	mgr := cron.NewManager(store, owner, func() time.Time { return clk })
+
+	reg := newBotRegistry(nil)
+	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	b1.target = &botTarget{id: "b1", cron: mgr}
+	reg.add(b1)
+	h := makeMultiBotHandler(context.Background(), reg, time.Now())
+	call := func(typ string, body any) (any, error) {
+		raw, _ := json.Marshal(body)
+		return h(typ, raw)
+	}
+
+	created, err := call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "morning",
+		ChannelID: "grp-x", ChannelType: 2, FromName: "stand-up",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.(control.CronTaskInfo).ID
+
+	// Full update — change schedule + prompt + target. Body uid forged; ignored.
+	res, err := call("cron.update", control.CronUpdateBody{
+		BotID: "b1", ID: id, Schedule: "0 18 * * *", Prompt: "evening",
+		ChannelID: "grp-y", ChannelType: 2, FromName: "wrap-up",
+	})
+	if err != nil {
+		t.Fatalf("cron.update full: %v", err)
+	}
+	info := res.(control.CronTaskInfo)
+	if info.Prompt != "evening" || info.Schedule != "0 18 * * *" {
+		t.Fatalf("update did not apply: %+v", info)
+	}
+	if info.ChannelID != "grp-y" || info.ChannelType != 2 || info.FromName != "wrap-up" {
+		t.Fatalf("expanded CronTaskInfo missing channel coords: %+v", info)
+	}
+
+	// Enabled-only fast path: send only Enabled=false, server preserves all
+	// other fields (no echoing of schedule/prompt needed).
+	off := false
+	res, err = call("cron.update", control.CronUpdateBody{BotID: "b1", ID: id, Enabled: &off})
+	if err != nil {
+		t.Fatalf("enabled-only update: %v", err)
+	}
+	info = res.(control.CronTaskInfo)
+	if info.Enabled {
+		t.Fatal("enabled flag did not flip")
+	}
+	if info.Prompt != "evening" || info.Schedule != "0 18 * * *" {
+		t.Fatalf("enabled-only update wiped other fields: %+v", info)
+	}
+}
+
+// fireCronTask routes Console-target tasks through gateway.Handle directly,
+// bypassing the IM connector — that's how the desktop GUI's CONSOLE_UID
+// session receives the synthetic user message + reply round-trip. A
+// regression here (e.g. forgetting the new branch in the three-way switch)
+// would send Console fires to the connector with an empty ChannelID, which
+// would fail or mis-deliver. Routing-decision coverage lives in the e2e
+// verify section of the PR plan rather than a unit test here — the
+// gateway.Gateway and octo.Connector are concrete types whose stub-out
+// would require a wider Sink/Gateway-interface refactor than this change
+// warrants. A regression in the routing branch is caught immediately by
+// the verify-step "create a Console-target task, observe it land in the
+// desktop chat" smoke run.

@@ -41,6 +41,12 @@ type BotConfig struct {
 	Env            map[string]string `json:"env"`
 	Soul           string            `json:"soul"`
 	Agents         string            `json:"agents"`
+	// Cron mirrors agent.cron — surface-level toggle for the scheduled-task
+	// manager. False (the default) means the bot's cron Manager is never
+	// constructed, so the GUI's SchedulesPane shows an "启用并重启" banner
+	// instead of an actionable task list. Round-tripped through Save so the
+	// SchedulesPane toggle survives a config write.
+	Cron bool `json:"cron"`
 }
 
 // Dir is ~/.xclaw.
@@ -159,6 +165,7 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 	if b.Agent != nil {
 		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
 		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
+		bc.Cron = b.Agent.Cron
 		maps.Copy(bc.Env, b.Agent.Env)
 	} else {
 		bc.Model, bc.GatewayBaseURL = topModel, topGW
@@ -251,6 +258,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		ag.GatewayToken = "" // keychain only
 		ag.Model = inheritStr(b.Model, topModel)
 		ag.GatewayBaseURL = inheritStr(b.GatewayBaseURL, topGW)
+		ag.Cron = b.Cron
 		if envEqual(b.Env, topEnv) {
 			ag.Env = nil // inherited from the top-level default; don't materialize it
 		} else {

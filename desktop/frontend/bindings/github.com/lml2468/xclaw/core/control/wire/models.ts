@@ -71,6 +71,54 @@ export class CronCreateBody {
 }
 
 /**
+ * CronUpdateBody mutates an existing task by id (proto: cron.update). Same
+ * fields as CronCreateBody plus ID, with an optional Enabled toggle. Editing
+ * is a full replacement of mutable fields — partial PATCH would multiply the
+ * schema-mismatch surface and confuse "did the schedule change or not"
+ * audits. Enabled is a pointer so the GUI's toggle UX can send
+ * enabled-only updates without echoing schedule/prompt/channel back.
+ * 
+ * Owner-gated on the server-resolved owner uid (same model as create + delete):
+ * the task is only updatable by the bot's current owner, AND only if the task's
+ * CreatedBy matches that owner — a task created under a previous owner uid
+ * (pre-token-rotation) is invisible / immutable to the new owner.
+ */
+export class CronUpdateBody {
+    "botId"?: string;
+    "id": string;
+    "schedule"?: string;
+    "prompt"?: string;
+    "recurring"?: boolean | null;
+    "channelId"?: string;
+    "channelType"?: number;
+    "fromName"?: string;
+
+    /**
+     * Enabled, when non-nil, sets the task's Enabled flag. nil leaves it.
+     * Sent alone (no other field) by the GUI's per-row enable/disable toggle
+     * so the round-trip is minimal.
+     */
+    "enabled"?: boolean | null;
+
+    /** Creates a new CronUpdateBody instance. */
+    constructor($$source: Partial<CronUpdateBody> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CronUpdateBody instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CronUpdateBody {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CronUpdateBody($$parsedSource as Partial<CronUpdateBody>);
+    }
+}
+
+/**
  * Envelope is the single wire unit. body is left raw so each side decodes it
  * against the concrete command/event type named by `type`.
  */

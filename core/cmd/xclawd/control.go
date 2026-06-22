@@ -286,7 +286,11 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			for _, task := range tasks {
 				out = append(out, cronTaskInfo(task))
 			}
-			return out, nil
+			// Wrap with the requested botId so the renderer's envelope handler
+			// can route the response to the right bot's local schedules map
+			// (the bus has no other channel for that correlation — a fast bot
+			// switch mid-fetch would otherwise misroute the tasks).
+			return control.CronListResponse{BotID: b.BotID, Tasks: out}, nil
 
 		case "cron.delete":
 			var b control.CronDeleteBody
@@ -309,6 +313,46 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				return nil, err
 			}
 			return control.OKBody{OK: true}, nil
+
+		case "cron.update":
+			var b control.CronUpdateBody
+			if err := json.Unmarshal(body, &b); err != nil {
+				return nil, err
+			}
+			t, err := deps.resolve(b.BotID)
+			if err != nil {
+				return nil, err
+			}
+			if t.cron == nil {
+				return nil, fmt.Errorf("cron is not enabled for this bot")
+			}
+			owner := t.cron.OwnerUID()
+			if owner == "" {
+				return nil, fmt.Errorf("bot owner not resolved yet; cannot update scheduled tasks")
+			}
+			// An "enabled-only" body (the GUI's per-row toggle) skips the
+			// channel-binding check inside Manager.Update; for full updates
+			// the body must carry valid coords + schedule + prompt, same
+			// rules as Create.
+			coords := cron.SessionCoords{
+				ChannelID:   b.ChannelID,
+				ChannelType: cron.ChannelKind(channelTypeFor(b.ChannelType, b.ChannelID)),
+				FromUID:     owner,
+				FromName:    safety.SanitizeDisplayName(b.FromName, owner),
+			}
+			task, err := t.cron.Update(cron.UpdateParams{
+				ID:         b.ID,
+				Schedule:   b.Schedule,
+				Prompt:     b.Prompt,
+				Recurring:  b.Recurring,
+				Coords:     coords,
+				Enabled:    b.Enabled,
+				RequestUID: owner,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return cronTaskInfo(task), nil
 
 		default:
 			return nil, fmt.Errorf("unknown command %q", cmdType)
@@ -343,8 +387,13 @@ func summariesFromSessions(sums []store.SessionSummary) []control.SessionSummary
 // channelTypeFor resolves the router/octo channel type for a cron task: an
 // explicit non-zero type wins; otherwise a present channelId implies a group and
 // its absence a DM. Mirrors the create-time coords binding in cron-tool.ts.
+// ChannelConsole (= 3) is honored explicitly so a Console-target task isn't
+// silently demoted to DM (the default branch); the IM connector ignores it
+// and bot.go's fireCronTask routes it past EnqueueCron straight to the
+// gateway. Without this branch a Console body would fall through to "DM
+// with empty channelId" which the connector would then try to deliver to.
 func channelTypeFor(explicit int, channelID string) int {
-	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) {
+	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) || explicit == int(cron.ChannelConsole) {
 		return explicit
 	}
 	if channelID != "" {
@@ -354,18 +403,31 @@ func channelTypeFor(explicit int, channelID string) int {
 }
 
 // cronTaskInfo projects a stored cron task onto the wire type (nextRun rendered
-// as RFC3339, mirroring cron-tool.ts summarize).
+// as RFC3339, mirroring cron-tool.ts summarize). LastRun follows the same
+// formatter and is omitted entirely when zero (the task has never fired). The
+// channel coords are exposed so the GUI can render "into 群 X" / "into DM @ y"
+// / "into 控制台" without needing a side-channel lookup, but CreatedBy and
+// FromUID are deliberately NOT included — operator-internal auth state, of no
+// use to the renderer and a needless leakage surface.
 func cronTaskInfo(t cron.Task) control.CronTaskInfo {
 	next := ""
 	if t.NextRun != 0 {
 		next = time.UnixMilli(t.NextRun).UTC().Format(time.RFC3339)
 	}
+	last := ""
+	if t.LastRun != 0 {
+		last = time.UnixMilli(t.LastRun).UTC().Format(time.RFC3339)
+	}
 	return control.CronTaskInfo{
-		ID:        t.ID,
-		Schedule:  t.Schedule,
-		Recurring: t.Recurring,
-		Prompt:    t.Prompt,
-		NextRun:   next,
-		Enabled:   t.Enabled,
+		ID:          t.ID,
+		Schedule:    t.Schedule,
+		Recurring:   t.Recurring,
+		Prompt:      t.Prompt,
+		NextRun:     next,
+		LastRun:     last,
+		ChannelID:   t.ChannelID,
+		ChannelType: int(t.ChannelType),
+		FromName:    t.FromName,
+		Enabled:     t.Enabled,
 	}
 }

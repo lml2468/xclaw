@@ -660,3 +660,131 @@ func HasProfile(robotID string) bool {
 	_, ok := cfg.Profiles[robotID]
 	return ok
 }
+
+// Group is a single chat group the bot is a member of, projected from
+// `octo-cli group list`. The renderer uses it to populate the cron-task
+// target picker so the operator doesn't have to memorize / paste group ids.
+type Group struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Groups shells out to `octo-cli group list --bot-id <robotID> --format json`
+// and returns the bot's accessible groups. The robotID is the per-bot
+// OCTO_BOT_ID (resolvable from the bot's env via loadOctoBinding); the
+// underlying CLI invocation reads the bot's stored octo-cli profile, so this
+// fails if the bot is not authenticated (call octocli.Login first).
+//
+// Same argv-injection guard as Login/Logout: a free-text OCTO_BOT_ID
+// containing "--config=/tmp/x" would otherwise smuggle a flag through the
+// argv boundary. Refuse early on illegal characters.
+//
+// Response shape across octo-cli versions has been observed as either a
+// JSON array under `data` or an object `{items: [...], total: N}` under
+// `data`, with per-item keys variously `id`/`groupId`/`group_id` and
+// `name`/`groupName`/`group_name`. We parse tolerantly and only surface
+// entries that have a non-empty id; missing names degrade to the id so the
+// renderer can still display something.
+//
+// Best-effort error semantics: a non-installed octo-cli is a clear error,
+// not a silent empty list, so the GUI can show "octo-cli not installed"
+// rather than "this bot has zero groups" (which would mislead the user).
+func Groups(ctx context.Context, robotID string) ([]Group, error) {
+	if robotID == "" {
+		return nil, fmt.Errorf("octocli.Groups: robotID is required")
+	}
+	if !octoapi.ValidRobotID.MatchString(robotID) {
+		return nil, fmt.Errorf("octocli.Groups: robotID %q has illegal characters (must match %s)", robotID, octoapi.ValidRobotID.String())
+	}
+	bin := BinPath()
+	if !isFile(bin) {
+		return nil, fmt.Errorf("octocli.Groups: octo-cli not installed at %s", bin)
+	}
+	cmd := exec.CommandContext(ctx, bin, "group", "list", "--bot-id", robotID, "--format", "json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("octo-cli group list (%s): %w (output: %s)", robotID, err, redactChildOutput(out))
+	}
+	return parseGroupsResponse(out)
+}
+
+// parseGroupsResponse extracts Group entries from the octo-cli envelope.
+// Tolerates the array-vs-object-with-items shape variants and the id/name
+// key variants seen across octo-cli versions. Pure function so it can be
+// unit-tested without spawning.
+func parseGroupsResponse(raw []byte) ([]Group, error) {
+	var env struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("parse octo-cli response: %w (output: %s)", err, redactChildOutput(raw))
+	}
+	if !env.OK {
+		msg := env.Error.Message
+		if msg == "" {
+			msg = "unknown error"
+		}
+		return nil, fmt.Errorf("octo-cli reported error: %s", msg)
+	}
+	// data is either [..] or {items:[..]} (or {groups:[..]}); unwrap.
+	items, err := unwrapItems(env.Data)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Group, 0, len(items))
+	for _, raw := range items {
+		var loose map[string]any
+		if err := json.Unmarshal(raw, &loose); err != nil {
+			continue
+		}
+		id := firstNonEmptyKey(loose, "id", "groupId", "group_id")
+		name := firstNonEmptyKey(loose, "name", "groupName", "group_name")
+		if id == "" {
+			continue
+		}
+		if name == "" {
+			name = id
+		}
+		out = append(out, Group{ID: id, Name: name})
+	}
+	return out, nil
+}
+
+func unwrapItems(data json.RawMessage) ([]json.RawMessage, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return nil, nil
+	}
+	// try direct array
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil {
+		return arr, nil
+	}
+	// try object envelope with common item-key names
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, fmt.Errorf("unexpected data shape: %s", redactChildOutput(data))
+	}
+	for _, k := range []string{"items", "groups", "list", "rows"} {
+		if v, ok := obj[k]; ok {
+			if err := json.Unmarshal(v, &arr); err == nil {
+				return arr, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no item array found in data: %s", redactChildOutput(data))
+}
+
+func firstNonEmptyKey(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}

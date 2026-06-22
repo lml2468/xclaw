@@ -6,7 +6,13 @@ import { XClawService } from "../../bindings/github.com/lml2468/xclaw/desktop";
 // uid — i.e. the console session key is deterministic. We key the console
 // session on it directly rather than adopting a key from the reply stream,
 // which a concurrent IM turn could otherwise hijack.
-const CONSOLE_UID = "gui-user";
+//
+// Exported so other components (notably SchedulesPane, which needs to embed
+// this constant in a Console-target cron task's fromUid so the scheduler-
+// fired inbound and the GUI's optimistic Composer-typed messages route to
+// the same session) reference the single source of truth instead of
+// re-stringifying "gui-user" with no compile-time link.
+export const CONSOLE_UID = "gui-user";
 
 // TURN_MAX_MS caps how long a session may sit with awaiting=true with no
 // terminal event before the sweeper clears it. Must stay STRICTLY GREATER
@@ -118,6 +124,11 @@ function prettyTitle(key: string): string {
 class Store {
   bots = $state<Bot[]>([]);
   sessions = $state<Session[]>([]);
+ // Per-bot list of scheduled tasks, refreshed on demand by SchedulesPane via
+ // XClawService.CronList. Folded in by the `cron.list` envelope handler;
+ // create/update/delete responses re-issue CronList rather than splicing the
+ // single mutated row (round-trip cost is trivial, list ops are infrequent).
+  schedules = $state<Record<string, any[]>>({});
   selectedBotId = $state<string | null>(null);
   selectedKey = $state<string | null>(null);
   health = $state("");
@@ -434,6 +445,12 @@ class Store {
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
       } else if (env.type === "sessions.list" && env.body && Array.isArray(env.body.sessions)) {
         this.applySessionsList(env.body.botId, env.body.sessions);
+      } else if (env.type === "cron.list" && env.body && env.body.botId && Array.isArray(env.body.tasks)) {
+ // Wrapped response carries botId so a fast bot-switch mid-fetch routes
+ // to the right per-bot bucket. cron.create/update/delete responses
+ // arrive as plain CronTaskInfo; SchedulesPane just re-issues CronList
+ // after a mutation rather than splicing the row by id here.
+        this.schedules[env.body.botId] = env.body.tasks;
       } else if (env.type === "usage.stats" && env.body) {
         const b = this.bots.find((x) => x.id === env.body.botId);
         if (b) {

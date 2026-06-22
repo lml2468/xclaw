@@ -321,3 +321,56 @@ func TestRedactChildOutput(t *testing.T) {
 		})
 	}
 }
+
+// parseGroupsResponse is the meat of octocli.Groups — it tolerates the
+// envelope-shape variations seen across octo-cli versions. The test pins
+// down each accepted shape so a future octo-cli release that flips the
+// schema fails loudly here rather than silently returning empty.
+func TestParseGroupsResponse_DirectArray(t *testing.T) {
+	raw := []byte(`{"ok":true,"data":[{"id":"g1","name":"Group One"},{"id":"g2","name":"Group Two"}]}`)
+	groups, err := parseGroupsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0].ID != "g1" || groups[0].Name != "Group One" {
+		t.Fatalf("direct array parse wrong: %+v", groups)
+	}
+}
+
+func TestParseGroupsResponse_ItemsObject(t *testing.T) {
+	raw := []byte(`{"ok":true,"data":{"items":[{"groupId":"g1","groupName":"Hello"}],"total":1}}`)
+	groups, err := parseGroupsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ID != "g1" || groups[0].Name != "Hello" {
+		t.Fatalf("items-object parse wrong: %+v", groups)
+	}
+}
+
+func TestParseGroupsResponse_MissingName(t *testing.T) {
+	// Defensive: an item with id but no name should still render — fall back
+	// to id so the GUI dropdown isn't a blank option the user can't pick.
+	raw := []byte(`{"ok":true,"data":[{"id":"g1"}]}`)
+	groups, err := parseGroupsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].Name != "g1" {
+		t.Fatalf("missing-name fallback wrong: %+v", groups)
+	}
+}
+
+func TestParseGroupsResponse_ErrorEnvelope(t *testing.T) {
+	raw := []byte(`{"ok":false,"error":{"message":"unauthorized"}}`)
+	if _, err := parseGroupsResponse(raw); err == nil {
+		t.Fatal("error envelope must produce a Go error")
+	}
+}
+
+func TestParseGroupsResponse_UnknownShape(t *testing.T) {
+	raw := []byte(`{"ok":true,"data":"oops, a string"}`)
+	if _, err := parseGroupsResponse(raw); err == nil {
+		t.Fatal("unrecognized data shape must produce a Go error rather than empty list")
+	}
+}

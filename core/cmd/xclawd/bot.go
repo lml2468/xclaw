@@ -125,9 +125,10 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 	if err != nil {
 		fatal("config: %v", err)
 	}
-	if len(bots) == 0 {
-		fatal("config: no bots configured")
-	}
+	// An empty roster is a valid first-run state — the GUI writes config.json
+	// before the user adds any bots, and adds them later via the control bus
+	// (SaveConfig → RestartCore). The daemon stays up and serves an empty
+	// bots.list rather than dying and leaving the GUI without a peer.
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -199,19 +199,31 @@ func TestDriverEnvInjectedTokens(t *testing.T) {
 	}
 }
 
-func TestNoBotsRejected(t *testing.T) {
+func TestNoBotsAllowed(t *testing.T) {
+	// Empty bots[] is a valid first-run state — the GUI writes config.json
+	// before the user adds any bots, and the daemon must stay up serving an
+	// empty bots.list so SaveConfig → RestartCore can later add them.
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{"apiUrl":"https://o"}`) // no bots[]
-	if _, err := Load(cfg); err == nil {
-		t.Fatal("config with no bots must be rejected")
+	bots, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("config with no bots must be accepted (first-run): %v", err)
+	}
+	if len(bots) != 0 {
+		t.Fatalf("expected zero bots, got %d", len(bots))
 	}
 }
 
-func TestMissingConfigRejected(t *testing.T) {
-	// no file → empty global → no bots → error (not a crash)
-	if _, err := Load(filepath.Join(t.TempDir(), "nope.json")); err == nil {
-		t.Fatal("expected error for missing/empty config")
+func TestMissingConfigAllowed(t *testing.T) {
+	// Same reason as TestNoBotsAllowed: a missing config.json is the very
+	// first launch — no error, empty roster.
+	bots, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil {
+		t.Fatalf("missing config must be accepted (first-run): %v", err)
+	}
+	if len(bots) != 0 {
+		t.Fatalf("expected zero bots, got %d", len(bots))
 	}
 }
 

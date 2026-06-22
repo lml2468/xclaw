@@ -44,29 +44,29 @@ func Decode(line []byte) (Envelope, error) { return wire.Decode(line) }
 
 // Typed bodies (re-exported from wire).
 type (
-	AuthBody             = wire.AuthBody
-	SessionSendBody      = wire.SessionSendBody
-	SessionHistoryBody   = wire.SessionHistoryBody
-	SessionsListBody     = wire.SessionsListBody
-	SessionSummary       = wire.SessionSummary
-	UsageStatsBody       = wire.UsageStatsBody
-	UsageStats           = wire.UsageStats
-	SecretInjectBody     = wire.SecretInjectBody
-	CronCreateBody       = wire.CronCreateBody
-	CronListBody         = wire.CronListBody
-	CronDeleteBody       = wire.CronDeleteBody
-	CronTaskInfo         = wire.CronTaskInfo
-	OKBody               = wire.OKBody
-	HealthBody           = wire.HealthBody
-	BotInfo              = wire.BotInfo
-	SessionTextBody      = wire.SessionTextBody
-	SessionToolBody      = wire.SessionToolBody
-	SessionUsageBody     = wire.SessionUsageBody
+	AuthBody               = wire.AuthBody
+	SessionSendBody        = wire.SessionSendBody
+	SessionHistoryBody     = wire.SessionHistoryBody
+	SessionsListBody       = wire.SessionsListBody
+	SessionSummary         = wire.SessionSummary
+	UsageStatsBody         = wire.UsageStatsBody
+	UsageStats             = wire.UsageStats
+	SecretInjectBody       = wire.SecretInjectBody
+	CronCreateBody         = wire.CronCreateBody
+	CronListBody           = wire.CronListBody
+	CronDeleteBody         = wire.CronDeleteBody
+	CronTaskInfo           = wire.CronTaskInfo
+	OKBody                 = wire.OKBody
+	HealthBody             = wire.HealthBody
+	BotInfo                = wire.BotInfo
+	SessionTextBody        = wire.SessionTextBody
+	SessionToolBody        = wire.SessionToolBody
+	SessionUsageBody       = wire.SessionUsageBody
 	SessionReplyBody       = wire.SessionReplyBody
 	SessionUserMessageBody = wire.SessionUserMessageBody
 	SessionActivityBody    = wire.SessionActivityBody
-	ErrorBody            = wire.ErrorBody
-	HistoryMessage       = wire.HistoryMessage
-	HistoryResponse      = wire.HistoryResponse
-	SessionsListResponse = wire.SessionsListResponse
+	ErrorBody              = wire.ErrorBody
+	HistoryMessage         = wire.HistoryMessage
+	HistoryResponse        = wire.HistoryResponse
+	SessionsListResponse   = wire.SessionsListResponse
 )

@@ -142,6 +142,13 @@ func (l *Loader) loadFile(id string) (string, bool) {
 
 	st, err := safepath.SafeLstat(l.dir, leaf)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			// Surface symlink refusal / EACCES / EIO so the operator can
+			// tell "no GROUP.md" from "configured but rejected" — the prior
+			// silent empty-cache made misconfigured perms or an
+			// agent-planted symlink indistinguishable from a missing file.
+			fmt.Fprintf(os.Stderr, "[groupmd] refusing %s: %v\n", path, err)
+		}
 		// Missing, symlinked-leaf-refused, or symlinked-intermediate-refused —
 		// remember absence so a repeated miss is cheap; an unrelated load that
 		// later succeeds picks up the new content (SafeLstat runs every Load).

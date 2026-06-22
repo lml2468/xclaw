@@ -408,13 +408,18 @@ func removeAllAt(dirfd int, name string) error {
 	// Try unlink first — works for files and symlinks, fast path.
 	if err := unix.Unlinkat(dirfd, name, 0); err == nil {
 		return nil
+	} else if errors.Is(err, unix.ENOENT) {
+		// Already gone — idempotent success.
+		return nil
 	} else if !errors.Is(err, unix.EISDIR) && !errors.Is(err, unix.EPERM) {
-		// EPERM on directories on some systems (Linux). ENOENT means already gone.
-		if errors.Is(err, unix.ENOENT) {
-			return nil
-		}
-		// fall through to dir-handling below
+		// Genuine error on a non-directory (EACCES on a read-only mount,
+		// EROFS, EIO, chattr +i, …) — surface it. Falling through to the
+		// dir-handling branch below misclassified these as ENOTDIR (the
+		// Openat(O_DIRECTORY|O_NOFOLLOW) on a regular file returns
+		// ENOTDIR) and discarded the original errno.
+		return &os.PathError{Op: "unlinkat", Path: name, Err: err}
 	}
+	// EISDIR / EPERM on Linux: the entry is a directory.
 	// Open as dir with O_NOFOLLOW: a symlink entry can't slip into the
 	// recursive descent.
 	sub, err := unix.Openat(dirfd, name, noFollowDirFlags, 0)

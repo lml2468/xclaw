@@ -281,7 +281,7 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 	name := fmt.Sprintf("%s-image.%s", uuid.NewString(), ext)
 	dir := filepath.Join(cwd, InboundMediaDir)
 	localPath := filepath.Join(dir, name)
-	if err := writeCapped(localPath, resp.Body, maxImageBytes); err != nil {
+	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, name), resp.Body, maxImageBytes); err != nil {
 		return "", err
 	}
 	rel, err := filepath.Rel(cwd, localPath)
@@ -345,10 +345,11 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	}
 	dir := filepath.Join(cwd, InboundMediaDir)
 	safeName := sanitizeFileBaseName(filename)
-	localPath := filepath.Join(dir, fmt.Sprintf("%s-%s", uuid.NewString(), safeName))
+	leaf := fmt.Sprintf("%s-%s", uuid.NewString(), safeName)
+	localPath := filepath.Join(dir, leaf)
 	// Concatenate the already-read head with the remaining body, capped.
 	body := io.MultiReader(strings.NewReader(string(head)), resp.Body)
-	if err := writeCapped(localPath, body, maxFileDownloadBytes); err != nil {
+	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, leaf), body, maxFileDownloadBytes); err != nil {
 		_ = os.Remove(localPath)
 		return fmt.Sprintf("[文件: %s - %v]", filename, err)
 	}
@@ -435,14 +436,13 @@ func (b *cancelOnCloseBody) Close() error {
 }
 
 // writeCapped reads src into memory (capped at max bytes) and writes it via
-// safepath.SafeWriteAbs — symlink-safe (refuses a planted leaf-symlink AND
-// dirfd-walks the parent), atomic temp+rename. was bare
-// os.OpenFile that re-traversed the absolute path, so the prior R20
-// SafeMkdirAll on `.xclaw-media` was undone here by an agent racing a
-// symlink swap on the directory between the verified mkdir and the
-// O_CREATE open. SafeWriteAbs now anchors the write to the dirfd
-// returned by the same walk.
-func writeCapped(path string, src io.Reader, max int64) error {
+// safepath.SafeWrite anchored at `root` — symlink-safe (refuses a planted
+// leaf-symlink AND dirfd-walks every component from `root`), atomic
+// temp+rename. Caller passes `root` = the operator-trusted sandbox cwd and
+// `rel` = the leaf path inside it; for cwdBase configured outside $HOME
+// SafeWriteAbs's fallback skipped the dirfd walk entirely, leaving the
+// .xclaw-media exfil race open. Taking root explicitly closes that path.
+func writeCapped(root, rel string, src io.Reader, max int64) error {
 	buf, err := io.ReadAll(io.LimitReader(src, max+1))
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
@@ -453,7 +453,7 @@ func writeCapped(path string, src io.Reader, max int64) error {
 	if len(buf) == 0 {
 		return fmt.Errorf("empty response")
 	}
-	if err := safepath.SafeWriteAbs(path, buf, 0o600); err != nil {
+	if err := safepath.SafeWrite(root, rel, buf, 0o600); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 	return nil

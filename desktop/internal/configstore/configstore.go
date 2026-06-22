@@ -151,14 +151,25 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 	if f.Agent != nil {
 		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
 	}
+	// Inherit top-level env only when the per-bot agent block is absent
+	// (b.Agent == nil) — an explicit `agent: {env: {}}` is an opt-out
+	// signal that the operator wants NO inherited env, even if the
+	// resulting map is empty. The prior `len(bc.Env) == 0` check
+	// conflated those two states and silently re-inherited on every Load.
+	envInheritOK := b.Agent == nil
 	if b.Agent != nil {
 		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
 		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
 		maps.Copy(bc.Env, b.Agent.Env)
+		// Treat a nil per-bot env map (field absent) as "inherit"; an
+		// empty-but-non-nil map (`env: {}`) as "explicit opt-out".
+		if b.Agent.Env == nil {
+			envInheritOK = true
+		}
 	} else {
 		bc.Model, bc.GatewayBaseURL = topModel, topGW
 	}
-	if len(bc.Env) == 0 {
+	if envInheritOK && len(bc.Env) == 0 {
 		maps.Copy(bc.Env, topEnv)
 	}
 
@@ -400,21 +411,19 @@ func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	if strings.TrimSpace(content) != "" {
 		return safepath.SafeWriteAbs(path, []byte(content), 0o600)
 	}
-	// Scaffold branch: only write if the file is absent. SafeLstat under
-	// $HOME walks via dirfd, so an agent-planted symlink at the leaf
-	// reports as ModeSymlink — we treat it as "already there" and bail
-	// rather than O_CREATE|O_EXCL'ing through the symlink. The bare
-	// os.OpenFile this replaced WAS subject to leaf-symlink-follow: an
-	// agent that planted `~/.xclaw/<id>/SOUL.md → ~/.zshrc` BEFORE the
-	// operator's first GUI save would have had the template content
-	// written under .zshrc (executed on next shell).
-	home, _ := os.UserHomeDir()
-	rel := strings.TrimPrefix(path, home+string(os.PathSeparator))
-	if fi, err := safepath.SafeLstat(home, rel); err == nil {
+	// Scaffold branch: only write if the file is absent. Use the bot dir
+	// directly as the safepath root — earlier code did
+	// `safepath.SafeLstat(home, TrimPrefix(path, home+sep))` which silently
+	// degraded when os.UserHomeDir returned an empty string (CI / sandboxed
+	// mac without HOME): TrimPrefix became a no-op, SafeLstat got an
+	// absolute rel, errored, and we fell through to SafeWriteAbs — bypassing
+	// the exists-check entirely. SafeLstat under botDir() avoids the
+	// round-trip and works whether or not HOME is set.
+	if fi, err := safepath.SafeLstat(botDir(id), name); err == nil {
 		_ = fi // exists (regular file or symlink) — operator's prior save wins, do not touch
 		return nil
 	}
-	return safepath.SafeWriteAbs(path, []byte(tmpl), 0o644)
+	return safepath.SafeWriteAbs(path, []byte(tmpl), 0o600)
 }
 
 // validURL delegates to the canonical SSRF policy (config.IsAllowedURL) used

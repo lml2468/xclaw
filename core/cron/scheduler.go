@@ -129,17 +129,21 @@ func (m *Manager) SetOwnerUID(uid string) {
 	if uid == "" {
 		return
 	}
-	m.ownerMu.Lock()
+	// Two-phase swap: prune foreign-CreatedBy tasks FIRST under a probe of
+	// the new uid, then commit the owner swap only if the prune succeeded.
+	// The prior order (swap → prune) had a race window: Tick reading the
+	// new ownerUID before s.mu allowed the prune to commit would fire
+	// pre-prune tasks under the new persona (cross-tenant OBO replay). If
+	// Update failed mid-rename, the owner stayed swapped but the foreign
+	// tasks lived on, and every subsequent Tick fired them under the new
+	// owner. Now: prune first → if the prune commits, swap; else keep
+	// prior owner and surface the error.
+	m.ownerMu.RLock()
 	prior := m.ownerUID
-	m.ownerUID = uid
-	m.ownerMu.Unlock()
+	m.ownerMu.RUnlock()
 	if prior == uid {
 		return
 	}
-	// Drop tasks whose CreatedBy doesn't match the (new) owner.
-	// Covers both the in-process owner change (prior != "") AND the
-	// first-time-after-restart case (prior == "" but disk-loaded tasks
-	// carry a foreign CreatedBy).
 	var removed int
 	_, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
 		out := make([]Task, 0, len(tasks))
@@ -155,10 +159,13 @@ func (m *Manager) SetOwnerUID(uid string) {
 		return out, changed
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%scron: prune tasks after owner resolve %s→%s: %v\n",
+		fmt.Fprintf(os.Stderr, "%scron: prune tasks before owner resolve %s→%s: %v (keeping prior owner)\n",
 			m.label, prior, uid, err)
 		return
 	}
+	m.ownerMu.Lock()
+	m.ownerUID = uid
+	m.ownerMu.Unlock()
 	if removed > 0 {
 		fmt.Fprintf(os.Stderr, "%scron: dropped %d task(s) on owner resolve %s→%s (foreign CreatedBy)\n",
 			m.label, removed, prior, uid)

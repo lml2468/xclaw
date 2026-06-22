@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lml2468/xclaw/core/agent"
@@ -302,6 +303,11 @@ type idleGuard struct {
 	timeout time.Duration
 	cancel  context.CancelCauseFunc
 	timer   *time.Timer
+	// done is set by the runTurn loop when it observes a successful
+	// terminal event. expired() honors it so a race between AfterFunc
+	// firing and the success event can't reroute a completed turn into
+	// the timeout-reply branch.
+	done atomic.Bool
 }
 
 // newIdleGuard returns a child ctx and a guard. With timeout <=0 the guard is
@@ -342,8 +348,17 @@ func (g *idleGuard) stop() {
 	}
 }
 
+func (g *idleGuard) markDone() {
+	if g.timer != nil {
+		g.done.Store(true)
+	}
+}
+
 func (g *idleGuard) expired(ctx context.Context) bool {
-	return g.timer != nil && errors.Is(context.Cause(ctx), errDispatchTimeout)
+	if g.timer == nil || g.done.Load() {
+		return false
+	}
+	return errors.Is(context.Cause(ctx), errDispatchTimeout)
 }
 
 // Observe caches a non-triggering group message into the group context so it
@@ -476,28 +491,33 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Build the prompt. For group messages this injects the [Recent group
 	// messages] delta as untrusted background and demarcates the real request
 	// with the current-message anchor; DM messages pass through unchanged.
-	// Snapshot the pre-build group cursor for this channel so AppendUser
-	// failure can roll it back — buildGroupPrompt advances the cursor past
-	// the current message, and an unrolled failure would silently drop this
-	// message from every subsequent [Recent group messages] delta even
-	// though every other group member saw it on IM.
+	// Snapshot the pre-build group cursor for this channel and defer a
+	// conditional rewind. buildGroupPrompt advances the cursor past the
+	// current message; any turn-aborting failure BEFORE we've actually
+	// produced + delivered a reply must roll it back, or the unanswered
+	// message silently drops from every subsequent [Recent group messages]
+	// delta. Set turnDelivered=true once the reply is on its way out so the
+	// happy path keeps the cursor advanced.
 	var (
 		preCursor      int64
 		hasGroupCursor bool
+		turnDelivered  bool
 	)
 	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
 		preCursor = g.groups.Cursor(msg.ChannelID)
 		hasGroupCursor = true
+		defer func() {
+			if hasGroupCursor && !turnDelivered {
+				// SetCursor is monotonic (refuses backward moves), so use the
+				// dedicated rewind path.
+				g.groups.RewindCursor(msg.ChannelID, preCursor)
+			}
+		}()
 	}
 	prompt := g.buildGroupPrompt(sessionKey, msg)
 
 	// Persist the (original) user message.
 	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName); err != nil {
-		if hasGroupCursor {
-			// SetCursor is monotonic (refuses backward moves), so rolling
-			// back the bumped cursor needs the dedicated rewind path.
-			g.groups.RewindCursor(msg.ChannelID, preCursor)
-		}
 		return g.failTurn(sessionKey, "store.AppendUser", err)
 	}
 
@@ -644,10 +664,22 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 				// is_error=true result, e.g. max_turns) — billing tokens +
 				// bumping the turns counter for a turn the user is told failed
 				// over-attributes both metrics.
-				if termErr == "" && ev.Usage != nil {
+				//
+				// Also skip when resumeBad is set: the doomed attempt's Usage
+				// is from a stale-resume run we're about to retry, and the
+				// retry's KindTurnDone will commit a fresh Usage line. Without
+				// this gate the same logical turn double-billed tokens, cost,
+				// AND turn count on every self-heal.
+				if termErr == "" && !resumeBad && ev.Usage != nil {
 					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
 						fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
 					}
+				}
+				// Mark the idle guard done so a concurrent AfterFunc firing
+				// in the same tick as this success event can't reroute the
+				// post-loop expired() check into the timeout-reply branch.
+				if termErr == "" && !resumeBad {
+					idle.markDone()
 				}
 			case agent.KindError:
 				// Terminal (non-recoverable) errors abort the turn: a result
@@ -690,6 +722,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// so this is unambiguous even if both fire near-simultaneously (M9).
 	if idle.expired(turnCtx) {
 		fmt.Fprintf(os.Stderr, "[gateway] dispatch idle timeout after %s (session=%s)\n", g.dispatchTimeout, sessionKey)
+		turnDelivered = true // bot processed but went silent; don't replay
 		g.sink.OnReply(sessionKey, timeoutReply)
 		return nil
 	}
@@ -707,9 +740,13 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			if termHint != "" {
 				reply = busyReply + "（" + termHint + " 后恢复）"
 			}
+			turnDelivered = true // bot saw the message and we told the user the upstream is busy
 			g.sink.OnReply(sessionKey, reply)
 			return nil
 		}
+		// Non-transient terminal agent error: leave turnDelivered=false so the
+		// deferred RewindCursor lets the message reappear in the next [Recent
+		// group messages] delta — the bot didn't usefully process this turn.
 		fmt.Fprintf(os.Stderr, "[gateway] terminal agent error (session=%s): %s\n", sessionKey, termErr)
 		g.sink.OnReply(sessionKey, errorReply)
 		return nil
@@ -730,6 +767,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	if err := g.store.AppendAssistant(sessionKey, text, g.driver.Name()); err != nil {
 		fmt.Fprintf(os.Stderr, "[gateway] append assistant %s: %v\n", sessionKey, err)
 	}
+	turnDelivered = true
 	g.sink.OnReply(sessionKey, text)
 
 	// Advance the answered/new cursor (cc G10 / openclaw lastBotReplySeqMap): record

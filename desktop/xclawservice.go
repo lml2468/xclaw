@@ -69,6 +69,12 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 	x.configMode = cfg != ""
 	x.sup = &core.Supervisor{BinPath: bin, SocketPath: core.SocketPath(), ConfigPath: cfg}
 	if err := x.sup.Start(); err != nil {
+		// Start may have spawned the daemon process before the socket-wait
+		// timed out — Supervisor returns the error but leaves s.cmd set, so
+		// the reaper goroutine is alive and the daemon is running. Without
+		// this Stop, the orphaned daemon survives until -exit-with-parent
+		// kicks in (Linux only); on macOS it lingers indefinitely.
+		x.sup.Stop()
 		return err
 	}
 	if err := x.connect(); err != nil {

@@ -640,10 +640,19 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage, tgt r
 	q.pending = append(q.pending, queuedTurn{inbound: inbound, tgt: tgt})
 	start := !q.running
 	q.running = true
+	// turnsWG.Add(1) MUST happen under c.mu so it cannot race WaitTurns:
+	// WaitTurns sets c.closed=true under the same mu before calling
+	// turnsWG.Wait(). With Add() outside the lock, a goroutine that passed
+	// the closed check and was preempted could call Add(1) after WaitTurns
+	// observed counter==0 and returned — that's sync.WaitGroup misuse
+	// (Add concurrently with Wait) and the spawned drainTurns would run
+	// gw.Handle on a closed store.
+	if start {
+		c.turnsWG.Add(1)
+	}
 	c.mu.Unlock()
 
 	if start {
-		c.turnsWG.Add(1)
 		go c.drainTurns(key)
 	}
 }

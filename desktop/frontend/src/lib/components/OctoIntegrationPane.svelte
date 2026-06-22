@@ -22,10 +22,6 @@
 
  // OCTO_BOT_ID lives in env, mirrored here for a typed edit + reactive write-back.
   let robotId = $state("");
- // Tracks the last value we mirrored from bot.env (vs. just typed by the
- // operator). Without this guard, the seed-effect → commitRobotId chain
- // would dirty the form just from clicking a different bot.
-  let lastSeededRobotId = "";
   // untrack the bot.env read so the second $effect (which writes
   // bot.env when robotId is typed) doesn't re-trigger this seed effect
   // — that loop reset `editBotId = false` mid-keystroke, flipping the
@@ -40,7 +36,6 @@
     untrack(() => {
       if (editBotId) return; // preserve in-progress edit
       robotId = bot.env?.OCTO_BOT_ID ?? "";
-      lastSeededRobotId = robotId;
       refreshCliStatus();
     });
   });
@@ -53,10 +48,18 @@
  // field doesn't re-trigger this effect — without untrack the write to
  // bot.env (a $bindable Proxy) re-runs the effect with the same robotId
  // value but a fresh object identity, in a tight self-loop.
+ //
+ // Guard compares against the current bot.env value rather than the
+ // initially-seeded value. With the seed-based guard, an operator who
+ // typed `abc` then backspaced to `''` (for a bot whose seeded value was
+ // `''`) saw `v === seeded === ''` → early return → the prior `abc`
+ // keystrokes were never deleted from bot.env.OCTO_BOT_ID and the form
+ // never dirtied for the clear.
   $effect(() => {
     const v = robotId.trim();
-    if (v === lastSeededRobotId.trim()) return; // not a user edit
     untrack(() => {
+      const current = (bot.env?.OCTO_BOT_ID ?? "").trim();
+      if (v === current) return; // no-op write — env already reflects v
       const env = { ...(bot.env ?? {}) };
       if (v) env.OCTO_BOT_ID = v;
       else delete env.OCTO_BOT_ID;

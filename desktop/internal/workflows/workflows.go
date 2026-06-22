@@ -53,14 +53,44 @@ type Info struct {
 	Description string `json:"description"`
 }
 
-// descRe finds the description field inside the workflow's `export const meta
-// = { … }` block. metaRe scopes the search to that block first so a stray
-// `description:` appearing in a string literal, comment, or downstream code
-// can't be mistaken for the canonical one.
+// metaRe finds the `export const meta = { … }` block, scoping descRe's
+// search so a stray `description:` in comments or downstream code can't
+// shadow the canonical one. Uses a balanced-brace count via a helper
+// (not a single regex) because workflows' meta blocks may contain nested
+// objects/arrays — a `(.*?)\}` non-greedy match stopped at the first
+// inner `}` and truncated the capture before description: was reached
+// for any non-trivial meta.
+//
+// descRe accepts EITHER single or double quotes, with the matching
+// closing quote — the character class `[^"']+` excluded BOTH quote chars
+// and truncated descriptions like `"It's a workflow"` at the apostrophe.
 var (
-	metaRe = regexp.MustCompile(`(?s)export\s+const\s+meta\s*=\s*\{(.*?)\}`)
-	descRe = regexp.MustCompile(`description\s*:\s*["']([^"']+)["']`)
+	metaRe = regexp.MustCompile(`(?s)export\s+const\s+meta\s*=\s*\{`)
+	descRe = regexp.MustCompile(`description\s*:\s*(?:"([^"]+)"|'([^']+)')`)
 )
+
+// extractMetaBlock returns the body inside the meta = { … } braces with
+// brace-counting (not greedy regex), so nested {...}/[…] survive intact.
+// Returns "" if no balanced match is found.
+func extractMetaBlock(b []byte) string {
+	loc := metaRe.FindIndex(b)
+	if loc == nil {
+		return ""
+	}
+	depth := 1
+	for i := loc[1]; i < len(b); i++ {
+		switch b[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return string(b[loc[1]:i])
+			}
+		}
+	}
+	return ""
+}
 
 // listIn returns every workflow (*.js) directly under root.
 func listIn(root string) ([]Info, error) {
@@ -99,9 +129,14 @@ func descriptionIn(root, name string) string {
 	if err != nil {
 		return ""
 	}
-	if mm := metaRe.FindSubmatch(b); mm != nil {
-		if m := descRe.FindSubmatch(mm[1]); m != nil {
-			return strings.TrimSpace(string(m[1]))
+	if block := extractMetaBlock(b); block != "" {
+		if m := descRe.FindStringSubmatch(block); m != nil {
+			// Either group 1 (double-quoted) or group 2 (single-quoted) matched.
+			val := m[1]
+			if val == "" {
+				val = m[2]
+			}
+			return strings.TrimSpace(val)
 		}
 	}
 	return ""

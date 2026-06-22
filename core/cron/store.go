@@ -69,33 +69,39 @@ func NewStore(cronJSONPath string) *Store {
 	return &Store{path: cronJSONPath}
 }
 
-// load parses cron.json. Returns an error on malformed JSON (loud, not silent).
-// The caller holds s.mu. routes through SafeReadAbs so an
-// agent-planted `<dataDir>/cron.json → ~/Library/Application Support/Claude/
-// claude.json` (or any sensitive JSON) cannot exfiltrate target bytes via
-// the malformed-JSON error path (the Go json error message includes the
-// offending token snippet, which is sent through the control bus to any
-// viewer).
+// load parses cron.json. Routes through SafeReadAbs (refuses leaf symlinks,
+// caps the read at 16 MiB) so a planted `cron.json → ~/.aws/credentials`
+// can't exfiltrate target bytes via JSON-parse error messages on the
+// control bus. The caller holds s.mu.
+//
+// A corrupt or oversize cron.json is logged + treated as empty rather than
+// returned as an error: returning an error would wedge cron permanently
+// (Update bails before mutating, every scheduler tick and every create/
+// delete handler fails forever). Resetting to an empty task list lets
+// cron self-heal on the next save — the operator's tasks are lost, but
+// the subsystem isn't. A persistent agent that keeps clobbering cron.json
+// is a separate "agent has bash" problem.
 func (s *Store) load() ([]Task, error) {
-	raw, err := safepath.SafeReadAbs(s.path, 16<<20) // 16 MiB cap; cron.json is tiny
+	raw, err := safepath.SafeReadAbs(s.path, 16<<20) // 16 MiB cap
 	if os.IsNotExist(err) {
 		return []Task{}, nil
 	}
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "cron: %s unreadable, resetting to empty: %v\n", s.path, err)
+		return []Task{}, nil
 	}
 	var tasks []Task
 	if err := json.Unmarshal(raw, &tasks); err != nil {
-		return nil, fmt.Errorf("cron.json is malformed (%s): %w", s.path, err)
+		fmt.Fprintf(os.Stderr, "cron: %s is malformed, resetting to empty: %v\n", s.path, err)
+		return []Task{}, nil
 	}
 	return tasks, nil
 }
 
-// save atomically writes the task array (temp file + rename + symlink leaf
-// refusal). The caller holds s.mu. /: routed
-// through SafeWriteAbs so an agent-planted leaf-symlink can't redirect
-// the write (the prior atomicfile.Write's os.Rename silently replaced a
-// symlink with our content under the operator uid).
+// save atomically writes the task array via SafeWriteAbs: dirfd-walk the
+// parent chain refusing any symlinked intermediate, then temp+fsync+rename
+// to commit. An agent-planted leaf-symlink at cron.json itself is refused
+// with ErrSymlink rather than silently followed. The caller holds s.mu.
 func (s *Store) save(tasks []Task) error {
 	data, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {

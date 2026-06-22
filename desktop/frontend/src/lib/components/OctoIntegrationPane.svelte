@@ -26,18 +26,21 @@
  // operator). Without this guard, the seed-effect → commitRobotId chain
  // would dirty the form just from clicking a different bot.
   let lastSeededRobotId = "";
- // untrack the bot.env read so the second $effect
- // (which writes bot.env when robotId is typed) doesn't re-trigger
- // this seed effect — that loop reset `editBotId = false` mid-
- // keystroke, flipping the input back to readonly and silently
- // dropping subsequent characters. Now this only re-runs when bot.id
- // itself changes (bot switch).
+  // untrack the bot.env read so the second $effect (which writes
+  // bot.env when robotId is typed) doesn't re-trigger this seed effect
+  // — that loop reset `editBotId = false` mid-keystroke, flipping the
+  // input back to readonly and silently dropping subsequent characters.
+  // Now this only re-runs when bot.id itself changes (bot switch OR
+  // operator renames the slug in BasicInfoPane). When the user is in
+  // the middle of editing the robotId, we preserve their typed value
+  // and the editBotId state — bot.id changes from a rename mustn't
+  // silently clobber an in-progress edit elsewhere in the modal.
   $effect(() => {
     bot.id; // re-seed on bot switch
     untrack(() => {
+      if (editBotId) return; // preserve in-progress edit
       robotId = bot.env?.OCTO_BOT_ID ?? "";
       lastSeededRobotId = robotId;
-      editBotId = false;
       refreshCliStatus();
     });
   });

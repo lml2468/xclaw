@@ -424,18 +424,13 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			if bot.gateway == nil && bot.info().LastError != "" {
 				return nil, fmt.Errorf("bot %q failed to start: %s", botID, bot.info().LastError)
 			}
-			// runBot eager-initializes target AND cron (F1/F2 +
-			//); this fallback covers tests that build a
-			// minimal botRuntime by hand without going through runBot.
-			// Production never sees nil here.
+			// runBot eager-initializes target AND cron; production never
+			// sees nil here. Tests that build a botRuntime by hand must
+			// set target explicitly or go through runBot — surfacing a
+			// clear error beats a lock-free lazy write that would race
+			// concurrent control commands.
 			if bot.target == nil {
-				bot.target = &botTarget{
-					id:      bot.cfg.BotID,
-					gateway: bot.gateway,
-					store:   bot.store,
-					secrets: bot.secrets,
-					cron:    bot.cron,
-				}
+				return nil, fmt.Errorf("bot %q not initialised", botID)
 			}
 			return bot.target, nil
 		},

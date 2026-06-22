@@ -25,7 +25,9 @@ func TestCronControlHandlers(t *testing.T) {
 
 	reg := newBotRegistry(nil)
 	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	b1.target = &botTarget{id: "b1", cron: mgr}
 	nocron := &botRuntime{cfg: config.Resolved{BotID: "nocron"}} // cron == nil
+	nocron.target = &botTarget{id: "nocron"}
 	reg.add(b1)
 	reg.add(nocron)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
@@ -92,6 +94,7 @@ func TestCronControlHandlersNoOwner(t *testing.T) {
 
 	reg := newBotRegistry(nil)
 	b1 := &botRuntime{cfg: config.Resolved{BotID: "b1"}, cron: mgr}
+	b1.target = &botTarget{id: "b1", cron: mgr}
 	reg.add(b1)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 

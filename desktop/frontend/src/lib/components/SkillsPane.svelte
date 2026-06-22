@@ -7,6 +7,7 @@
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
   import { isImeComposing } from "../keys";
+  import { untrack } from "svelte";
   import ErrorFooter from "./ErrorFooter.svelte";
 
   let { botId, isPreview = false }: { botId: string; isPreview?: boolean } = $props();
@@ -31,7 +32,11 @@
     research: {},
   };
 
-  $effect(() => { botId; sel = null; files = []; activeFile = null; content = ""; dirty = false; load(); });
+  // Seed only on bot switch; load() writes a pile of reactive state (skills,
+  // sel, activeFile, content, dirty) so without untrack() any of those
+  // writes would re-fire the seed in a loop and stomp an in-progress edit
+  // when an unrelated reactive read (e.g. bot.env churn) happens.
+  $effect(() => { botId; untrack(() => { sel = null; files = []; activeFile = null; content = ""; dirty = false; load(); }); });
 
  // Generation counter discards stale list responses — switching bots
  // quickly used to let an older BotSkillsList response clobber `skills`
@@ -111,13 +116,15 @@
   async function addFile() {
     const rel = newFilePath.trim();
     if (!sel || !rel) return;
+    const capturedBot = botId, capturedSel = sel;
     try {
-      if (isPreview) { (mockBot[botId][sel])[rel] = ""; }
-      else await XClawService.BotSkillWrite(botId, sel, rel, "");
+      if (isPreview) { (mockBot[capturedBot][capturedSel])[rel] = ""; }
+      else await XClawService.BotSkillWrite(capturedBot, capturedSel, rel, "");
+      if (capturedBot !== botId || capturedSel !== sel) return;
       newFilePath = "";
-      await selectSkill(sel);
+      await selectSkill(capturedSel);
       openFile(rel);
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
   }
 
   async function deleteFile(rel: string) {
@@ -134,12 +141,14 @@
   async function createOwn() {
     const name = newName.trim();
     if (!name) return;
+    const capturedBot = botId;
     try {
-      if (isPreview) { (mockBot[botId] ??= {})[name] = { "SKILL.md": `---\nname: ${name}\ndescription: One line on when to use this skill.\n---\n\n# ${name}\n` }; load(); }
-      else { await XClawService.BotSkillCreate(botId, name); await load(); }
+      if (isPreview) { (mockBot[capturedBot] ??= {})[name] = { "SKILL.md": `---\nname: ${name}\ndescription: One line on when to use this skill.\n---\n\n# ${name}\n` }; load(); }
+      else { await XClawService.BotSkillCreate(capturedBot, name); await load(); }
+      if (capturedBot !== botId) return;
       newName = "";
       selectSkill(name);
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
   }
 
   async function removeBotSkill(s: SkillInfo) {

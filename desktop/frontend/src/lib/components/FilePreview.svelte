@@ -35,8 +35,7 @@
   let copied = $state(false);
  // Track the copy-confirmation timer so it can be cleared on unmount.
  // Without this, switching files within 1200 ms of clicking 复制 leaves
- // the setTimeout firing against a detached component's reactive state —
- // same pattern Bubble.svelte adopted in.
+ // the setTimeout firing against a detached component's reactive state.
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => () => { if (copyTimer !== undefined) clearTimeout(copyTimer); });
 

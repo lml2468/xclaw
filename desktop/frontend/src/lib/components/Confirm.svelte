@@ -14,7 +14,7 @@
  // Tab is trapped INSIDE the confirm too — relying on the browser's native Tab
  // would hand focus to the outer modal's Tab trap, which cycles through the
  // whole form behind the confirm; a subsequent Esc then fires from a node
- // outside.cscrim and closes the modal instead of cancelling the confirm.
+ // outside the scrim and closes the modal instead of cancelling the confirm.
   import { onMount, tick } from "svelte";
   let { message, confirmLabel = "确认", cancelLabel = "取消", danger = false, onresult }:
     { message: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean; onresult: (ok: boolean) => void } = $props();

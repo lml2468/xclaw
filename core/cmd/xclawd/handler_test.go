@@ -16,7 +16,9 @@ import (
 // bot/kind). It only touches the secrets field, so gateway/store can be nil.
 func TestSecretInjectHandler(t *testing.T) {
 	reg := newBotRegistry(nil)
-	bot := &botRuntime{cfg: config.Resolved{BotID: "b1"}, secrets: &secretStore{}}
+	sec := &secretStore{}
+	bot := &botRuntime{cfg: config.Resolved{BotID: "b1"}, secrets: sec}
+	bot.target = &botTarget{id: "b1", secrets: sec}
 	reg.add(bot)
 	h := makeMultiBotHandler(context.Background(), reg, time.Now())
 

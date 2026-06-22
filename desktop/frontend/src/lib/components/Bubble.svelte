@@ -41,14 +41,13 @@
       oncontextmenu={(e) => {
  // Hijack right-click ONLY when the user clicked outside any
  // interactive child (link, image, code block, table, form
- // control, …). A bare `e.preventDefault` on the bubble was
- // stealing native context menus on agent-rendered links,
- // leaving no way to "open in new tab" or "copy link address"
- //.
+ // control, …). A bare `e.preventDefault` on the bubble would
+ // steal native context menus on agent-rendered links, leaving
+ // no way to "open in new tab" or "copy link address".
  //
- // dropped UL/OL/LI/BLOCKQUOTE/H1-6 from the
- // bail-list — those elements are not interactive and have no
- // native context-menu value worth preserving, so including them
+ // UL/OL/LI/BLOCKQUOTE/H1-6 are NOT in the bail list: those
+ // elements are not interactive and have no native context-menu
+ // value worth preserving, so including them
  // disabled copy-on-right-click for nearly every agent reply
  // (which almost always contains lists/headings). also
  // added FORM since an agent-emitted form's submit could navigate

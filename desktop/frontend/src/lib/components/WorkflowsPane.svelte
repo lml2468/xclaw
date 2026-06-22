@@ -6,6 +6,7 @@
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
   import { isImeComposing } from "../keys";
+  import { untrack } from "svelte";
   import ErrorFooter from "./ErrorFooter.svelte";
 
   let { botId, isPreview = false }: { botId: string; isPreview?: boolean } = $props();
@@ -26,7 +27,9 @@
     research: {},
   };
 
-  $effect(() => { botId; sel = null; content = ""; dirty = false; load(); });
+  // Seed only on bot switch (untrack stops load()'s state writes from
+  // re-firing this effect in a loop — mirrors SkillsPane / OctoIntegrationPane).
+  $effect(() => { botId; untrack(() => { sel = null; content = ""; dirty = false; load(); }); });
 
  // Generation counters:
  // discard stale list / read responses when bot or selection has moved
@@ -85,12 +88,14 @@
   async function createOwn() {
     const name = newName.trim();
     if (!name) return;
+    const capturedBot = botId;
     try {
-      if (isPreview) { (mockBot[botId] ??= {})[name] = `export const meta = {\n  name: '${name}',\n  description: 'One line on what this workflow does.',\n}\nreturn { ok: true }\n`; load(); }
-      else { await XClawService.BotWorkflowCreate(botId, name); await load(); }
+      if (isPreview) { (mockBot[capturedBot] ??= {})[name] = `export const meta = {\n  name: '${name}',\n  description: 'One line on what this workflow does.',\n}\nreturn { ok: true }\n`; load(); }
+      else { await XClawService.BotWorkflowCreate(capturedBot, name); await load(); }
+      if (capturedBot !== botId) return; // bot switched mid-await
       newName = "";
       select(name);
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
   }
 
   async function remove(w: WfInfo) {

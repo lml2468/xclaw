@@ -382,39 +382,31 @@ func readBotFile(id, name string) string {
 }
 
 // writeOrScaffoldBotFile is the safe write path for SOUL.md / AGENTS.md:
-// - non-empty content → atomic 0o600 overwrite via atomicfile.Write so a
-// crash mid-write can't leave the operator-trusted prompt half-written
-// ;
-// - empty content → scaffold tmpl atomically via O_CREATE|O_EXCL|O_WRONLY,
-// a no-op when the file already exists. Closes a Stat-then-write TOCTOU
-// where an agent that planted SOUL.md between our Stat and our write
-// would have been silently overwritten.
+//   - non-empty content → atomic 0o600 overwrite via safepath.SafeWriteAbs so
+//     a crash mid-write can't leave the operator-trusted prompt half-written,
+//     AND a leaf symlink is refused with ErrSymlink instead of redirected.
+//   - empty content → no-op if the file already exists, else scaffold the
+//     default template via SafeWriteAbs (also leaf-symlink-refusing).
 func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
-	if strings.TrimSpace(content) != "" {
-		// was atomicfile.Write (follows parent-chain
-		// symlinks). Now routes through safepath: an agent-planted
-		// `~/.xclaw/<id>/SOUL.md → /etc/cron.d/x` can't redirect this
-		// write into operator-trusted system files. Same trust region
-		// as the prior SOUL/AGENTS READ path.
-		return safepath.SafeWriteAbs(filepath.Join(botDir(id), name), []byte(content), 0o600)
-	}
 	path := filepath.Join(botDir(id), name)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return nil // already there — operator's prior save wins
-		}
-		return err
+	if strings.TrimSpace(content) != "" {
+		return safepath.SafeWriteAbs(path, []byte(content), 0o600)
 	}
-	// Both Close + WriteString errors matter — return whichever surfaces
-	// first so a slow-disk Close failure (ENOSPC, EIO) doesn't leave a
-	// truncated template silently behind a "success" return.
-	_, werr := f.WriteString(tmpl)
-	cerr := f.Close()
-	if werr != nil {
-		return werr
+	// Scaffold branch: only write if the file is absent. SafeLstat under
+	// $HOME walks via dirfd, so an agent-planted symlink at the leaf
+	// reports as ModeSymlink — we treat it as "already there" and bail
+	// rather than O_CREATE|O_EXCL'ing through the symlink. The bare
+	// os.OpenFile this replaced WAS subject to leaf-symlink-follow: an
+	// agent that planted `~/.xclaw/<id>/SOUL.md → ~/.zshrc` BEFORE the
+	// operator's first GUI save would have had the template content
+	// written under .zshrc (executed on next shell).
+	home, _ := os.UserHomeDir()
+	rel := strings.TrimPrefix(path, home+string(os.PathSeparator))
+	if fi, err := safepath.SafeLstat(home, rel); err == nil {
+		_ = fi // exists (regular file or symlink) — operator's prior save wins, do not touch
+		return nil
 	}
-	return cerr
+	return safepath.SafeWriteAbs(path, []byte(tmpl), 0o644)
 }
 
 // validURL delegates to the canonical SSRF policy (config.IsAllowedURL) used

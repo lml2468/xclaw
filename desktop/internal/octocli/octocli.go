@@ -382,15 +382,9 @@ func installBinary(srcPath string, data []byte) error {
 		}
 		data = b
 	}
-	// 0o700 on the temp + atomic rename via the shared helper (same write
-	// path as configstore / cron — was previously a hand-rolled
-	// temp+chmod+rename without fsync, a fourth copy of this pattern that
-	// drifted from the others; the atomicfile pkg was created
-	// exactly to retire this kind of duplication).
-	// switched from atomicfile.Write to safepath.SafeWriteAbs
-	// — the latter additionally walks the parent chain via dirfd + O_NOFOLLOW
-	// so an agent-planted intermediate symlink can't redirect the executable
-	// install. atomicfile is being retired in R21 in favor of safepath.
+	// 0o700 executable installed via SafeWriteAbs: dirfd-walk the parent
+	// chain (refusing any symlinked intermediate) + temp+fsync+rename.
+	// Agent-planted intermediate symlinks can't redirect the install.
 	return safepath.SafeWriteAbs(BinPath(), data, 0o700)
 }
 

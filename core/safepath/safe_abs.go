@@ -45,12 +45,12 @@ func underHome(absPath string) (home, rel string, ok bool) {
 	abs := filepath.Clean(absPath)
 	withSep := h + string(os.PathSeparator)
 	matches := strings.HasPrefix(abs, withSep)
-	if !matches && runtime.GOOS == "windows" {
-		n := len(withSep)
-		if len(abs) < n {
-			n = len(abs)
-		}
-		matches = strings.EqualFold(abs[:n], withSep)
+	if !matches && runtime.GOOS == "windows" && len(abs) >= len(withSep) {
+		// NTFS is case-preserving but case-insensitive: a config-supplied
+		// `C:/Users/X/.xclaw/...` (forward-slash JSON-friendly) must match
+		// a $HOME of `C:\Users\X`. Compare equal-length prefixes; an
+		// EqualFold against an inequal-length string is always false.
+		matches = strings.EqualFold(abs[:len(withSep)], withSep)
 	}
 	if !matches {
 		return "", "", false
@@ -99,22 +99,37 @@ func (e errOversize) Error() string {
 
 // SafeWriteAbs writes data to absPath atomically via SafeWrite when under
 // $HOME (dirfd + renameat + leaf symlink refusal), else falls back to a
-// bare temp+rename via os.WriteFile.
+// bare temp+fsync+rename via os.OpenFile|O_EXCL. The fallback has no
+// symlink defense at the parent chain (trust boundary == operator) but
+// still fsyncs before rename so a crash mid-write on an operator-trusted
+// alt path can't leave a zero-byte cron.json / config.json behind.
 func SafeWriteAbs(absPath string, data []byte, perm os.FileMode) error {
 	if home, rel, ok := underHome(absPath); ok {
 		return SafeWrite(home, rel, data, perm)
 	}
-	// Operator-trusted absolute path — write atomically via a sibling
-	// temp file + os.Rename. No symlink defense here (trust boundary).
 	dir := filepath.Dir(absPath)
-	tmpName := filepath.Base(absPath) + ".tmp." + randHex()
-	tmp := filepath.Join(dir, tmpName)
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	tmp := filepath.Join(dir, filepath.Base(absPath)+".tmp."+randHex())
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, absPath); err != nil {
+	if _, werr := f.Write(data); werr != nil {
+		f.Close()
 		_ = os.Remove(tmp)
-		return err
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return serr
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(tmp)
+		return cerr
+	}
+	if rerr := os.Rename(tmp, absPath); rerr != nil {
+		_ = os.Remove(tmp)
+		return rerr
 	}
 	return nil
 }

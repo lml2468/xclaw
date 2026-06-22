@@ -94,6 +94,16 @@
  // Only the line *count* is needed (for the gutter); avoid allocating a full
  // array of line strings for large files.
   const lineCount = $derived(isText && trimmed ? trimmed.split("\n").length : 0);
+ // Pre-render the gutter as a single text node ("1\n2\n3\n…"). A keyed
+ // {#each {length: lineCount}} built one Svelte block per line — for a
+ // backend-cap-sized 1 MiB text file that's tens of thousands of blocks
+ // allocated per render. Same visual output; single Text node DOM.
+  const gutterText = $derived.by(() => {
+    if (lineCount === 0) return "";
+    const parts = new Array<string>(lineCount);
+    for (let i = 0; i < lineCount; i++) parts[i] = String(i + 1);
+    return parts.join("\n");
+  });
   const codeHtml = $derived(isText && trimmed ? highlight(trimmed) : "");
  // Raw (source) view for markdown and html shares the highlighter.
   const rawHtml = $derived(
@@ -220,7 +230,7 @@
     {:else}
  <!-- code / text: line-number gutter + highlighted source -->
       <div class="code-wrap">
-        <pre class="gutter" aria-hidden="true">{#each { length: lineCount } as _, i}{i + 1}{"\n"}{/each}</pre>
+        <pre class="gutter" aria-hidden="true">{gutterText}</pre>
         <pre class="code"><code>{@html codeHtml}</code></pre>
       </div>
     {/if}

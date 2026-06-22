@@ -353,10 +353,16 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	if cm != nil {
 		cm.Start()
-		// Note: NO `defer cm.Stop` here. The explicit shutdown chain below
-		// stops the scheduler BEFORE the connector/store drain so a late tick
-		// can't enqueue work after we've waited it out. A deferred Stop would
-		// run AFTER the function returns, missing the wait.
+		// Defer Stop+Wait so a panic from connector.Run (or anything
+		// between Start and the explicit chain below) does not leave
+		// the scheduler ticking against a freshly-closed store: defer
+		// st.Close fires on unwind regardless, but the explicit
+		// shutdown chain at the bottom of runBot is skipped on panic.
+		// Both Stop and Wait are idempotent, so the explicit chain
+		// below can still run them on the happy path without harm
+		// (Stop short-circuits on m.timer==nil; Wait on a zero WG is
+		// a no-op).
+		defer func() { cm.Stop(); cm.Wait() }()
 		fmt.Printf("[%s] cron scheduler armed (tick %s)\n", cfg.BotID, cron.CronTickInterval)
 	}
 

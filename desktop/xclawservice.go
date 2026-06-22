@@ -92,7 +92,20 @@ func (x *XClawService) connect() error {
 	x.mu.Unlock()
 
 	go func() {
+		firstEnvelope := true
 		err := client.Read(func(env control.Envelope) {
+			if firstEnvelope {
+				firstEnvelope = false
+				// Only NOW do we know the wire is healthy enough to send
+				// at least one frame. Reset the over-cap re-dial counter
+				// here rather than at connect entry — resetting on every
+				// re-dial turned the maxOversizedRedials cap into dead
+				// code (the redial→connect→reset→redial cycle accumulated
+				// no count, so the fallback full-reconnect never fired).
+				x.mu.Lock()
+				x.oversizedRetries = 0
+				x.mu.Unlock()
+			}
 			if app := application.Get(); app != nil {
 				app.Event.Emit(EventStream, env)
 			}
@@ -138,10 +151,6 @@ func (x *XClawService) connect() error {
 		// Clean EOF / closed socket → the daemon exited; respawn + reconnect.
 		x.reconnect()
 	}()
-
-	x.mu.Lock()
-	x.oversizedRetries = 0 // a fresh, healthy connection clears the re-dial counter
-	x.mu.Unlock()
 
 	_, _ = client.Send(control.CmdAuth, control.AuthBody{Token: x.sup.Token()})
 	_, _ = client.Send("health", nil)

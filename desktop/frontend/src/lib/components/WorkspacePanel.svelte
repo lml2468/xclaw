@@ -46,7 +46,16 @@
   async function loadTree(b: string | null, k: string | null) {
     const gen = ++loadGen;
     error = "";
-    if (!b || !k) { tree = null; return; }
+    if (!b || !k) {
+ // Switching back to a selection-less state mid-fetch: clear the
+ // tree AND drop the spinner. Previously the early-return left
+ // `loading=true` from a still-running prior fetch — its finally
+ // skipped the reset (gen mismatch) and the spinner spun forever
+ // until the next non-null load.
+      tree = null;
+      loading = false;
+      return;
+    }
     loading = true;
     try {
       const t = isPreview ? mockTree : await XClawService.WorkspaceTree(b, k);

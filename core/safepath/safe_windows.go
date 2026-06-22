@@ -11,12 +11,12 @@
 // against the actual open can still slip a symlink through (TOCTOU window
 // of single milliseconds). The Unix dirfd walk closes this structurally;
 // the Windows fallback does not. Mitigations:
-//   - Symlink creation on Windows requires admin OR Developer Mode enabled,
-//     so the attacker surface is narrower than POSIX.
-//   - Per-component Lstat refusal still defeats the "drop a symlink and
-//     wait" attack (the most common shape) — the race window is sub-ms.
-//   - This file documents the gap; switching to FILE_FLAG_OPEN_REPARSE_POINT
-//     is the future close.
+// - Symlink creation on Windows requires admin OR Developer Mode enabled,
+// so the attacker surface is narrower than POSIX.
+// - Per-component Lstat refusal still defeats the "drop a symlink and
+// wait" attack (the most common shape) — the race window is sub-ms.
+// - This file documents the gap; switching to FILE_FLAG_OPEN_REPARSE_POINT
+// is the future close.
 
 package safepath
 
@@ -85,7 +85,7 @@ func SafeRead(root, rel string, cap int64) ([]byte, error) {
 	if cap <= 0 {
 		return io.ReadAll(f)
 	}
-	// Hard cap (round 20 Go HIGH): error rather than silently truncate.
+	// Hard cap: error rather than silently truncate.
 	buf, err := io.ReadAll(io.LimitReader(f, cap+1))
 	if err != nil {
 		return nil, err

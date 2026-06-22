@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// setup points botDir() (os.UserHomeDir) at a fresh temp dir on every OS:
+// setup points botDir (os.UserHomeDir) at a fresh temp dir on every OS:
 // UserHomeDir reads $HOME on unix but %USERPROFILE% on Windows, so set both —
 // otherwise tests share the real home and pollute each other.
 func setup(t *testing.T) {
@@ -67,7 +67,7 @@ func TestBotCreateListFilesRoundTrip(t *testing.T) {
 func TestPathTraversalRejected(t *testing.T) {
 	setup(t)
 	_ = BotCreate("bot1", "demo")
-	// Plant a secret outside the skill dir; ensure it can't be read/written via ...
+	// Plant a secret outside the skill dir; ensure it can't be read/written via...
 	root := botPath(t, "bot1")
 	outside := filepath.Join(root, "..", "secret.txt")
 	_ = os.WriteFile(outside, []byte("TOPSECRET"), 0o644)
@@ -93,7 +93,7 @@ func TestPathTraversalRejected(t *testing.T) {
 	}
 }
 
-// Each bot's skills live in its own .claude/skills dir; modifying one must not
+// Each bot's skills live in its own.claude/skills dir; modifying one must not
 // affect another.
 func TestPerBotIsolation(t *testing.T) {
 	setup(t)

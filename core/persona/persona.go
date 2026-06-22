@@ -15,20 +15,20 @@
 // injection) and the Octo connector (trigger gating + reply routing) carry only
 // thin hooks:
 //
-//   - BuildGroupSystemPrompt — mirrors openclaw inbound.ts
-//     buildPersonaGroupSystemPrompt (GH octo-adapters#64): the
-//     operator-trusted persona instruction injected into the system prompt so
-//     the LLM understands it is the grantor's clone and must not return
-//     NO_REPLY when it sees `@grantor`.
-//   - ComposeHint — mirrors openclaw persona-prompt.ts composePersonaHint:
-//     the channel-agnostic variant of octo-server's buildFanoutCopyReq prefix,
-//     used when a free-form persona prompt is supplied.
-//   - Relevant / Mention — mirrors openclaw inbound.ts OBO v2 relevance filter
-//     (~L2122-2160): drops pure @AI fan-out that does not address the grantor
-//     so an irrelevant message never leaks into the clone's session.
-//   - TriggeredAsGrantor — mirrors openclaw inbound.ts (~L1707-1713): decides
-//     whether the reply is sent in the grantor's voice (on_behalf_of) vs. as
-//     the bot itself.
+// - BuildGroupSystemPrompt — mirrors openclaw inbound.ts
+// buildPersonaGroupSystemPrompt (GH octo-adapters#64): the
+// operator-trusted persona instruction injected into the system prompt so
+// the LLM understands it is the grantor's clone and must not return
+// NO_REPLY when it sees `@grantor`.
+// - ComposeHint — mirrors openclaw persona-prompt.ts composePersonaHint:
+// the channel-agnostic variant of octo-server's buildFanoutCopyReq prefix,
+// used when a free-form persona prompt is supplied.
+// - Relevant / Mention — mirrors openclaw inbound.ts OBO v2 relevance filter
+// (~L2122-2160): drops pure @AI fan-out that does not address the grantor
+// so an irrelevant message never leaks into the clone's session.
+// - TriggeredAsGrantor — mirrors openclaw inbound.ts (~L1707-1713): decides
+// whether the reply is sent in the grantor's voice (on_behalf_of) vs. as
+// the bot itself.
 //
 // All strings are produced for an operator-trusted code path; the grantor uid
 // and display name come from operator config (config.OnBehalfOf), never from
@@ -95,7 +95,7 @@ func (g Grantor) ComposeHint(personaPrompt string) string {
 	if prompt == "" {
 		return ""
 	}
-	// displayName() always returns a non-empty string once Configured() holds (it
+	// displayName always returns a non-empty string once Configured holds (it
 	// falls back to the grantor UID), so no empty-name guard is needed here.
 	name := g.displayName()
 	return "你正在以「" + name + "」的分身身份运作。请以 " + name + " 的身份回复。\n\n" + prompt
@@ -138,11 +138,11 @@ func (m Mention) empty() bool {
 //
 // Mirrors openclaw inbound.ts OBO v2 relevance filter (~L2122-2160):
 //
-//   - broadcast (@所有人 humans/all) → relevant (the grantor, a human, is part
-//     of the broadcast);
-//   - explicit grantor uid mention → relevant (targets the grantor identity);
-//   - no mention info at all → relevant (plain chatter the persona should see);
-//   - pure @AI fan-out not addressing the grantor → NOT relevant (dropped).
+// - broadcast (@所有人 humans/all) → relevant (the grantor, a human, is part
+// of the broadcast);
+// - explicit grantor uid mention → relevant (targets the grantor identity);
+// - no mention info at all → relevant (plain chatter the persona should see);
+// - pure @AI fan-out not addressing the grantor → NOT relevant (dropped).
 //
 // The caller must drop a not-relevant message BEFORE recording any session
 // state, so an irrelevant fan-out never leaks into the clone's session (the

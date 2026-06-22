@@ -101,7 +101,7 @@ func TestRecvackFrame(t *testing.T) {
 
 // TestNextFrameSentinels exercises the exported error sentinels so callers
 // (and any downstream metric scraper) can rely on errors.Is matching them.
-// This is the regression for the round-4 commit that promoted the prior
+// This is the regression for the commit that promoted the prior
 // fmt.Errorf strings to exported sentinels — exported API surface without
 // an Is-consumer is a contract claim without a test.
 func TestNextFrameSentinels(t *testing.T) {

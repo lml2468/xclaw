@@ -23,7 +23,7 @@ func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
 //
 // Concurrency invariant: onRecv, handleDecryptFailure, dispatch, and the
 // aesKey/aesIV/srvVer/decryptFails fields are ONLY ever touched from the single
-// run() read-loop goroutine, so they need no lock. (writeRaw is the exception —
+// run read-loop goroutine, so they need no lock. (writeRaw is the exception —
 // it may be called from the ping loop and the read loop, so conn/closed are
 // guarded by mu.) The connector dispatches turns onto its OWN worker goroutines
 // AFTER onMessage returns (see Connector.enqueueTurn), so those goroutines never
@@ -108,7 +108,7 @@ func (s *socketConn) close() {
 	s.closed = true
 	// Close the underlying conn under the same lock as the flag flip so a
 	// concurrent writeRaw can't observe closed=false and then race past
-	// s.conn.Close() into WriteMessage on a half-closed conn.
+	// s.conn.Close into WriteMessage on a half-closed conn.
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
@@ -361,7 +361,7 @@ func (s *socketConn) handleDecryptFailure(idStr string, messageID uint64, messag
 }
 
 // parsePayload decodes the decrypted JSON into a MessagePayload, defaulting
-// type to 0 when absent (socket.ts builds { type: type ?? 0, ... }).
+// type to 0 when absent (socket.ts builds { type: type ?? 0,... }).
 func parsePayload(b []byte) (MessagePayload, error) {
 	var p MessagePayload
 	if err := jsonUnmarshal(b, &p); err != nil {

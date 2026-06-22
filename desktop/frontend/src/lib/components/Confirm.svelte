@@ -1,20 +1,20 @@
 <script lang="ts">
-  // Small in-app confirm dialog (window.confirm is a no-op in the Wails webview).
-  // Render conditionally; resolves via the two buttons. Esc=cancel, Enter=confirm.
-  // On mount, focus moves to the primary button so keyboard handlers fire from
-  // inside the dialog — otherwise the outer modal's keydown listener would eat
-  // Escape and close the whole pane instead of just cancelling the confirm.
-  //
-  // The keydown listener is attached via addEventListener (not Svelte's
-  // onkeydown attribute), because Svelte 5 DELEGATES keydown to the app root —
-  // a delegated handler runs AFTER an ancestor's directly-attached listener has
-  // already fired during bubble, so stopPropagation from there would be too
-  // late to prevent the outer modal's Esc → close from firing.
-  //
-  // Tab is trapped INSIDE the confirm too — relying on the browser's native Tab
-  // would hand focus to the outer modal's Tab trap, which cycles through the
-  // whole form behind the confirm; a subsequent Esc then fires from a node
-  // outside .cscrim and closes the modal instead of cancelling the confirm.
+ // Small in-app confirm dialog (window.confirm is a no-op in the Wails webview).
+ // Render conditionally; resolves via the two buttons. Esc=cancel, Enter=confirm.
+ // On mount, focus moves to the primary button so keyboard handlers fire from
+ // inside the dialog — otherwise the outer modal's keydown listener would eat
+ // Escape and close the whole pane instead of just cancelling the confirm.
+ //
+ // The keydown listener is attached via addEventListener (not Svelte's
+ // onkeydown attribute), because Svelte 5 DELEGATES keydown to the app root —
+ // a delegated handler runs AFTER an ancestor's directly-attached listener has
+ // already fired during bubble, so stopPropagation from there would be too
+ // late to prevent the outer modal's Esc → close from firing.
+ //
+ // Tab is trapped INSIDE the confirm too — relying on the browser's native Tab
+ // would hand focus to the outer modal's Tab trap, which cycles through the
+ // whole form behind the confirm; a subsequent Esc then fires from a node
+ // outside.cscrim and closes the modal instead of cancelling the confirm.
   import { onMount, tick } from "svelte";
   let { message, confirmLabel = "确认", cancelLabel = "取消", danger = false, onresult }:
     { message: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean; onresult: (ok: boolean) => void } = $props();
@@ -44,10 +44,10 @@
     const opener = (document.activeElement as HTMLElement) ?? null;
     const node = scrim;
     node?.addEventListener("keydown", onKey);
-    // Wait one tick so bind:this on `primary` has committed before we
-    // focus — on slow first paint primary?.focus() ran while primary
-    // was still undefined, leaving focus on the body so Tab→ went to
-    // [Cancel] instead of [Confirm]. Round 20 frontend #1.
+ // Wait one tick so bind:this on `primary` has committed before we
+ // focus — on slow first paint primary?.focus ran while primary
+ // was still undefined, leaving focus on the body so Tab→ went to
+ // [Cancel] instead of [Confirm]..
     void tick().then(() => primary?.focus());
     return () => {
       node?.removeEventListener("keydown", onKey);
@@ -57,7 +57,7 @@
 </script>
 
 <div class="cscrim" bind:this={scrim} role="presentation" onclick={() => onresult(false)}>
-  <!-- svelte-ignore a11y_click_events_have_key_events (keydown attached via addEventListener in onMount; onclick only stops propagation) -->
+ <!-- svelte-ignore a11y_click_events_have_key_events (keydown attached via addEventListener in onMount; onclick only stops propagation) -->
   <div class="confirm" role="alertdialog" aria-label="确认" aria-describedby="confirm-msg" tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <p id="confirm-msg">{message}</p>
     <div class="cbtns">

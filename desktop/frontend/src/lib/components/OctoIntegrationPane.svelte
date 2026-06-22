@@ -1,14 +1,14 @@
 <script lang="ts">
-  // Octo 集成 pane: the bot's binding to its octo IM identity — API URL,
-  // bf_ token, robot id — plus the octo-cli disk-profile status (and a
-  // "重新登录" action to repair it without re-saving the whole config).
-  //
-  // Why disk-profile management lives here: when the agent calls octo-cli
-  // with OCTO_BOT_ID env set (always set for XClaw bots), octo-cli does a
-  // disk-profile lookup keyed by robot id and IGNORES OCTO_BOT_TOKEN entirely.
-  // A missing profile fails the very first octo-cli call from the agent —
-  // see configstore.Save's auto-Login + this pane's manual "重新登录" button
-  // for the recovery path.
+ // Octo 集成 pane: the bot's binding to its octo IM identity — API URL,
+ // bf_ token, robot id — plus the octo-cli disk-profile status (and a
+ // "重新登录" action to repair it without re-saving the whole config).
+ //
+ // Why disk-profile management lives here: when the agent calls octo-cli
+ // with OCTO_BOT_ID env set (always set for XClaw bots), octo-cli does a
+ // disk-profile lookup keyed by robot id and IGNORES OCTO_BOT_TOKEN entirely.
+ // A missing profile fails the very first octo-cli call from the agent —
+ // see configstore.Save's auto-Login + this pane's manual "重新登录" button
+ // for the recovery path.
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { errMsg } from "../errors";
   import { untrack } from "svelte";
@@ -20,18 +20,18 @@
   let revealToken = $state(false);
   let editBotId = $state(false);
 
-  // OCTO_BOT_ID lives in env, mirrored here for a typed edit + reactive write-back.
+ // OCTO_BOT_ID lives in env, mirrored here for a typed edit + reactive write-back.
   let robotId = $state("");
-  // Tracks the last value we mirrored from bot.env (vs. just typed by the
-  // operator). Without this guard, the seed-effect → commitRobotId chain
-  // would dirty the form just from clicking a different bot.
+ // Tracks the last value we mirrored from bot.env (vs. just typed by the
+ // operator). Without this guard, the seed-effect → commitRobotId chain
+ // would dirty the form just from clicking a different bot.
   let lastSeededRobotId = "";
-  // Round 21 FE #2: untrack the bot.env read so the second $effect
-  // (which writes bot.env when robotId is typed) doesn't re-trigger
-  // this seed effect — that loop reset `editBotId = false` mid-
-  // keystroke, flipping the input back to readonly and silently
-  // dropping subsequent characters. Now this only re-runs when bot.id
-  // itself changes (bot switch).
+ // untrack the bot.env read so the second $effect
+ // (which writes bot.env when robotId is typed) doesn't re-trigger
+ // this seed effect — that loop reset `editBotId = false` mid-
+ // keystroke, flipping the input back to readonly and silently
+ // dropping subsequent characters. Now this only re-runs when bot.id
+ // itself changes (bot switch).
   $effect(() => {
     bot.id; // re-seed on bot switch
     untrack(() => {
@@ -41,11 +41,11 @@
       refreshCliStatus();
     });
   });
-  // Mirror robotId → bot.env reactively. Was wired via `oninput=commitRobotId`
-  // on the bound input, which reads `robotId` BEFORE Svelte's bind:value has
-  // flushed the new keystroke (the bind and the inline handler both react to
-  // the same input event), so every commit wrote the PRIOR character.
-  // Reading robotId inside $effect runs after the bind has settled.
+ // Mirror robotId → bot.env reactively. Was wired via `oninput=commitRobotId`
+ // on the bound input, which reads `robotId` BEFORE Svelte's bind:value has
+ // flushed the new keystroke (the bind and the inline handler both react to
+ // the same input event), so every commit wrote the PRIOR character.
+ // Reading robotId inside $effect runs after the bind has settled.
   $effect(() => {
     const v = robotId.trim();
     if (v === lastSeededRobotId.trim()) return; // not a user edit
@@ -56,18 +56,18 @@
     ondirty();
   });
 
-  // octo-cli profile status (preview-mode mock or live).
+ // octo-cli profile status (preview-mode mock or live).
   let cliRegistered = $state(false);
   let cliRobotId = $state("");
   let cliBusy = $state(false);
   let cliError = $state("");
   let cliNotice = $state("");
-  // Generation counter (round 17 FE #3): switching bots A → B fast,
-  // A's slower OctoCliStatus response landed second and overwrote
-  // cliRegistered/cliRobotId while B was displayed — the dot
-  // misrepresented B's profile and a subsequent "登出" acted on the
-  // wrong identity. Discard any response whose bot is no longer
-  // current.
+ // Generation counter: switching bots A → B fast,
+ // A's slower OctoCliStatus response landed second and overwrote
+ // cliRegistered/cliRobotId while B was displayed — the dot
+ // misrepresented B's profile and a subsequent "登出" acted on the
+ // wrong identity. Discard any response whose bot is no longer
+ // current.
   let cliStatusGen = 0;
   async function refreshCliStatus() {
     cliError = "";
@@ -92,9 +92,9 @@
       if (isPreview) { cliRegistered = true; cliNotice = "已写入（preview mock）"; }
       else {
         await XClawService.OctoCliRelogin(bot.id);
-        // The relogin path knows it just wrote the profile — flip state locally
-        // instead of round-tripping refreshCliStatus (which would re-parse
-        // config.json + re-read keychain to confirm what we already know).
+ // The relogin path knows it just wrote the profile — flip state locally
+ // instead of round-tripping refreshCliStatus (which would re-parse
+ // config.json + re-read keychain to confirm what we already know).
         cliRegistered = true;
         cliRobotId = robotId;
         cliNotice = "已写入 octo-cli profile";

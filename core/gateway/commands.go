@@ -2,9 +2,9 @@
 //
 // Users control their session without leaving the chat:
 //
-//	/reset   — clear this session's conversation history
-//	/config  — show the effective per-session settings
-//	/help    — list available commands
+//	/reset — clear this session's conversation history
+//	/config — show the effective per-session settings
+//	/help — list available commands
 //
 // Commands are matched on the FIRST line of the inbound body AFTER the router
 // has stripped any leading @bot mention (so `@bot /reset` works in groups).

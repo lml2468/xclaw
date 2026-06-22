@@ -18,7 +18,7 @@
   let error = $state("");
   let loading = $state(false);
 
-  // Preview-mode mock so the layout can be screenshotted without a daemon.
+ // Preview-mode mock so the layout can be screenshotted without a daemon.
   const mockTree = {
     name: "workspace", path: "", isDir: true,
     children: [
@@ -32,16 +32,16 @@
     ],
   } as unknown as Node;
 
-  // Refetch whenever the selected session changes (covers open + switch).
+ // Refetch whenever the selected session changes (covers open + switch).
   $effect(() => {
     const b = botId, k = sessionKey;
     expanded = new Set();
     loadTree(b, k);
   });
 
-  // Generation counter discards stale fetches: switching sessions twice
-  // quickly used to leave the slower (older) WorkspaceTree response
-  // overwriting `tree` with the wrong session's files (round 16 FE #2).
+ // Generation counter discards stale fetches: switching sessions twice
+ // quickly used to leave the slower (older) WorkspaceTree response
+ // overwriting `tree` with the wrong session's files.
   let loadGen = 0;
   async function loadTree(b: string | null, k: string | null) {
     const gen = ++loadGen;
@@ -64,7 +64,7 @@
     expanded = next; // Svelte 5: reassign, don't mutate in place
   }
 
-  // Generated children type is (Node | null)[]; narrow to non-null Node[].
+ // Generated children type is (Node | null)[]; narrow to non-null Node[].
   function kids(n: Node | null): Node[] {
     return ((n?.children ?? []) as (Node | null)[]).filter((c): c is Node => c != null);
   }
@@ -159,7 +159,7 @@
   .retry:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
   .retry:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
-  /* Loading skeleton — shimmering placeholder rows until the tree lands. */
+ /* Loading skeleton — shimmering placeholder rows until the tree lands. */
   .skel { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
   .skel-row { height: 12px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 6%, transparent) 25%, color-mix(in srgb, var(--ink) 11%, transparent) 37%, color-mix(in srgb, var(--ink) 6%, transparent) 63%); background-size: 280% 100%; animation: shimmer 1.4s ease-in-out infinite; }
   @keyframes shimmer { 0% { background-position: 180% 0; } 100% { background-position: -120% 0; } }

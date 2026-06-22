@@ -1,8 +1,8 @@
 // Package autostart manages the "launch at login" toggle on macOS via a per-user
 // LaunchAgent plist under ~/Library/LaunchAgents/. Enabled when the plist
-// exists; Enable() writes it and bootstraps it into the gui session so it loads
-// immediately AND on next login; Disable() reverses both. The plist always
-// points at the .app bundle the daemon is currently running from — moving the
+// exists; Enable writes it and bootstraps it into the gui session so it loads
+// immediately AND on next login; Disable reverses both. The plist always
+// points at the.app bundle the daemon is currently running from — moving the
 // app or running from a dev path will refuse with a clear error.
 //
 // On non-darwin platforms every method is a safe no-op (Enabled → false,
@@ -28,8 +28,8 @@ func plistPath() string {
 	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
 }
 
-// appBundlePath resolves the .app bundle the daemon is running from
-// (/Applications/XClaw.app or wherever). Refuses if not inside a .app, so we
+// appBundlePath resolves the.app bundle the daemon is running from
+// (/Applications/XClaw.app or wherever). Refuses if not inside a.app, so we
 // don't autostart a dev-build binary at some ephemeral cache path.
 func appBundlePath() (string, error) {
 	exe, err := os.Executable()
@@ -92,10 +92,10 @@ func Enable() error {
 </dict>
 </plist>
 `, label, exe)
-	// Round 20 Sec F5: was `os.MkdirAll + os.WriteFile` which follows
+	// was `os.MkdirAll + os.WriteFile` which follows
 	// symlinks at every component. An agent with Bash on the operator's
 	// account plants `~/Library/LaunchAgents/<label>.plist → <attacker
-	// plist or another service's plist>`; next Enable() rewrites that
+	// plist or another service's plist>`; next Enable rewrites that
 	// file with our ProgramArguments under the operator's uid. Symlink
 	// creation in ~/Library/LaunchAgents requires no privilege.
 	// safepath walks via dirfd; refuses any symlinked component.

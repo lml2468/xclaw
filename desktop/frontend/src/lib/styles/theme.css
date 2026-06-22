@@ -5,7 +5,7 @@
    (Brand: Arc Browser DS — coral #ff5f5f, peach-cream #fdf3ec, Inter.) */
 
 :root {
-  /* Three regions: warm bot-rail, conversation list, chat area. */
+ /* Three regions: warm bot-rail, conversation list, chat area. */
   --rail: #2b2630;          /* far-left bot rail (warm charcoal, dark in both themes) */
   --rail-ink: #c7c2cc;      /* rail icon/text */
   --rail-active: #39333f;   /* rail selected chip */
@@ -36,13 +36,13 @@
   --hairline-strong: #ddd3c6;
   --danger: #f56565;        /* Arc error */
 
-  /* Code syntax tints */
+ /* Code syntax tints */
   --tok-kw: #c026a8;
   --tok-str: #2f8f5b;
   --tok-num: #b07219;
   --code-bg: #faf3ec;
 
-  /* Layout */
+ /* Layout */
   --rail-w: 72px;
   --list-w: 280px;
   --titlebar: 36px;       /* rail logo clearance below the traffic lights */
@@ -56,7 +56,7 @@
   --radius: 12px;
   --radius-control: 10px;   /* inputs, small buttons, list rows — squircle-soft */
 
-  /* Repeated interactive hover wash (was scattered as 10/12/14% color-mix). */
+ /* Repeated interactive hover wash (was scattered as 10/12/14% color-mix). */
   --accent-bg-hover: color-mix(in srgb, var(--accent) 12%, transparent);
   --ink-bg-hover: color-mix(in srgb, var(--ink) 8%, transparent);
   --motion-base: .26s;
@@ -64,7 +64,7 @@
 
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0, 0, 0, 0.06);
 
-  /* Depth + accent character — Arc: single soft long-throw shadow, sunset CTA. */
+ /* Depth + accent character — Arc: single soft long-throw shadow, sunset CTA. */
   --accent-grad: linear-gradient(135deg, #ff7e5f 0%, #feb47b 100%);
   --accent-glow: 0 5px 16px color-mix(in srgb, var(--accent) 40%, transparent);
   --elev-1: 0 1px 2px rgba(20, 22, 28, 0.08), 0 1px 1px rgba(20, 22, 28, 0.04);
@@ -73,7 +73,7 @@
   --panel-border: rgba(0, 0, 0, 0.06);
   --rail-grad: linear-gradient(180deg, #39333f 0%, var(--rail) 100%);
 
-  /* Arc glass — window backdrop gradient + frosted surfaces for floating panes. */
+ /* Arc glass — window backdrop gradient + frosted surfaces for floating panes. */
   --grad-a: #ff7e5f;         /* per-Space theme color A — overridden inline on bot select */
   --grad-b: #feb47b;         /* per-Space theme color B */
   --window-grad:
@@ -229,7 +229,7 @@ button { cursor: pointer; }
 /* Respect reduced-motion: neutralize transitions/animations app-wide while
    keeping final (non-animated) states intact. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+ *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

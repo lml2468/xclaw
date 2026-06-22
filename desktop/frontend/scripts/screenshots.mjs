@@ -1,12 +1,12 @@
 // Refresh the README hero screenshots from the running vite dev server in
 // preview mode (?preview=1). Two shots match the current README:
 //
-//   docs/screenshot-chat.png    — full app view, dark theme, default chat
-//   docs/screenshot-skills.png  — per-bot Skills panel, dark theme
+// docs/screenshot-chat.png — full app view, dark theme, default chat
+// docs/screenshot-skills.png — per-bot Skills panel, dark theme
 //
 // Run:
-//   (term 1) cd desktop/frontend && npm run dev
-//   (term 2) cd desktop/frontend && node scripts/screenshots.mjs
+// (term 1) cd desktop/frontend && npm run dev
+// (term 2) cd desktop/frontend && node scripts/screenshots.mjs
 
 import { chromium } from "playwright-core";
 import { dirname, resolve } from "node:path";
@@ -28,8 +28,8 @@ const ctx = await browser.newContext({
 async function shot(query, out, settle = 350) {
   const page = await ctx.newPage();
   await page.goto(`${BASE}/?preview=1&theme=dark${query ? `&${query}` : ""}`);
-  // Let fonts + the spaces-theme gradient settle; the chat seeds a turn with
-  // status-strip steps that animate in.
+ // Let fonts + the spaces-theme gradient settle; the chat seeds a turn with
+ // status-strip steps that animate in.
   await page.waitForTimeout(settle);
   await page.screenshot({ path: out, fullPage: false });
   await page.close();

@@ -43,7 +43,7 @@ func TestEnvPerKeyMergeAndGatewayVars(t *testing.T) {
 	}
 
 	// claude driver → ANTHROPIC_* names. Pass the config-file gateway token to
-	// emulate the headless path (cmd/xclawd injects sec.GatewayToken() in -config
+	// emulate the headless path (cmd/xclawd injects sec.GatewayToken in -config
 	// mode; either feeds the same field through).
 	de := bots[0].DriverEnv(bots[0].Agent.GatewayToken, "")
 	joined := strings.Join(de, "\n")

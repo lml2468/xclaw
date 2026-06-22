@@ -3,30 +3,30 @@
 // configstore). It enforces three invariants in one place so callers can
 // stop worrying about them:
 //
-//  1. Slug validation: per-component names must match a strict character
-//     class (ValidSlug). The caller's `name` arg is checked once at the
-//     boundary; afterwards it can't contain a path separator or "..".
+// 1. Slug validation: per-component names must match a strict character
+// class (ValidSlug). The caller's `name` arg is checked once at the
+// boundary; afterwards it can't contain a path separator or "..".
 //
-//  2. Containment: the resolved absolute path must lie inside `root`.
-//     Enforced lexically by ResolveLexical (no FS touch) AND structurally
-//     by the Safe* file ops below (every path component walked with
-//     O_NOFOLLOW so an intermediate symlink can't redirect).
+// 2. Containment: the resolved absolute path must lie inside `root`.
+// Enforced lexically by ResolveLexical (no FS touch) AND structurally
+// by the Safe* file ops below (every path component walked with
+// O_NOFOLLOW so an intermediate symlink can't redirect).
 //
-//  3. Symlink refusal: every Safe* op refuses to traverse OR overwrite a
-//     symlink at any path component. Race-free on Unix via dirfd-walk
-//     (openat with O_NOFOLLOW per component, then operations on the
-//     verified dirfd via openat/renameat/unlinkat — the kernel never
-//     re-traverses an absolute path that an attacker could have swapped
-//     between our check and our use). On Windows, an Lstat-chain
-//     fallback; structural openat-equivalents need x/sys/windows
-//     reparse-point handling that's not implemented here. Windows
-//     residual: a same-uid attacker with Developer Mode CAN race the
-//     Lstat-then-open window; documented but unmitigated.
+// 3. Symlink refusal: every Safe* op refuses to traverse OR overwrite a
+// symlink at any path component. Race-free on Unix via dirfd-walk
+// (openat with O_NOFOLLOW per component, then operations on the
+// verified dirfd via openat/renameat/unlinkat — the kernel never
+// re-traverses an absolute path that an attacker could have swapped
+// between our check and our use). On Windows, an Lstat-chain
+// fallback; structural openat-equivalents need x/sys/windows
+// reparse-point handling that's not implemented here. Windows
+// residual: a same-uid attacker with Developer Mode CAN race the
+// Lstat-then-open window; documented but unmitigated.
 //
 // Callers should NEVER do their own os.Lstat / filepath.EvalSymlinks /
 // O_NOFOLLOW / symlink-mode checks for paths under a `root`. Those are
 // this package's responsibility; sprinkling them at callsites is what
-// led to the round-15 → round-17 incremental defenses we collapsed here.
+// led to the prior versions incremental defenses we collapsed here.
 package safepath
 
 import (

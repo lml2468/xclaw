@@ -85,12 +85,12 @@ func (c *RESTClient) Register(ctx context.Context, forceRefresh bool) (RegisterR
 	// ws://attacker/ — accepted as plaintext + arbitrary host by the WS
 	// dialer, leaking the bot's IMToken in the CONNECT frame to a host the
 	// operator never trusted. Policy:
-	//   - apiURL is https  → WSURL must be wss (no plaintext downgrade)
-	//   - apiURL is http   → only loopback apiURL allowed by config.IsAllowedURL,
-	//                        so ws://loopback is fine (dev mode)
-	//   - host must match apiURL's hostname exactly (no sibling-subdomain
-	//     hop). Stricter than a same-eTLD+1 check; legitimate deployments
-	//     terminate WS on the same hostname as REST.
+	// - apiURL is https → WSURL must be wss (no plaintext downgrade)
+	// - apiURL is http → only loopback apiURL allowed by config.IsAllowedURL,
+	// so ws://loopback is fine (dev mode)
+	// - host must match apiURL's hostname exactly (no sibling-subdomain
+	// hop). Stricter than a same-eTLD+1 check; legitimate deployments
+	// terminate WS on the same hostname as REST.
 	if err := validateWSURL(out.WSURL, c.apiURL); err != nil {
 		return RegisterResponse{}, fmt.Errorf("register: %w", err)
 	}
@@ -139,7 +139,7 @@ func validateWSURL(rawWSURL, rawAPIURL string) error {
 }
 
 // portFor returns u's explicit port, or the scheme default (443 for https/wss,
-// 80 for http/ws). Empty Port() means "use the default" per net/url.
+// 80 for http/ws). Empty Port means "use the default" per net/url.
 func portFor(u *url.URL) string {
 	if p := u.Port(); p != "" {
 		return p
@@ -156,7 +156,7 @@ func portFor(u *url.URL) string {
 // SendMessageResult mirrors SendMessageResult (types.ts). message_id is decoded
 // via flexString because the octo IM server sometimes returns it as a JSON
 // number (uint64) and sometimes as a string — a strict string decode used to
-// fail with "cannot unmarshal number ... into string", and our caller treated
+// fail with "cannot unmarshal number... into string", and our caller treated
 // the error as a transient send failure → retried with a fresh client_msg_no
 // → the user received two copies of every reply (#bug-2025-06).
 type SendMessageResult struct {

@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Composite PK on (session_key, agent) so two drivers can hold concurrent
 -- resume ids for the same logical session without one overwriting the
 -- other; Resume() filters by agent so a Claude id is never silently
--- handed to a Codex driver (round 10). Existing pre-round-10 DBs with
+-- handed to a Codex driver. Existing legacy DBs with
 -- the old single-column-PK shape are rebuilt by Open's
 -- migrateAgentSessions BEFORE this DDL runs.
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -102,7 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 
 // Open initializes the database (creating the schema) at path.
 //
-// Round 21 Sec H3: pre-check each of xclaw.db / xclaw.db-wal / xclaw.db-shm
+// pre-check each of xclaw.db / xclaw.db-wal / xclaw.db-shm
 // for a leaf symlink before SQLite opens them. An agent (Bash + bypass)
 // that plants `<dataDir>/xclaw.db → ~/Documents/important.sqlite` would
 // otherwise have SQLite open through the symlink and run schema
@@ -121,7 +121,7 @@ func Open(path string) (*Store, error) {
 	// Run pre-schema migrations FIRST so the schema's IF-NOT-EXISTS DDL
 	// (which can't ALTER an existing table) doesn't lock us into the old
 	// shape. agent_sessions in particular went from single-column PK
-	// (pre-round-10) to composite PK in round 10; the IF-NOT-EXISTS form
+	// (legacy) to composite PK in; the IF-NOT-EXISTS form
 	// is a no-op against the legacy shape, so SaveResume's ON CONFLICT(...)
 	// fails until we destructively rebuild the table.
 	if err := migrateAgentSessions(db); err != nil {
@@ -137,16 +137,16 @@ func Open(path string) (*Store, error) {
 }
 
 // migrateAgentSessions rebuilds the agent_sessions table when it carries the
-// pre-round-10 single-column PK shape. SQLite has no portable ALTER for PK,
+// legacy single-column PK shape. SQLite has no portable ALTER for PK,
 // so we copy → drop → recreate via the current schema (run by Open right
 // after) → restore the rows. Idempotent: a no-op when the table already has
 // the composite shape (or when it doesn't exist yet — a fresh DB).
 //
-// We preserve the existing rows verbatim; pre-round-10 rows are all
+// We preserve the existing rows verbatim; legacy rows are all
 // single-(session_key) so the de-dup-into-composite-PK collision can't fire.
 //
 // Detection uses PRAGMA table_info / index_list rather than substring-matching
-// the DDL text (round 12 G3): sqlite_master.sql is preserved as authored, but
+// the DDL text: sqlite_master.sql is preserved as authored, but
 // different SQLite versions or whitespace-rewritten DDL would defeat a literal
 // substring match — an undetected legacy shape would either keep running with
 // the broken PK or re-run the migration and fail on the second pass because
@@ -262,7 +262,7 @@ func migrateTokenUsage(db *sql.DB) error {
 // the first. foreign_keys is connection-scoped, so setting it once via Exec left
 // other pooled connections with FK enforcement OFF, letting an orphaned insert
 // or a missed ON DELETE CASCADE slip through on whichever connection the pool
-// happened to hand out (MLT-33). busy_timeout is likewise per-connection;
+// happened to hand out. busy_timeout is likewise per-connection;
 // journal_mode=WAL is a persistent database setting but is cheap and idempotent
 // to assert per-connection.
 func dsn(path string) string {
@@ -500,7 +500,7 @@ func (s *Store) usageWhere(cond string, args ...any) (TokenUsage, error) {
 // SaveResume records (or replaces) the resume id for a (sessionKey, agent)
 // pair. The agent name is part of the conflict key: a resume id minted by
 // the claude CLI must not be silently fed back to a different driver
-// (Codex / Gemini) that can't honor it (round 10 store key-by-agent fix).
+// (Codex / Gemini) that can't honor it (store key-by-agent fix).
 func (s *Store) SaveResume(sessionKey, agent, resumeID string) error {
 	if agent == "" {
 		return fmt.Errorf("save resume: agent name required")
@@ -550,9 +550,9 @@ func (s *Store) ClearResume(sessionKey string) error {
 }
 
 // ClearResumeForAgent drops the resume mapping for ONE (sessionKey, agent)
-// pair. Used by the gateway self-heal path (round 11): when ONE driver
+// pair. Used by the gateway self-heal path: when ONE driver
 // emits ResumeInvalid, only ITS row should be cleared — nuking every
-// driver's row would contradict the round-10 composite-PK promise that
+// driver's row would contradict the composite-PK promise that
 // two drivers can hold concurrent resume ids without one feeding the
 // other a stale id.
 func (s *Store) ClearResumeForAgent(sessionKey, agent string) error {

@@ -3,8 +3,8 @@
 // It wires the full pipeline — store + router + gateway + agent driver — and
 // drives it from an inbound source. Two front ends:
 //
-//	xclawd                              # REPL on stdin (claude driver)
-//	xclawd -control /tmp/xclaw.sock    # serve the control bus (for the GUI app)
+//	xclawd # REPL on stdin (claude driver)
+//	xclawd -control /tmp/xclaw.sock # serve the control bus (for the GUI app)
 //
 // With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
 // so the desktop app (or any client) can send commands and receive the live
@@ -75,7 +75,7 @@ func main() {
 	// Run context: cancelled on SIGINT/SIGTERM so an in-flight control-bus turn
 	// (session.send) and the IM connector shut down cleanly and the deferred
 	// cleanup (socket removal, store close) actually runs — previously a bare
-	// context meant Ctrl-C killed the process with defers unexecuted (H7).
+	// context meant Ctrl-C killed the process with defers unexecuted.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestReadControlToken covers the capability-token reader the daemon uses to
-// pull the GUI token off its stdin (MLT-37): a newline-terminated line, a
+// pull the GUI token off its stdin: a newline-terminated line, a
 // close-without-newline (EOF), surrounding whitespace, and an empty stream.
 func TestReadControlToken(t *testing.T) {
 	cases := []struct {
@@ -62,9 +62,9 @@ func (neverEnding) Read(p []byte) (int, error) {
 }
 
 // TestPrivilegedControlCommandsCoverThreat asserts the gated set matches the
-// MLT-37 threat surface (the GUI→daemon operations an injected same-uid agent
+// threat surface (the GUI→daemon operations an injected same-uid agent
 // must not reach) and does NOT gate the open metadata commands. session.history
-// and cron.list are gated (MLT-38): their handlers take an attacker-controllable
+// and cron.list are gated: their handlers take an attacker-controllable
 // botId/sessionKey with no scoping, so they are the at-rest twin of the gated
 // cross-session event stream.
 func TestPrivilegedControlCommandsCoverThreat(t *testing.T) {
@@ -87,7 +87,7 @@ func TestPrivilegedControlCommandsCoverThreat(t *testing.T) {
 	}
 }
 
-// TestSessionHistoryGatedEndToEnd is the MLT-38 regression: wired with the REAL
+// TestSessionHistoryGatedEndToEnd is the regression: wired with the REAL
 // privilegedControlCommands, an unauthenticated connection (the same-uid spawned
 // agent) cannot read session.history or cron.list, and the handler is never even
 // reached — the gate rejects before dispatch. After presenting the valid token

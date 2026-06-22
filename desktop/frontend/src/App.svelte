@@ -17,7 +17,7 @@
 
   let composer = $state<Composer>();
 
-  // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows].
+ // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows].
   type SettingsTab = "basic" | "octo" | "skills" | "workflows";
   const TABS: SettingsTab[] = ["basic", "octo", "skills", "workflows"];
   function initialSettingsState(): { show: boolean; tab: SettingsTab } {
@@ -32,21 +32,21 @@
   let showFiles = $state(new URLSearchParams(location.search).has("files"));
   let showPalette = $state(false);
   let collapsed = $state(false);
-  // The file open in the wide preview pane (which overlays the chat). Null = chat.
+ // The file open in the wide preview pane (which overlays the chat). Null = chat.
   let previewPath = $state<string | null>(null);
 
-  // The preview path belongs to one session's workspace; clear it when the
-  // selected bot/session changes, or it would render the old file against the
-  // new session (a not-found error, or the wrong same-named file).
+ // The preview path belongs to one session's workspace; clear it when the
+ // selected bot/session changes, or it would render the old file against the
+ // new session (a not-found error, or the wrong same-named file).
   $effect(() => {
     store.selectedBotId; store.selectedKey;
     previewPath = null;
   });
 
-  // Per-Space theme color (Arc's signature): each bot carries an Arc theme
-  // gradient, chosen deterministically from its id, and the whole window
-  // backdrop blooms from it. Selecting a bot re-themes the window; light and
-  // dark both recompute since --window-grad references --grad-a/--grad-b.
+ // Per-Space theme color (Arc's signature): each bot carries an Arc theme
+ // gradient, chosen deterministically from its id, and the whole window
+ // backdrop blooms from it. Selecting a bot re-themes the window; light and
+ // dark both recompute since --window-grad references --grad-a/--grad-b.
   const SPACE_THEMES: [string, string][] = [
     ["#ff7e5f", "#feb47b"], // Sunset — peach → coral
     ["#7f5af0", "#e84393"], // Twilight — violet → fuchsia
@@ -68,12 +68,12 @@
     s.setProperty("--grad-b", b);
   });
 
-  // ⌘K / Ctrl-K toggles the command palette. Listen on document (NOT both
-  // window AND document — registering on both fired onKey twice per
-  // keydown, so the toggle was cancelling itself and the palette never
-  // appeared) in the capture phase so iframe focus quirks don't swallow it.
-  // Bound inside $effect with cleanup so dev-mode HMR doesn't stack a fresh
-  // handler on every save (round 12 F1).
+ // ⌘K / Ctrl-K toggles the command palette. Listen on document (NOT both
+ // window AND document — registering on both fired onKey twice per
+ // keydown, so the toggle was cancelling itself and the palette never
+ // appeared) in the capture phase so iframe focus quirks don't swallow it.
+ // Bound inside $effect with cleanup so dev-mode HMR doesn't stack a fresh
+ // handler on every save.
   function onKey(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
@@ -87,8 +87,8 @@
     return () => document.removeEventListener("keydown", onKey, true);
   });
 
-  // Tray opens the unified Settings modal at a specific tab, or the standalone
-  // Token Usage modal. Mutual exclusion: only one top-level modal at a time.
+ // Tray opens the unified Settings modal at a specific tab, or the standalone
+ // Token Usage modal. Mutual exclusion: only one top-level modal at a time.
   function openSettings(tab: SettingsTab = "basic") {
     settingsTab = tab;
     showSettings = true;
@@ -98,9 +98,9 @@
     showUsage = true;
     showSettings = false;
   }
-  // Wails Events.On returns an unsubscribe — capture inside $effect so HMR
-  // doesn't keep stacking handlers each save (round 12 F2). Both subscriptions
-  // share the same cleanup boundary.
+ // Wails Events.On returns an unsubscribe — capture inside $effect so HMR
+ // doesn't keep stacking handlers each save. Both subscriptions
+ // share the same cleanup boundary.
   $effect(() => {
     const offSettings = Events.On("xclaw:open-settings", (e: any) => {
       const tab = e?.data?.tab as SettingsTab | undefined;
@@ -195,10 +195,10 @@
 
 <style>
   .shell { display: flex; height: 100vh; background: var(--window-grad); }
-  /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
+ /* Custom window controls for the frameless window — vertically centered in the header band, top-left over the sidebar. */
   :global(.lights) { position: fixed; top: calc((var(--header-h) - 12px) / 2); left: 15px; z-index: 1000; }
 
-  /* The chat fills the right area flush — no card framing. */
+ /* The chat fills the right area flush — no card framing. */
   .content {
     flex: 1; min-width: 0; display: flex;
     overflow: hidden;
@@ -234,7 +234,7 @@
   }
   .icon:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--accent); }
   .icon.on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
-  /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
+ /* Sidebar collapse/expand toggle, top-left of the chat header. Chevron points
      toward the rail (collapse); flips outward when collapsed (expand). */
   .sb-toggle { margin-left: -4px; }
   .sb-toggle svg { transition: transform .2s var(--ease-standard, ease); }

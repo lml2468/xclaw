@@ -37,11 +37,9 @@ func envWithOctoBin() []string {
 
 // SocketPath returns the control-bus socket path for this user. Kept short to
 // stay under the ~104-byte sockaddr_un limit. On Windows, AF_UNIX still wants a
-// filesystem path (Win10 1803+), placed in the temp dir, and os.Getuid()
+// filesystem path (Win10 1803+), placed in the temp dir, and os.Getuid
 // returns -1 — so we derive a stable per-user suffix from USERNAME / USERPROFILE
-// instead (round 16 Go #6 — without this, every Windows user shared
-// `xclaw--1.sock` in the system temp dir, racing each other's daemon
-// startups).
+// instead.
 func SocketPath() string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(os.TempDir(), fmt.Sprintf("xclaw-%s.sock", windowsUserSuffix()))
@@ -95,7 +93,7 @@ func ResolveBinary() (string, error) {
 			return override, nil
 		}
 	}
-	// Bundled next to the app executable (production): ../Helpers/xclawd.
+	// Bundled next to the app executable (production):../Helpers/xclawd.
 	if exe, err := os.Executable(); err == nil {
 		cand := filepath.Join(filepath.Dir(exe), "..", "Helpers", binName())
 		if isExec(cand) {
@@ -139,7 +137,7 @@ type Supervisor struct {
 
 	mu        sync.Mutex
 	cmd       *exec.Cmd
-	authToken string // capability token minted for the current daemon (MLT-37)
+	authToken string // capability token minted for the current daemon
 }
 
 // Token returns the control-bus capability token for the currently running
@@ -170,7 +168,7 @@ func (s *Supervisor) startLocked() error {
 	// private pipe wired to the daemon's stdin (-control-auth-stdin), never an env
 	// var or argv (both world-readable via /proc on Linux). The daemon launches
 	// the agent CLI with its own stdin, so the spawned agent never inherits this
-	// fd and cannot read the token. Held in daemon memory only. (MLT-37)
+	// fd and cannot read the token. Held in daemon memory only.
 	token, err := randomToken()
 	if err != nil {
 		return fmt.Errorf("mint control token: %w", err)
@@ -229,7 +227,7 @@ func (s *Supervisor) stopLocked() {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		_ = s.cmd.Process.Kill()
-		// Wait for the Wait() goroutine to reap the killed process, so it doesn't
+		// Wait for the Wait goroutine to reap the killed process, so it doesn't
 		// linger as a zombie and the goroutine doesn't leak. Kill makes Wait return
 		// promptly; bound it so a truly stuck process can't hang Stop forever.
 		select {

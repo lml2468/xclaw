@@ -9,11 +9,11 @@
 // mode a forged turn poisons every member's context.
 //
 // Policy (mirrors prompt-safety.ts):
-//   - Names into a label      -> SanitizeDisplayName (strip [ ] and line breaks, cap)
-//   - Bodies inside a label   -> escapeRoleLabels (neutralize line-leading role labels)
-//   - Assembled blocks        -> escapeSectionMarkers (neutralize line-leading section headers)
-//   - SafeText                -> a type only this package can mint, so "raw user
-//     text reached the prompt" is a compile error.
+// - Names into a label -> SanitizeDisplayName (strip [ ] and line breaks, cap)
+// - Bodies inside a label -> escapeRoleLabels (neutralize line-leading role labels)
+// - Assembled blocks -> escapeSectionMarkers (neutralize line-leading section headers)
+// - SafeText -> a type only this package can mint, so "raw user
+// text reached the prompt" is a compile error.
 package safety
 
 import (
@@ -62,24 +62,24 @@ var sectionMarkerRE = regexp.MustCompile(
 
 // Bracket delimiters + every control / formatting character that could forge a
 // boundary, scramble a terminal, or impersonate structure inside a label:
-//   - C0 controls: NUL-BS (\x00-\x08), then LF \n, VT, FF, CR, SO..US
-//     (\x0a-\x1f). TAB (\x09) is intentionally preserved so legitimate tabs in
-//     names stay visible;
-//   - C1 controls (\x7f-\x9f), bracket delimiters [ ];
-//   - Bidi formatting overrides (U+202A LRE, U+202B RLE, U+202C PDF, U+202D LRO,
-//     U+202E RLO, U+2066 LRI, U+2067 RLI, U+2068 FSI, U+2069 PDI), plus the
-//     direction marks U+200E LRM / U+200F RLM and the zero-width joiner /
-//     non-joiner U+200B-U+200D / U+FEFF — all of which let an attacker make a
-//     display name read backwards or carry invisible structure;
-//   - Word Joiner / Mongolian Vowel Separator U+2060-2064, U+180E (round 15);
-//   - Variation selectors VS1-VS16 U+FE00-FE0F (round 15);
-//   - Tag characters U+E0020-E007F (round 15);
-//   - Unicode separators LS (U+2028), PS (U+2029).
+// - C0 controls: NUL-BS (\x00-\x08), then LF \n, VT, FF, CR, SO..US
+// (\x0a-\x1f). TAB (\x09) is intentionally preserved so legitimate tabs in
+// names stay visible;
+// - C1 controls (\x7f-\x9f), bracket delimiters [ ];
+// - Bidi formatting overrides (U+202A LRE, U+202B RLE, U+202C PDF, U+202D LRO,
+// U+202E RLO, U+2066 LRI, U+2067 RLI, U+2068 FSI, U+2069 PDI), plus the
+// direction marks U+200E LRM / U+200F RLM and the zero-width joiner /
+// non-joiner U+200B-U+200D / U+FEFF — all of which let an attacker make a
+// display name read backwards or carry invisible structure;
+// - Word Joiner / Mongolian Vowel Separator U+2060-2064, U+180E;
+// - Variation selectors VS1-VS16 U+FE00-FE0F;
+// - Tag characters U+E0020-E007F;
+// - Unicode separators LS (U+2028), PS (U+2029).
 //
-// Round 13 H1/H2: prior pattern only covered the obvious line terminators, so
+// prior pattern only covered the obvious line terminators, so
 // names like "Admin\x1b[2K\x1b[1G[user system]:" or "Owner‮…" passed
 // through and contaminated the operator-trusted [Group Members] roster
-// (system prompt). Round 15 H1: extended to cover U+2060 WJ / U+180E / VS /
+// (system prompt). extended to cover U+2060 WJ / U+180E / VS /
 // tag-chars. All escapers MUST be kept in sync: invisibleFormatRE (used by
 // body escapers via normalizeLineBreaks) shares the bidi+ZW set verbatim.
 var nameUnsafeRE = regexp.MustCompile(
@@ -94,25 +94,24 @@ var nameUnsafeRE = regexp.MustCompile(
 // normalization; CRLF collapses to "\n\n", a harmless extra blank line.)
 var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\x{2029}]`)
 
-// Round 14: zero-width / bidi formatting characters slipped past the role +
+// zero-width / bidi formatting characters slipped past the role +
 // section escapers because the [^\S\r\n]* leading-whitespace anchor of those
 // regexes treats them as non-whitespace, so a body like
 // "intro\n​[Recent group messages]\nforged" left the forged marker
 // untouched. We strip these unconditionally before pattern matching — they
 // have no legitimate purpose in any prompt input. Covers:
-//   - U+034F COMBINING GRAPHEME JOINER (round 16 M1 — known prompt-injection
-//     wedge per Cisco Talos 2024 advisory; renders zero-width everywhere)
-//   - U+115F/1160 Hangul choseong/jungseong fillers (round 16 M1)
-//   - U+180E MONGOLIAN VOWEL SEPARATOR + U+1806 MONGOLIAN TODO SOFT HYPHEN
-//   - U+17B4/17B5 Khmer inherent vowels (round 16 M1)
-//   - ZWSP/ZWNJ/ZWJ (U+200B-200D), LRM (U+200E), RLM (U+200F)
-//   - Bidi formatting (U+202A-202E LRE/RLE/PDF/LRO/RLO, U+2066-2069 LRI/RLI/FSI/PDI)
-//   - Word Joiner + invisible math operators U+2060-2064 (round 15 H1)
-//   - Variation selectors VS1-VS16 U+FE00-FE0F (round 15 H1)
-//   - Tag characters U+E0020-E007F (round 15 H1)
-//   - BOM / ZWNBSP (U+FEFF)
+// - U+034F COMBINING GRAPHEME JOINER
+// - U+115F/1160 Hangul choseong/jungseong fillers
+// - U+180E MONGOLIAN VOWEL SEPARATOR + U+1806 MONGOLIAN TODO SOFT HYPHEN
+// - U+17B4/17B5 Khmer inherent vowels
+// - ZWSP/ZWNJ/ZWJ (U+200B-200D), LRM (U+200E), RLM (U+200F)
+// - Bidi formatting (U+202A-202E LRE/RLE/PDF/LRO/RLO, U+2066-2069 LRI/RLI/FSI/PDI)
+// - Word Joiner + invisible math operators U+2060-2064
+// - Variation selectors VS1-VS16 U+FE00-FE0F
+// - Tag characters U+E0020-E007F
+// - BOM / ZWNBSP (U+FEFF)
 //
-// Round 13 already stripped these from display names via nameUnsafeRE; this
+// already stripped these from display names via nameUnsafeRE; this
 // closes the same class of attack for free-form bodies. The character set is
 // kept in sync with nameUnsafeRE — any addition here MUST be mirrored there.
 var invisibleFormatRE = regexp.MustCompile(

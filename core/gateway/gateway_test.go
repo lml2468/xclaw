@@ -271,7 +271,7 @@ func TestStaleResumeSelfHeals(t *testing.T) {
 }
 
 // A hostile group message must not be able to forge prompt structure below the
-// real current-message anchor (MLT-34 L1): the body is run through
+// real current-message anchor L1): the body is run through
 // safety.SafeBody, so a second anchor or a fake role label survives only in
 // escaped form.
 func TestCurrentMessageBodyCannotForgeAnchor(t *testing.T) {

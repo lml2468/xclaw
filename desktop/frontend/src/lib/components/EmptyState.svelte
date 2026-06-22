@@ -23,7 +23,7 @@
     </div>
   </div>
 {:else}
-  <!-- Defensive: an IM-originated session only exists because of an inbound
+ <!-- Defensive: an IM-originated session only exists because of an inbound
        message, so it should never be empty at steady state. This branch covers
        the sub-second window between selectSession and loadHistory completing. -->
   <div class="muted-empty">加载中…</div>

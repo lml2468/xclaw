@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Arc sidebar-first navigation — merges the old dark bot-rail and the
-  // conversation list into one translucent panel: brand, ⌘K command-bar,
-  // Spaces (bots), conversation tabs, and a settings footer. The window's
-  // per-Space gradient blooms behind it.
+ // Arc sidebar-first navigation — merges the old dark bot-rail and the
+ // conversation list into one translucent panel: brand, ⌘K command-bar,
+ // Spaces (bots), conversation tabs, and a settings footer. The window's
+ // per-Space gradient blooms behind it.
   import { onMount } from "svelte";
   import { store } from "../store.svelte";
   import Avatar from "./Avatar.svelte";
@@ -11,15 +11,15 @@
   let { onedit, onusage, onpalette, collapsed = false }:
     { onedit: () => void; onusage: () => void; onpalette: () => void; collapsed?: boolean } = $props();
 
-  // Relative timestamp for the sidebar's session list. The rest of the UI
-  // is Chinese (sidebar headers 会话/BOTS, settings 编辑Bot/技能/工作流,
-  // error toasts, etc.); the prior "now/5m/2h/3d" was the one English
-  // helper that drifted (round 11 F3). Kept the same compact one-token
-  // shape that fits the .time slot.
-  //
-  // Reactive `now` (round 15 FE #4) so labels tick over time — a row
-  // shown "刚刚" five minutes ago re-renders as "5 分钟前" without
-  // needing an unrelated state change. Updated once a minute.
+ // Relative timestamp for the sidebar's session list. The rest of the UI
+ // is Chinese (sidebar headers 会话/BOTS, settings 编辑Bot/技能/工作流,
+ // error toasts, etc.); the prior "now/5m/2h/3d" was the one English
+ // helper that drifted. Kept the same compact one-token
+ // shape that fits the.time slot.
+ //
+ // Reactive `now` so labels tick over time — a row
+ // shown "刚刚" five minutes ago re-renders as "5 分钟前" without
+ // needing an unrelated state change. Updated once a minute.
   let now = $state(Date.now());
   $effect(() => {
     const id = setInterval(() => { now = Date.now(); }, 60_000);
@@ -36,18 +36,18 @@
   const preview = (s: any) =>
     s.awaiting ? "正在回复…" : (s.messages.at(-1)?.text ?? s.preview ?? "暂无消息");
 
-  // In-app light/dark toggle (persisted). The store also honours ?theme=.
-  // The button shows the icon for the OPPOSITE state — sun while in dark
-  // (click → light), moon while in light (click → dark) — the standard
-  // affordance hint for what the click will do.
+ // In-app light/dark toggle (persisted). The store also honours ?theme=.
+ // The button shows the icon for the OPPOSITE state — sun while in dark
+ // (click → light), moon while in light (click → dark) — the standard
+ // affordance hint for what the click will do.
   function currentTheme(): "dark" | "light" {
     const cur = document.documentElement.getAttribute("data-theme");
     if (cur === "dark" || cur === "light") return cur;
     return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
-  // Read once at mount. Was `$effect(...)` but that registered zero
-  // reactive deps (currentTheme reads document.documentElement, not state)
-  // so it ran exactly once anyway — onMount is the honest version.
+ // Read once at mount. Was `$effect(...)` but that registered zero
+ // reactive deps (currentTheme reads document.documentElement, not state)
+ // so it ran exactly once anyway — onMount is the honest version.
   let theme = $state<"dark" | "light">("dark");
   onMount(() => { theme = currentTheme(); });
   function toggleTheme() {
@@ -129,11 +129,11 @@
     padding: 0 12px 12px; overflow: hidden;
     transition: width var(--motion-base, .32s) var(--ease-standard, ease), flex-basis var(--motion-base, .32s) var(--ease-standard, ease);
   }
-  /* Collapsed: fully hidden — the chat-header toggle brings it back. */
+ /* Collapsed: fully hidden — the chat-header toggle brings it back. */
   .sidebar.collapsed { width: 0; flex-basis: 0; min-width: 0; padding: 0; overflow: hidden; }
 
   .top { height: var(--header-h); flex: 0 0 var(--header-h); display: flex; align-items: center; gap: 8px; padding: 0 4px 0 64px; }
-  /* Collapsed: drop the brand + theme toggle, leave only the expand control centered. */
+ /* Collapsed: drop the brand + theme toggle, leave only the expand control centered. */
   .sidebar.collapsed .top { padding: 0; justify-content: center; }
   .brand-mark { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 8px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--grad-a), var(--grad-b)); box-shadow: 0 4px 14px color-mix(in srgb, var(--grad-a) 45%, transparent); }
   .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); }
@@ -142,7 +142,7 @@
   .iconbtn svg { width: 17px; height: 17px; }
   .iconbtn:hover { background: var(--ink-bg-hover); color: var(--ink); }
   .iconbtn:active { transform: scale(0.9); }
-  /* Collapsed: just the brand mark, centered (toggle lives in the chat header). */
+ /* Collapsed: just the brand mark, centered (toggle lives in the chat header). */
   .sidebar.collapsed .theme-btn { display: none; }
   .sidebar.collapsed .brand-name, .sidebar.collapsed .lbl, .sidebar.collapsed .nm,
   .sidebar.collapsed .b, .sidebar.collapsed .cmd-bar .t, .sidebar.collapsed .cmd-bar .kbd,
@@ -193,7 +193,7 @@
   .fbtn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
   @media (prefers-reduced-motion: reduce) {
     .cmd-bar:hover { transform: none; }
-    /* Snap the collapse instead of animating 320ms width/flex transitions —
+ /* Snap the collapse instead of animating 320ms width/flex transitions —
        theme.css's global reduce-motion neutralizer doesn't override
        per-component transition properties, so this needs to be local. */
     .sidebar { transition: none !important; }

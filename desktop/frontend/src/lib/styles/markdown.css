@@ -4,7 +4,7 @@
  * width) stay component-scoped because they differ per surface.
  *
  * Global (not Svelte-scoped) so a single definition covers every `.md` host;
- * imported once from App.svelte. The markup comes from renderMarkdown() in
+ * imported once from App.svelte. The markup comes from renderMarkdown in
  * lib/markdown.ts, which emits `.codeblock`, `.cb-*`, and `.tok-*`. */
 
 .md .codeblock {

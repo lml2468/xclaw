@@ -8,12 +8,12 @@ import (
 )
 
 // Outbound @mention resolution, ported from cc-channel-octo's mention-utils.ts
-// (and the deliver() splitting in stream-relay.ts).
+// (and the deliver splitting in stream-relay.ts).
 //
 // Two formats are recognized in agent output:
-//   - v2 structured: @[uid:displayName] — precise, generated from the system
-//     prompt; converted to a human-readable @displayName plus a MentionEntity.
-//   - v1 plain: @name — resolved against the channel roster (displayName → uid).
+// - v2 structured: @[uid:displayName] — precise, generated from the system
+// prompt; converted to a human-readable @displayName plus a MentionEntity.
+// - v1 plain: @name — resolved against the channel roster (displayName → uid).
 //
 // @all / @所有人 collapse into a single mentionAll flag.
 //
@@ -293,7 +293,7 @@ var mentionAllRE = regexp.MustCompile(`(?i)^(all|所有人)`)
 
 // detectMentionAll emulates the mentionAll regex in resolveMentions:
 //
-//	(?:^|(?<=\s))@(?:all|所有人)(?!NAME_CHAR)   case-insensitive
+//	(?:^|(?<=\s))@(?:all|所有人)(?!NAME_CHAR) case-insensitive
 //
 // The lead must be line start or whitespace; the trailing char must be a
 // non-name char (or EOS). Notably the trailing boundary excludes '.' and '-'

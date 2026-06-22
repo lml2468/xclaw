@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Per-bot Workflows pane: lifted from the old WorkflowsPanel body. Like
-  // SkillsPane, the Settings modal owns bot selection + scaffolding; this is
-  // just the script list + editor for one bot. Writes through to disk.
+ // Per-bot Workflows pane: lifted from the old WorkflowsPanel body. Like
+ // SkillsPane, the Settings modal owns bot selection + scaffolding; this is
+ // just the script list + editor for one bot. Writes through to disk.
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
@@ -28,12 +28,12 @@
 
   $effect(() => { botId; sel = null; content = ""; dirty = false; load(); });
 
-  // Generation counters (round 21 FE #3 — mirror SkillsPane R16/R17):
-  // discard stale list / read responses when bot or selection has moved
-  // since the call started. Otherwise: switch bot A → B, A's slower
-  // BotWorkflowsList response lands second, overwrites `wfs` with A's
-  // list while B is shown; user clicks first → reads A's content into
-  // B's editor; "保存" writes A's content under A. Same race for select().
+ // Generation counters:
+ // discard stale list / read responses when bot or selection has moved
+ // since the call started. Otherwise: switch bot A → B, A's slower
+ // BotWorkflowsList response lands second, overwrites `wfs` with A's
+ // list while B is shown; user clicks first → reads A's content into
+ // B's editor; "保存" writes A's content under A. Same race for select.
   let loadGen = 0;
   let selectGen = 0;
 

@@ -165,7 +165,7 @@ type Resolved struct {
 	// Set as the agent's config root to ISOLATE it from the operator's ~/.claude
 	// (user-scope skills + installed plugins would otherwise leak into every
 	// bot). Empty when agent.inheritUserConfig is set. The bot's own skills /
-	// workflows live under it (.claude/skills, .claude/workflows) and are
+	// workflows live under it (.claude/skills,.claude/workflows) and are
 	// auto-discovered by the claude CLI as user-scope assets — no per-turn
 	// sandbox symlinking needed.
 	ClaudeConfigDir string
@@ -212,10 +212,10 @@ func Load(path string) ([]Resolved, error) {
 }
 
 // readFile parses a config.json, returning a zero File if it doesn't exist.
-// Round 20 H1: routes through safepath.SafeRead so an agent (Bash + bypass)
-// that plants `~/.xclaw/config.json → /attacker-controlled.json` cannot
-// redirect the operator-trusted bot roster (URLs, ports, agent dirs,
-// on-behalf-of grantors) at next daemon restart.
+// Routes through safepath.SafeRead so an agent (Bash + bypass) that plants
+// `~/.xclaw/config.json → /attacker-controlled.json` cannot redirect the
+// operator-trusted bot roster (URLs, ports, agent dirs, on-behalf-of
+// grantors) at next daemon restart.
 func readFile(path string) (File, error) {
 	dir := filepath.Dir(path)
 	leaf := filepath.Base(path)
@@ -395,11 +395,11 @@ func mergeCtx(dst *ContextConfig, src *ContextConfig) {
 // dir: SOUL.md (identity/persona) followed by AGENTS.md (behavior norms). Each
 // is trimmed; missing/empty files are skipped. Returns "" if neither exists.
 //
-// Round 19/20 Sec H1: routes through safepath.SafeRead so an agent (Bash +
-// bypass) that plants `~/.xclaw/<id>/SOUL.md → /Users/victim/.aws/credentials`
-// cannot redirect the trusted-prompt source. The bytes from the symlink
-// target would otherwise have been injected verbatim as TrustedText into
-// every system prompt, leaking the file contents on next reply.
+// Routes through safepath.SafeRead so an agent (Bash + bypass) that
+// plants `~/.xclaw/<id>/SOUL.md → /Users/victim/.aws/credentials` cannot
+// redirect the trusted-prompt source. The bytes from the symlink target
+// would otherwise have been injected verbatim as TrustedText into every
+// system prompt, leaking the file contents on next reply.
 func soul(botRoot string) string {
 	var parts []string
 	for _, name := range []string{"SOUL.md", "AGENTS.md"} {
@@ -472,8 +472,8 @@ func isPathInside(child, parent string) bool {
 // entry.
 //
 //	ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
-//	OCTO_BOT_TOKEN     / OCTO_API_BASE_URL
-//	CLAUDE_CONFIG_DIR  (suppressed by agent.inheritUserConfig)
+//	OCTO_BOT_TOKEN / OCTO_API_BASE_URL
+//	CLAUDE_CONFIG_DIR (suppressed by agent.inheritUserConfig)
 //
 // Security note: the token is handed to the spawned `claude` child as an
 // environment variable. On Linux that makes it readable from

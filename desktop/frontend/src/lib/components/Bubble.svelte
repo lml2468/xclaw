@@ -18,11 +18,11 @@
     clearTimeout(copyTimer);
     copyTimer = setTimeout(() => (copied = false), 1200);
   }
-  // Clear the copy-confirmation timer on unmount. Without this, switching
-  // sessions / resetting the transcript within the 1200 ms window
-  // unmounts the Bubble but the setTimeout still fires, writing to a
-  // detached component's reactive state and pinning the (now-detached)
-  // closure in memory until the timer expires. Latent reactive-write leak.
+ // Clear the copy-confirmation timer on unmount. Without this, switching
+ // sessions / resetting the transcript within the 1200 ms window
+ // unmounts the Bubble but the setTimeout still fires, writing to a
+ // detached component's reactive state and pinning the (now-detached)
+ // closure in memory until the timer expires. Latent reactive-write leak.
   $effect(() => () => clearTimeout(copyTimer));
 </script>
 
@@ -39,22 +39,22 @@
       class="bubble"
       class:user={isUser}
       oncontextmenu={(e) => {
-        // Hijack right-click ONLY when the user clicked outside any
-        // interactive child (link, image, code block, table, form
-        // control, …). A bare `e.preventDefault()` on the bubble was
-        // stealing native context menus on agent-rendered links,
-        // leaving no way to "open in new tab" or "copy link address"
-        // (round 15 FE #2).
-        //
-        // Round 17 FE #1: dropped UL/OL/LI/BLOCKQUOTE/H1-6 from the
-        // bail-list — those elements are not interactive and have no
-        // native context-menu value worth preserving, so including them
-        // disabled copy-on-right-click for nearly every agent reply
-        // (which almost always contains lists/headings). Round 17 also
-        // added FORM since an agent-emitted form's submit could navigate
-        // the host page on a stray Enter — though markdown.ts now
-        // FORBID_TAGS the whole form-control family anyway as the
-        // primary defense.
+ // Hijack right-click ONLY when the user clicked outside any
+ // interactive child (link, image, code block, table, form
+ // control, …). A bare `e.preventDefault` on the bubble was
+ // stealing native context menus on agent-rendered links,
+ // leaving no way to "open in new tab" or "copy link address"
+ //.
+ //
+ // dropped UL/OL/LI/BLOCKQUOTE/H1-6 from the
+ // bail-list — those elements are not interactive and have no
+ // native context-menu value worth preserving, so including them
+ // disabled copy-on-right-click for nearly every agent reply
+ // (which almost always contains lists/headings). also
+ // added FORM since an agent-emitted form's submit could navigate
+ // the host page on a stray Enter — though markdown.ts now
+ // FORBID_TAGS the whole form-control family anyway as the
+ // primary defense.
         const t = e.target as HTMLElement | null;
         const limit = e.currentTarget as HTMLElement;
         const BAIL = /^(A|IMG|CODE|PRE|BUTTON|TABLE|TD|TH|SVG|DETAILS|SUMMARY|INPUT|SELECT|TEXTAREA|LABEL|FORM)$/;
@@ -67,9 +67,9 @@
       role="article"
     >
       {#if copied}<span class="copied" aria-live="polite">已复制</span>{/if}
-      <!-- Visible focusable copy button — keyboard users tab here, sighted
+ <!-- Visible focusable copy button — keyboard users tab here, sighted
            users see it on hover. Right-click still works for muscle memory.
-           Round 13 frontend #4: replaces the prior `tabindex` on the bubble,
+           replaces the prior `tabindex` on the bubble,
            which screen-readers announced as "article" with no actionable
            cue. Hidden until hover or focus to keep the chat surface clean. -->
       <button
@@ -125,9 +125,9 @@
     border-radius: 5px; cursor: pointer;
     color: var(--ink-soft);
     background: color-mix(in srgb, var(--ink) 8%, transparent);
-    /* When hidden, pass clicks through to the markdown underneath — a link
+ /* When hidden, pass clicks through to the markdown underneath — a link
        in the top-right corner of a long reply would otherwise be hijacked
-       by the invisible button (round 14 frontend #1). Restored on hover /
+       by the invisible button. Restored on hover /
        keyboard focus so the button stays clickable when visible. */
     opacity: 0; pointer-events: none;
     transition: opacity .14s ease, background .14s ease;
@@ -163,7 +163,7 @@
   }
   .tool .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 
-  /* Markdown */
+ /* Markdown */
   .md :global(p) { margin: 0 0 7px; }
   .md :global(p:last-child) { margin-bottom: 0; }
   .md :global(code) { font-family: var(--mono); font-size: 0.88em; }
@@ -171,5 +171,5 @@
   .md :global(a) { color: var(--accent-strong); }
   .md :global(ul), .md :global(ol) { margin: 0 0 7px; padding-left: 20px; }
   .md :global(blockquote) { margin: 0 0 7px; padding-left: 11px; border-left: 3px solid var(--hairline-strong); color: var(--ink-soft); }
-  /* Code-block + syntax-token rules are shared via lib/styles/markdown.css. */
+ /* Code-block + syntax-token rules are shared via lib/styles/markdown.css. */
 </style>

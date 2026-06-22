@@ -6,8 +6,8 @@
 // future runs compare.
 //
 // Run:
-//   (term 1) cd desktop/frontend && npm run dev
-//   (term 2) cd desktop/frontend && node tests/modals.spec.mjs
+// (term 1) cd desktop/frontend && npm run dev
+// (term 2) cd desktop/frontend && node tests/modals.spec.mjs
 
 import { chromium } from "playwright-core";
 import { mkdir } from "node:fs/promises";
@@ -55,7 +55,7 @@ async function testSettings(tab, expectedTabLabel) {
   const closeBtn = page.locator('header > button.x[aria-label="关闭"]');
   check((await closeBtn.count()) === 1, `settings(${tab}): header ✕ close button present`);
 
-  // Bot rail present + at least one bot row (preview seeds 2).
+ // Bot rail present + at least one bot row (preview seeds 2).
   const railRows = await page.locator("aside.rail button.botrow").count();
   check(railRows >= 1, `settings(${tab}): bot rail has ${railRows} bot(s)`);
 
@@ -88,7 +88,7 @@ console.log("\n--- settings: 删除此 Bot 确认 ---");
   await page.waitForTimeout(80);
   check(!(await confirmDlg.isVisible()), "settings: Esc dismisses confirm");
   check(await page.locator('div[role="dialog"][aria-label="设置"]').isVisible(), "settings: modal stays open after confirm Esc");
-  // Re-open + screenshot for the baseline.
+ // Re-open + screenshot for the baseline.
   await page.click("button.remove");
   await confirmDlg.waitFor({ state: "visible" });
   await page.screenshot({ path: join(BASELINE, "settings-confirm.png") });

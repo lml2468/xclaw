@@ -11,10 +11,10 @@
 
   const session = $derived(store.currentSession);
   const messages = $derived(session?.messages ?? []);
-  // Bump on new messages and on turn-state transitions (working spinner
-  // appearing/disappearing). Replies arrive as whole-text pushes today, so
-  // the array's length is the granularity that matters; if a streaming
-  // text path is added later, mix in the last message's text length here.
+ // Bump on new messages and on turn-state transitions (working spinner
+ // appearing/disappearing). Replies arrive as whole-text pushes today, so
+ // the array's length is the granularity that matters; if a streaming
+ // text path is added later, mix in the last message's text length here.
   const tick = $derived(messages.length + (session?.awaiting ? 1 : 0));
 
   function onScroll() {
@@ -24,9 +24,9 @@
   $effect(() => {
     tick;
     if (!atBottom || !scroller) return;
-    // Cancel any prior queued frame so a burst of new messages collapses
-    // to one scroll (round 12 F8); the cleanup also unpins the closure
-    // when the component is destroyed mid-frame.
+ // Cancel any prior queued frame so a burst of new messages collapses
+ // to one scroll; the cleanup also unpins the closure
+ // when the component is destroyed mid-frame.
     const id = requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
     return () => cancelAnimationFrame(id);
   });
@@ -54,7 +54,7 @@
         <Bubble message={m} />
       {/each}
       {#if session?.awaiting}
-        <!-- The answer streams into the status box (process), not here. The chat
+ <!-- The answer streams into the status box (process), not here. The chat
              shows a working indicator until the final answer lands at turn end. -->
         <div class="row">
           <Avatar octopus size={36} />

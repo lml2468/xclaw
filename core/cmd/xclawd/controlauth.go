@@ -10,12 +10,12 @@ import (
 )
 
 // privilegedControlCommands are the operator-only control-bus commands gated
-// behind the GUI capability token (MLT-37). Each is a GUI→daemon operation with
+// behind the GUI capability token. Each is a GUI→daemon operation with
 // no sanctioned agent path — scheduling prompts that fire as the owner
 // (cron.*, a prompt-injection-into-future-turns persistence primitive), pushing
 // secrets (secret.inject), injecting/clearing sessions (session.send,
 // session.reset), and reading stored data across sessions/bots (session.history,
-// cron.list). The peer-credential gate (MLT-29) already blocks any cross-uid
+// cron.list). The peer-credential gate already blocks any cross-uid
 // process; this token draws the boundary the peer-cred check cannot — the
 // operator's GUI (which holds the token) vs. the spawned agent's CLI, which runs
 // as the same uid as the daemon.
@@ -62,11 +62,11 @@ const maxTokenBytes = 4096
 // agent does not inherit fd 0. The token is read once at startup into memory.
 //
 // Fail closed:
-//   - authStdin false (bare CLI/dev, no launcher token): the gate arms with an
-//     empty token, so no connection can authenticate and every privileged command
-//     is denied. Read-only commands still work.
-//   - authStdin true but the read fails or yields an empty token: abort. A
-//     launcher that asked for the gate must never silently fall back to open.
+// - authStdin false (bare CLI/dev, no launcher token): the gate arms with an
+// empty token, so no connection can authenticate and every privileged command
+// is denied. Read-only commands still work.
+// - authStdin true but the read fails or yields an empty token: abort. A
+// launcher that asked for the gate must never silently fall back to open.
 func configureBusAuth(srv *control.Server, authStdin bool) {
 	token := ""
 	if authStdin {

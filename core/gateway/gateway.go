@@ -246,8 +246,8 @@ func kindFor(ct router.ChannelType) sandbox.Kind {
 //
 // Friendly drop replies (ported from cc-channel session-router.ts) are emitted
 // here, through the Sink, so every caller benefits without re-implementing them:
-//   - DroppedTooLong → "消息过长，请缩短后重试"
-//   - RateLimited    → "请稍后再试" (deduped per rate-limit window; see router)
+// - DroppedTooLong → "消息过长，请缩短后重试"
+// - RateLimited → "请稍后再试" (deduped per rate-limit window; see router)
 //
 // DroppedNotMentioned / DroppedUnroutable stay silent (legitimate group chatter
 // or an unroutable payload — no user-facing reply).
@@ -296,7 +296,7 @@ const (
 var errDispatchTimeout = errors.New("dispatch idle timeout")
 
 // idleGuard wraps the per-turn idle deadline plumbing. Reset on every event;
-// expired() reports whether OUR timer fired (vs a parent cancellation). When
+// expired reports whether OUR timer fired (vs a parent cancellation). When
 // the timeout is <=0 every method is a no-op so callers stay branch-free.
 type idleGuard struct {
 	timeout time.Duration
@@ -312,9 +312,9 @@ func newIdleGuard(parent context.Context, timeout time.Duration) (context.Contex
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	g := &idleGuard{timeout: timeout, cancel: cancel}
-	// time.AfterFunc fires once after the idle window; reset() Resets it. The
+	// time.AfterFunc fires once after the idle window; reset Resets it. The
 	// closure captures `cancel` so an expiry tags the cancellation with our
-	// sentinel, letting expired() tell our own timeout apart from a parent
+	// sentinel, letting expired tell our own timeout apart from a parent
 	// cancellation (M9).
 	g.timer = time.AfterFunc(timeout, func() { cancel(errDispatchTimeout) })
 	return ctx, g
@@ -334,7 +334,7 @@ func (g *idleGuard) stop() {
 	// true). If Stop returns false the AfterFunc has already fired (or is in
 	// flight) and is about to call cancel(errDispatchTimeout); racing it with
 	// cancel(nil) here would mis-classify a fired timer as a clean stop,
-	// confusing context.Cause readers (round 12 G2). cancel(nil) after a
+	// confusing context.Cause readers. cancel(nil) after a
 	// non-nil cancel cause is a no-op, so this is safe either way — but
 	// preferring "don't race" keeps the invariant explicit.
 	if g.timer.Stop() {
@@ -566,7 +566,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		termHint = ""
 		resumeBad := false
 		// On a resume attempt the stream may turn out doomed (stale resume id). To
-		// avoid leaking a doomed attempt's events to the sink (H6) — the
+		// avoid leaking a doomed attempt's events to the sink — the
 		// ResumeInvalid signal arrives on stderr while content arrives on stdout,
 		// with no ordering guarantee between the two reader goroutines — we GATE
 		// sink emission: buffer events until the session proves valid (first
@@ -621,7 +621,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			case agent.KindTurnDone:
 				// Accumulate this turn's token usage into the bot's persistent
 				// total (best-effort: a write failure must not fail the turn).
-				// Round 16 Go #4: skip when termErr was set earlier in this
+				// skip when termErr was set earlier in this
 				// turn (the parser emits KindError before KindTurnDone for an
 				// is_error=true result, e.g. max_turns) — billing tokens +
 				// bumping the turns counter for a turn the user is told failed
@@ -654,8 +654,8 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
 		if resumeBad && resume != "" && attempt == 0 {
 			fmt.Fprintf(os.Stderr, "[gateway] stale resume id for %s; clearing and retrying fresh\n", sessionKey)
-			// Per-agent clear (round 11): self-heal only nukes THIS driver's
-			// row, not every agent's. Round 10's composite-PK promise was
+			// Per-agent clear: self-heal only nukes THIS driver's
+			// row, not every agent's. the prior composite-PK promise was
 			// that two drivers can hold concurrent resume ids; a blanket
 			// ClearResume(sessionKey) would have crossed that boundary.
 			_ = g.store.ClearResumeForAgent(sessionKey, g.driver.Name())
@@ -666,7 +666,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	}
 
 	// If the turn was cut short by the dispatch timeout (not the caller's own
-	// cancellation), apologize and release the lock. The guard's expired()
+	// cancellation), apologize and release the lock. The guard's expired
 	// returns true ONLY when our idle timer fired (its cancel cause is our
 	// sentinel) — a parent cancellation propagates the parent's cause instead,
 	// so this is unambiguous even if both fire near-simultaneously (M9).

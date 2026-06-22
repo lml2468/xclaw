@@ -1,6 +1,6 @@
 // Package workflows manages a bot's own workflow scripts. Each workflow is a
-// single .js file (an `export const meta = {…}` header plus a body using
-// agent()/parallel()/pipeline()) living under the bot's CLAUDE_CONFIG_DIR
+// single.js file (an `export const meta = {…}` header plus a body using
+// agent/parallel/pipeline) living under the bot's CLAUDE_CONFIG_DIR
 // (~/.xclaw/<id>/.claude/workflows), so the agent's Workflow tool resolves
 // them by name on every spawn — no per-turn sandbox linking. There is no
 // shared marketplace anymore: every bot owns its own workflows, period.
@@ -123,7 +123,7 @@ func writeIn(root, name, content string) error {
 
 // ensureBotWorkflowsDir creates ~/.xclaw/<botID>/.claude/workflows via the
 // dirfd-walk SafeMkdirAll so every intermediate component is symlink-
-// refused. Round 19 Sec #4: replaces the prior `os.MkdirAll(root, …)`
+// refused. replaces the prior `os.MkdirAll(root, …)`
 // in writeIn that followed any symlinked intermediate component.
 func ensureBotWorkflowsDir(botID string) error {
 	if !safepath.ValidSlug(botID) {

@@ -19,12 +19,12 @@ func writeFakeBin(t *testing.T, body string) string {
 }
 
 // TestMergedEnvAllowlistsAndOverrides exercises the env-allowlist contract:
-//   - non-allowlisted operator vars are DROPPED before the agent sees them
-//     (round-8 hardening: a prompt-injected agent shouldn't inherit
-//     AWS_*/GH_TOKEN/OPENAI_API_KEY/SSH_AUTH_SOCK from the operator's shell).
-//   - allowlisted vars pass through.
-//   - LC_* family auto-passes (locale).
-//   - `extra` is appended last so overrides win.
+// - non-allowlisted operator vars are DROPPED before the agent sees them
+// (hardening: a prompt-injected agent shouldn't inherit
+// AWS_*/GH_TOKEN/OPENAI_API_KEY/SSH_AUTH_SOCK from the operator's shell).
+// - allowlisted vars pass through.
+// - LC_* family auto-passes (locale).
+// - `extra` is appended last so overrides win.
 func TestMergedEnvAllowlistsAndOverrides(t *testing.T) {
 	// Set: one allowlisted (LANG), one LC_* family (LC_TIME), one explicitly
 	// non-allowlisted (AWS_SECRET_ACCESS_KEY — the canonical example of what
@@ -185,7 +185,7 @@ printf 'STDIN:[%s]\n' "$data" 1>&2
 }
 
 // TestAgentStdinIsPromptNotTokenPipe locks the control-bus capability-token
-// boundary at the agent hop (MLT-40, hardening follow-up from the MLT-38 review
+// boundary at the agent hop, hardening follow-up from the review
 // of PR #63). The daemon receives its cap token on fd 0 — a private pipe — but
 // the agent CLI it spawns must NEVER inherit that fd. The driver now feeds the
 // PROMPT on the child's fd 0 (`-p -`) via a private strings.Reader, so the

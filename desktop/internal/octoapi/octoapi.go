@@ -5,11 +5,11 @@
 // /newbot) and paste it in.
 //
 // One server call:
-//   - create: POST {apiURL}/v1/user/bots, authenticated with the uk_ key as
-//     Authorization: Bearer uk_…, body {name, username?} → {robot_id,
-//     bot_token:"bf_…"}. This is octo-server's existing user-bot endpoint
-//     (modules/botfather/api_user.go createUserBot); the response is a direct
-//     JSON object (no envelope).
+// - create: POST {apiURL}/v1/user/bots, authenticated with the uk_ key as
+// Authorization: Bearer uk_…, body {name, username?} → {robot_id,
+// bot_token:"bf_…"}. This is octo-server's existing user-bot endpoint
+// (modules/botfather/api_user.go createUserBot); the response is a direct
+// JSON object (no envelope).
 //
 // The uk_ key authenticates the operator; it stays in process memory and is
 // never logged.
@@ -34,13 +34,13 @@ import (
 // ValidRobotID is the strictest character class we can put on a value that's
 // about to flow into argv. octo-cli accepts robot ids that are short alnum
 // tokens (e.g. "1234567890ab"); we additionally refuse:
-//   - leading `-` so a hostile / MITM'd server can't slip a flag-shaped
-//     string into `--bot-id <robotID>` (round 15 H2);
-//   - leading `.` so values like "." / ".." / ".config" can't address a
-//     hidden file or the parent directory inside any future octo-cli
-//     "profile dir per bot" storage scheme (round 17 H2). The exact
-//     literals "." and ".." would also have been accepted by the prior
-//     `[A-Za-z0-9._][A-Za-z0-9._-]{0,127}` class.
+// - leading `-` so a hostile / MITM'd server can't slip a flag-shaped
+// string into `--bot-id <robotID>`;
+// - leading `.` so values like "." / ".." / ".config" can't address a
+// hidden file or the parent directory inside any future octo-cli
+// "profile dir per bot" storage scheme. The exact
+// literals "." and ".." would also have been accepted by the prior
+// `[A-Za-z0-9._][A-Za-z0-9._-]{0,127}` class.
 //
 // The bot_token returned alongside is also bf_-prefix-checked.
 var ValidRobotID = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
@@ -89,7 +89,7 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 		return BotResult{}, fmt.Errorf("请填写 Bot 名称")
 	}
 
-	// Round 14 Sec M2: the wizard's apiURL is operator-typed but can be
+	// the wizard's apiURL is operator-typed but can be
 	// social-engineered ("paste this URL"). IsAllowedURL only validates IP
 	// literals, so a hostname like "imds.attacker.tld" that resolves to
 	// 169.254.169.254 (cloud metadata) sails through and our uk_ bearer
@@ -161,7 +161,7 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 	// could try to slip a flag-shaped string ("-config=/tmp/x", "-h", …)
 	// that octo-cli's flag parser would consume as a flag for the previous
 	// arg or for the command itself. Refuse anything that isn't a clean
-	// slug (round 15 Sec H2). bot_token is validated structurally too —
+	// slug. bot_token is validated structurally too —
 	// it must start with the bf_ prefix; otherwise something is wrong on
 	// the server side and we'd persist a useless token.
 	if !ValidRobotID.MatchString(out.RobotID) {

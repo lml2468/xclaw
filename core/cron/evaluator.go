@@ -9,11 +9,11 @@
 // This file is the evaluator: pure schedule math, no I/O (port of
 // cron-evaluator.ts). Two schedule forms are supported:
 //
-//   - 5-field cron "minute hour dom month dow" — each field is `*`, an integer,
-//     `*`+`/step`, an `a-b` range, or a comma list of those. Standard Unix
-//     semantics: dom/dow are OR'd when BOTH are restricted (fires when either
-//     matches), matching cron's historical behavior.
-//   - one-shot ISO datetime "2026-06-09T09:00:00Z" — fires once, then never.
+// - 5-field cron "minute hour dom month dow" — each field is `*`, an integer,
+// `*`+`/step`, an `a-b` range, or a comma list of those. Standard Unix
+// semantics: dom/dow are OR'd when BOTH are restricted (fires when either
+// matches), matching cron's historical behavior.
+// - one-shot ISO datetime "2026-06-09T09:00:00Z" — fires once, then never.
 //
 // TIMEZONE: cron fields match against the injected clock's LOCAL time, so
 // "0 9 * * *" means 9am in the server's timezone. One-shot ISO datetimes are
@@ -241,8 +241,8 @@ const maxScanMinutes = 366 * 24 * 60
 // when there is none (a past/invalid one-shot, or an impossible cron). Mirrors
 // computeNextRun in cron-evaluator.ts.
 //
-//   - one-shot ISO: its instant if still in the future, else none.
-//   - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
+// - one-shot ISO: its instant if still in the future, else none.
+// - cron: scan minute-by-minute from the next whole minute, up to ~366 days.
 func computeNextRun(schedule string, from time.Time) (time.Time, bool) {
 	return computeNextRunSkipping(schedule, from, "")
 }

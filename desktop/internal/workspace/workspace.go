@@ -7,7 +7,7 @@
 //
 // Everything here is read-only and defensive: bot IDs are slug-validated,
 // per-file paths are containment-checked (mirroring internal/skills),
-// symlinks are never followed (round 14 G #3 added an O_NOFOLLOW open
+// symlinks are never followed (G #3 added an O_NOFOLLOW open
 // for the final component on Unix), and the walk is bounded in depth,
 // entry count, and file size.
 package workspace
@@ -24,8 +24,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/lml2468/xclaw/core/sandbox"
 	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/xclaw/core/sandbox"
 )
 
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or
@@ -41,7 +41,7 @@ const (
 	maxBinaryBytes = 8 << 20 // 8 MiB
 )
 
-// Dir is ~/.xclaw (the install root), matching configstore.Dir().
+// Dir is ~/.xclaw (the install root), matching configstore.Dir.
 func Dir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".xclaw")
@@ -129,7 +129,7 @@ func readDir(root, rel string, depth int, count *int) ([]*Node, error) {
 
 	// Initialize as an empty (non-nil) slice so JSON marshals an EMPTY but
 	// readable directory as `[]` instead of `null`. The frontend uses null to
-	// mean "not expandable" (depth-cap / .claude / symlink leaf); without
+	// mean "not expandable" (depth-cap /.claude / symlink leaf); without
 	// this an empty dir was indistinguishable from a depth-capped one and
 	// the chevron silently disappeared.
 	nodes := []*Node{}
@@ -143,9 +143,9 @@ func readDir(root, rel string, depth int, count *int) ([]*Node, error) {
 		if !e.IsDir() && skipFile(name) {
 			continue
 		}
-		// Round 19 Arch #4: skip symlinked entries entirely instead of
+		// skip symlinked entries entirely instead of
 		// surfacing them as bogus leaves. Clicking one would invoke
-		// File() → SafeOpen → ErrSymlink ("refusing to read symlink") —
+		// File → SafeOpen → ErrSymlink ("refusing to read symlink") —
 		// click-to-error noise that no legitimate workflow produces.
 		// Matches the skills/workflows listing policy: symlinks under
 		// these agent-writable dirs are tampering signals, not content.
@@ -177,15 +177,15 @@ func readDir(root, rel string, depth int, count *int) ([]*Node, error) {
 // EvalSymlinks / O_NOFOLLOW concerns of its own.
 func File(botID, sessionKey, relPath string) (FileContent, error) {
 	var fc FileContent
-	// Refuse credential-bearing dotfiles at the door (Sec J2). A hand-crafted
+	// Refuse credential-bearing dotfiles at the door. A hand-crafted
 	// File("..../.netrc") path would otherwise bypass the tree-level filter
 	// (readDir skips listing these but the path resolver doesn't refuse them).
 	if skipFile(filepath.Base(relPath)) {
 		return fc, fmt.Errorf("path is a credential-bearing file: %q", relPath)
 	}
-	// Round 14 Sec M1: Tree() refuses to descend into skipDir entries (.aws,
-	// .ssh, .kube, …), so the user never sees them in the file picker — but
-	// File() relied only on basename matching, so a hand-crafted relPath
+	// Tree refuses to descend into skipDir entries (.aws,
+	//.ssh,.kube, …), so the user never sees them in the file picker — but
+	// File relied only on basename matching, so a hand-crafted relPath
 	// like ".aws/credentials" passed every check and read the file. Walk
 	// every path segment through skipDir to close that door too.
 	for _, seg := range strings.Split(filepath.ToSlash(relPath), "/") {
@@ -337,33 +337,33 @@ func kindOf(mime string, textual bool) string {
 // skipDir reports whether the workspace file tree should refuse to descend
 // into the named child DIRECTORY. Two reasons to skip:
 //
-//   - `.claude` — the per-bot CLI config dir. Always present, never
-//     interesting in a workspace context, and contains skill bundles +
-//     workflows that have their own UIs.
-//   - common credential-bearing dotdirs — the agent has Bash + bypass
-//     permissions and chooses its own files. If it writes `.aws/credentials`
-//     or `~/.ssh/id_rsa` under its cwd (e.g. a `cp ~/.aws/credentials .`
-//     during a research turn), the desktop file pane would expose those
-//     contents to anyone who can screenshot the GUI. This is operator
-//     self-exposure, not RCE, but a viewing pane shouldn't surface secrets
-//     by default. Operators who specifically want to inspect a `.aws/` dir
-//     can still `cat` it via the agent's tools.
+// - `.claude` — the per-bot CLI config dir. Always present, never
+// interesting in a workspace context, and contains skill bundles +
+// workflows that have their own UIs.
+// - common credential-bearing dotdirs — the agent has Bash + bypass
+// permissions and chooses its own files. If it writes `.aws/credentials`
+// or `~/.ssh/id_rsa` under its cwd (e.g. a `cp ~/.aws/credentials.`
+// during a research turn), the desktop file pane would expose those
+// contents to anyone who can screenshot the GUI. This is operator
+// self-exposure, not RCE, but a viewing pane shouldn't surface secrets
+// by default. Operators who specifically want to inspect a `.aws/` dir
+// can still `cat` it via the agent's tools.
 //
-// File() also walks every path segment of a hand-crafted relPath through
-// this list (round 14 Sec M1), so a request for `.aws/credentials` is
-// refused even though Tree() never lists the parent.
+// File also walks every path segment of a hand-crafted relPath through
+// this list, so a request for `.aws/credentials` is
+// refused even though Tree never lists the parent.
 //
 // Comparison is case-INSENSITIVE — macOS APFS-default and Windows NTFS
 // resolve `.AWS/` to `.aws/` on read but `os.ReadDir` returns the on-disk
 // casing verbatim, so a case-sensitive switch would silently leak
-// `cp ~/.aws .AWS` (round 11 Sec). Use skipFile for credential-bearing
-// FILES (round 10 Sec J2).
+// `cp ~/.aws.AWS` (Sec). Use skipFile for credential-bearing
+// FILES.
 func skipDir(name string) bool {
 	switch strings.ToLower(name) {
 	case ".claude",
 		// Cloud / SaaS credential stores. If the agent runs a Bash command
 		// that copies any of these into its cwd (e.g. a research turn that
-		// `cp ~/.aws/credentials .`), the desktop file pane would expose
+		// `cp ~/.aws/credentials.`), the desktop file pane would expose
 		// the credential by default. Operator self-exposure, not RCE, but
 		// the file viewer shouldn't surface secrets unless explicitly asked.
 		".aws", ".azure", ".gcloud",
@@ -381,18 +381,18 @@ func skipDir(name string) bool {
 
 // skipFile reports whether the workspace file tree should refuse to LIST
 // or READ the named file. Catches credential-bearing dotfiles that an
-// agent's bash might copy into cwd (`cp ~/.netrc .`). Consulted by both
+// agent's bash might copy into cwd (`cp ~/.netrc.`). Consulted by both
 // readDir (so they don't appear in the tree) and File (so a hand-crafted
 // path can't read them either).
 //
 // All matches are case-INSENSITIVE — macOS APFS-default and Windows NTFS
 // preserve case on read but resolve case-insensitively, so a file landing
-// as `.NETRC` or `Id_Rsa` would slip a case-sensitive list (round 11 Sec).
+// as `.NETRC` or `Id_Rsa` would slip a case-sensitive list (Sec).
 // Two match modes:
-//   - exact basename (lowercase) — for canonical names like `.netrc`,
-//     `authorized_keys`, `id_rsa` and its family
-//   - dangerous extension — for cert/key file types whose names vary
-//     widely (`server.key`, `mycert.pem`, `wallet.kdbx`)
+// - exact basename (lowercase) — for canonical names like `.netrc`,
+// `authorized_keys`, `id_rsa` and its family
+// - dangerous extension — for cert/key file types whose names vary
+// widely (`server.key`, `mycert.pem`, `wallet.kdbx`)
 func skipFile(name string) bool {
 	lc := strings.ToLower(name)
 	switch lc {

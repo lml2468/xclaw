@@ -36,7 +36,7 @@ func TestResumeRoundTrip(t *testing.T) {
 	if got, _ := s.Resume("group:123", "claude"); got != "sess-xyz" {
 		t.Fatalf("upsert (same agent) failed: got %q", got)
 	}
-	// A DIFFERENT agent's save for the same key does NOT overwrite — round-10
+	// A DIFFERENT agent's save for the same key does NOT overwrite
 	// fix: (session_key, agent) is the composite PK so Claude and Codex
 	// drivers can hold concurrent resume ids for the same logical session
 	// without one silently feeding the other a stale id.
@@ -321,10 +321,10 @@ func TestPragmasApplyPerPooledConnection(t *testing.T) {
 	}
 }
 
-// TestSaveResumeAgainstLegacySchema is the regression for round 11's
-// agent_sessions migration finding: round 10 changed the table's PRIMARY KEY
+// TestSaveResumeAgainstLegacySchema is the regression for the prior
+// agent_sessions migration finding: changed the table's PRIMARY KEY
 // from `(session_key)` to `(session_key, agent)`, but the schema declaration
-// uses CREATE TABLE IF NOT EXISTS, which is a no-op against pre-round-10
+// uses CREATE TABLE IF NOT EXISTS, which is a no-op against legacy
 // deployments. Without the separate CREATE UNIQUE INDEX, those deployments
 // would fail every SaveResume with "ON CONFLICT clause does not match any
 // PRIMARY KEY or UNIQUE constraint" and silently lose resume continuity on
@@ -337,12 +337,12 @@ func TestSaveResumeAgainstLegacySchema(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "legacy.db")
 
-	// Step 1: create a DB with the pre-round-10 schema (single-column PK).
+	// Step 1: create a DB with the legacy schema (single-column PK).
 	legacy, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("legacy open: %v", err)
 	}
-	// Drop the round-10 unique index + composite-PK table, recreate the table
+	// Drop the unique index + composite-PK table, recreate the table
 	// with the old single-column PK shape (post-CREATE TABLE IF NOT EXISTS is
 	// a no-op so we DROP first).
 	if _, err := legacy.db.Exec(`DROP INDEX IF EXISTS ux_agent_sessions_key_agent`); err != nil {
@@ -359,7 +359,7 @@ func TestSaveResumeAgainstLegacySchema(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("legacy create: %v", err)
 	}
-	// Pre-existing row from a pre-round-10 daemon run.
+	// Pre-existing row from a legacy daemon run.
 	if _, err := legacy.db.Exec(`INSERT INTO agent_sessions(session_key, agent, resume_id, updated_at) VALUES (?,?,?,?)`,
 		"dm:peer", "claude", "sess-legacy", 1); err != nil {
 		t.Fatalf("legacy seed: %v", err)
@@ -378,12 +378,12 @@ func TestSaveResumeAgainstLegacySchema(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Step 3: SaveResume must succeed. Before the round-11 fix this errored
+	// Step 3: SaveResume must succeed. Before the fix this errored
 	// with "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
 	// constraint" and the daemon silently lost resume continuity on every
 	// existing user's first post-upgrade turn.
 	if err := s.SaveResume("dm:peer", "claude", "sess-new"); err != nil {
-		t.Fatalf("SaveResume against legacy schema must succeed (regression of round-10): %v", err)
+		t.Fatalf("SaveResume against legacy schema must succeed: %v", err)
 	}
 	if got, _ := s.Resume("dm:peer", "claude"); got != "sess-new" {
 		t.Fatalf("Resume after upsert = %q, want sess-new", got)

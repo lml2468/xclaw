@@ -468,7 +468,7 @@ func TestDispatchTimeoutReleasesSessionLock(t *testing.T) {
 	}
 }
 
-// --- terminal agent error (MLT-32) ---
+// --- terminal agent error ---
 
 // TestTerminalErrorDoesNotPersistPartialOrAdvanceResume asserts that a turn
 // ending in a terminal agent error (e.g. max_turns) neither persists the partial

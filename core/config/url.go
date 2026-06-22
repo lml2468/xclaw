@@ -8,9 +8,9 @@ import (
 )
 
 // IsAllowedURL implements the SSRF policy (url-policy.ts isAllowedApiUrl):
-//   - https:// to any non-private host (private IP literals rejected)
-//   - http:// only to a loopback host (localhost / 127.0.0.0-8 / ::1)
-//   - any other scheme rejected
+// - https:// to any non-private host (private IP literals rejected)
+// - http:// only to a loopback host (localhost / 127.0.0.0-8 / ::1)
+// - any other scheme rejected
 //
 // This validates IP *literals* only — a hostname that resolves to a private or
 // metadata IP at request time is NOT caught here (no DNS resolution / rebind

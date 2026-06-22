@@ -170,7 +170,7 @@ func TestCacheRefreshOnEdit(t *testing.T) {
 	}
 }
 
-// TestPermCheckRunsBeforeCacheHotPath is the regression for the round-7 F2
+// TestPermCheckRunsBeforeCacheHotPath is the regression for the F2
 // bug: the cache hot path returned cached content when (mtime, size) matched,
 // but the world-writable defense only ran on the slow path. A `chmod 0666`
 // that doesn't touch mtime kept returning the previously-cached content
@@ -195,7 +195,7 @@ func TestPermCheckRunsBeforeCacheHotPath(t *testing.T) {
 	}
 }
 
-// TestSymlinkRefused is the regression for round-8 F2-Sec: a symlink in
+// TestSymlinkRefused is the regression fora symlink in
 // groupConfigDir whose target is 0600 would otherwise pass the
 // world-writable perm check (Stat follows the link) and silently inject
 // attacker-controlled content as [Group instructions]. The loader must

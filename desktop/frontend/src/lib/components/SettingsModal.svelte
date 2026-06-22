@@ -1,15 +1,15 @@
 <script lang="ts">
-  // Unified per-bot settings modal: a left bot list (+ 新增 Bot via wizard) and
-  // a right pane that switches through 4 tabs — 基础信息 / Octo 集成 / 技能 /
-  // 工作流. Replaces the prior 4 sibling modals (ConfigEditor / SkillsPanel /
-  // WorkflowsPanel / TokenUsage) and the SettingsHeader segmented nav that
-  // routed between them.
-  //
-  // State ownership: this modal owns the editable `bots[]` array; BasicInfoPane
-  // and OctoIntegrationPane mutate the selected entry and flip a single dirty
-  // flag, surfaced in the footer's 保存/保存并重启 (the same SaveConfig path the
-  // old ConfigEditor used). SkillsPane and WorkflowsPane write through to disk
-  // immediately and don't participate in the dirty flag.
+ // Unified per-bot settings modal: a left bot list (+ 新增 Bot via wizard) and
+ // a right pane that switches through 4 tabs — 基础信息 / Octo 集成 / 技能 /
+ // 工作流. Replaces the prior 4 sibling modals (ConfigEditor / SkillsPanel /
+ // WorkflowsPanel / TokenUsage) and the SettingsHeader segmented nav that
+ // routed between them.
+ //
+ // State ownership: this modal owns the editable `bots[]` array; BasicInfoPane
+ // and OctoIntegrationPane mutate the selected entry and flip a single dirty
+ // flag, surfaced in the footer's 保存/保存并重启 (the same SaveConfig path the
+ // old ConfigEditor used). SkillsPane and WorkflowsPane write through to disk
+ // immediately and don't participate in the dirty flag.
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
   import { store } from "../store.svelte";
@@ -30,7 +30,7 @@
 
   let bots = $state<BotConfig[]>([]);
   let sel = $state(0);
-  // svelte-ignore state_referenced_locally — `initialTab` is the one-shot seed; later changes to the prop are intentionally ignored (it's the URL/event-passed default, not a live binding).
+ // svelte-ignore state_referenced_locally — `initialTab` is the one-shot seed; later changes to the prop are intentionally ignored (it's the URL/event-passed default, not a live binding).
   let activeTab = $state<TabKey>(initialTab);
   let dirty = $state(false);
   let busy = $state(false);
@@ -40,7 +40,7 @@
 
   const current = $derived(bots[sel] ?? null);
 
-  // --- Add-bot wizard (uk → bf, falling back to a blank manual entry) ---
+ // --- Add-bot wizard (uk → bf, falling back to a blank manual entry) ---
   let wizardOpen = $state(false);
   let wizId = $state("");
   let wizApiUrl = $state("");
@@ -69,21 +69,21 @@
     }
   }
 
-  // Per-tab dirty hookup: the panes flip the shared flag whenever an editable
-  // field changes. Skills/Workflows panes don't call this — they write through.
+ // Per-tab dirty hookup: the panes flip the shared flag whenever an editable
+ // field changes. Skills/Workflows panes don't call this — they write through.
   function markDirty() { dirty = true; saved = false; }
 
-  // --- left list interactions ---
+ // --- left list interactions ---
   async function selectBot(i: number) {
     if (i === sel) return;
     if (dirty && !(await confirm({ message: "有未保存的改动,确认切换 Bot?", confirmLabel: "切换", danger: true }))) return;
     sel = i;
     dirty = false;
   }
-  // Switching tabs within the same bot keeps unsaved edits — both basic and
-  // octo edit the same bot[sel] entry, so a save still captures everything.
+ // Switching tabs within the same bot keeps unsaved edits — both basic and
+ // octo edit the same bot[sel] entry, so a save still captures everything.
 
-  // --- save ---
+ // --- save ---
   async function save(restart: boolean) {
     if (!current) return;
     error = ""; saved = false; busy = true;
@@ -102,13 +102,13 @@
     }
   }
 
-  // --- close guard ---
+ // --- close guard ---
   async function leave() {
     if (dirty && !(await confirm({ message: "有未保存的改动,确认离开?", confirmLabel: "离开" }))) return;
     onclose();
   }
 
-  // --- add bot ---
+ // --- add bot ---
   function openWizard() {
     let n = 1;
     const taken = new Set(bots.map((b) => b.id));
@@ -146,7 +146,7 @@
     }
   }
 
-  // --- delete bot (from BasicInfoPane via callback) ---
+ // --- delete bot (from BasicInfoPane via callback) ---
   async function deleteBot() {
     if (!current) return;
     const id = current.id || "(未命名)";
@@ -163,10 +163,10 @@
     { key: "workflows", label: "工作流" },
   ];
 
-  // Arrow-key tab navigation per WAI-ARIA APG tablist pattern (←/→ cycle
-  // visible tabs; Home/End jump to the ends). Pairs with the roving
-  // tabindex above (only the active tab is in the tab order; others are -1)
-  // so screen-reader keyboard users don't fall through 4 buttons with Tab.
+ // Arrow-key tab navigation per WAI-ARIA APG tablist pattern (←/→ cycle
+ // visible tabs; Home/End jump to the ends). Pairs with the roving
+ // tabindex above (only the active tab is in the tab order; others are -1)
+ // so screen-reader keyboard users don't fall through 4 buttons with Tab.
   function onTabKey(e: KeyboardEvent) {
     const cur = TABS.findIndex((t) => t.key === activeTab);
     if (cur < 0) return;
@@ -178,7 +178,7 @@
     else return;
     e.preventDefault();
     activeTab = TABS[next].key;
-    // Move focus to the newly-selected tab so the user can keep arrowing.
+ // Move focus to the newly-selected tab so the user can keep arrowing.
     queueMicrotask(() => {
       const btns = (e.currentTarget as HTMLElement | null)?.querySelectorAll<HTMLButtonElement>('button[role="tab"]');
       btns?.[next]?.focus();
@@ -187,7 +187,7 @@
 </script>
 
 <div class="scrim" onclick={leave} role="presentation">
-  <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab) -->
+ <!-- svelte-ignore a11y_click_events_have_key_events (use:modal handles Escape/Tab) -->
   <div class="modal" use:modal={{ onclose: leave }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="设置" tabindex="-1">
     <header>
       <h2>设置</h2>
@@ -244,7 +244,7 @@
     {/if}
 
     {#if wizardOpen}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
+ <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="wizscrim" onclick={() => !wizBusy && (wizardOpen = false)} role="presentation">
         <div class="wizcard" use:modal={{ onclose: () => !wizBusy && (wizardOpen = false) }} onclick={(e) => e.stopPropagation()} role="dialog" aria-label="新增 Bot" tabindex="-1">
           <div class="wizhead">

@@ -34,7 +34,7 @@ func botDir(botID string) (string, error) {
 
 // bundleRoot composes <root>/<name> as the validated per-bundle root, so the
 // user-supplied `rel` flows DIRECTLY into safepath (without sanitization)
-// and ResolveLexical correctly rejects absolute / .. paths instead of
+// and ResolveLexical correctly rejects absolute /.. paths instead of
 // silently re-rooting them under the bundle.
 func bundleRoot(root, name string) (string, error) {
 	if !safepath.ValidSlug(name) {
@@ -270,7 +270,7 @@ func BotCreate(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	// Round 19 Sec #4: the prior `os.MkdirAll(root, 0o755)` followed any
+	// the prior `os.MkdirAll(root, 0o755)` followed any
 	// symlinked intermediate component — an agent that planted
 	// `~/.xclaw/<id>/.claude → /etc` would silently get `/etc/skills`
 	// created before the SafeMkdirAll guard inside createIn could refuse.
@@ -283,7 +283,7 @@ func BotCreate(botID, name string) error {
 
 // ensureBotSkillsDir creates ~/.xclaw/<botID>/.claude/skills via the
 // dirfd-walk SafeMkdirAll so every intermediate component is symlink-refused.
-// Skipping a regular MkdirAll here closes round 19 Sec #4.
+// Skipping a regular MkdirAll here closes Sec #4.
 func ensureBotSkillsDir(botID string) error {
 	if !safepath.ValidSlug(botID) {
 		return fmt.Errorf("invalid bot id %q", botID)

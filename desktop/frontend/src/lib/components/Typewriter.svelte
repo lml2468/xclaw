@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Smoothly reveals streamed text at a steady per-frame rate so bursty deltas
-  // read as continuous typing (mirrors the Swift TypewriterText: advance a
-  // fraction of the backlog each frame, min 1 char). Used for the in-flight
-  // assistant bubble; the finalized message switches to rendered Markdown.
+ // Smoothly reveals streamed text at a steady per-frame rate so bursty deltas
+ // read as continuous typing (mirrors the Swift TypewriterText: advance a
+ // fraction of the backlog each frame, min 1 char). Used for the in-flight
+ // assistant bubble; the finalized message switches to rendered Markdown.
   let { text }: { text: string } = $props();
 
   let shown = $state(0);
@@ -16,11 +16,11 @@
     }
     if (shown > total) shown = total; // text replaced (shorter) → snap
     if (shown < text.length) {
-      // Only keep the rAF loop alive while we have characters left to reveal.
-      // Without this guard, every finalized historical bubble keeps polling
-      // requestAnimationFrame for the lifetime of the transcript — N bubbles
-      // × 60 fps × zero work each. The text-change $effect below re-arms it
-      // whenever new content arrives.
+ // Only keep the rAF loop alive while we have characters left to reveal.
+ // Without this guard, every finalized historical bubble keeps polling
+ // requestAnimationFrame for the lifetime of the transcript — N bubbles
+ // × 60 fps × zero work each. The text-change $effect below re-arms it
+ // whenever new content arrives.
       raf = requestAnimationFrame(tick);
     } else {
       raf = 0;
@@ -28,9 +28,9 @@
   }
 
   $effect(() => {
-    // Reading text.length here registers the effect's dependency on the
-    // prop so a fresh stream-delta restarts the loop. The cancel guard
-    // prevents double-scheduling while a previous tick is still pending.
+ // Reading text.length here registers the effect's dependency on the
+ // prop so a fresh stream-delta restarts the loop. The cancel guard
+ // prevents double-scheduling while a previous tick is still pending.
     void text.length;
     if (shown < text.length && raf === 0) {
       raf = requestAnimationFrame(tick);

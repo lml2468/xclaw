@@ -6,7 +6,7 @@ import (
 )
 
 // watchParentExit invokes onOrphan once the parent process dies. On Unix an
-// orphaned child is reparented to init (pid 1), so getppid() == 1 means the
+// orphaned child is reparented to init (pid 1), so getppid == 1 means the
 // launcher that spawned us (the GUI app) is gone. The GUI passes
 // -exit-with-parent so the embedded daemon never outlives the app, even on a
 // crash or force-quit where graceful shutdown (control-bus stop) never ran.

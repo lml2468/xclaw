@@ -41,7 +41,7 @@ func TestResolveLexicalRejectsEscape(t *testing.T) {
 
 // TestSafeOpenRefusesSymlink proves the dirfd-walk refuses a symlinked
 // final component AND a symlinked intermediate directory. Replaces the
-// round-15 AssertNoSymlinkEscape test (helper deleted in R18).
+// AssertNoSymlinkEscape test (helper deleted in R18).
 func TestSafeOpenRefusesSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

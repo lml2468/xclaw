@@ -70,7 +70,7 @@ func NewStore(cronJSONPath string) *Store {
 }
 
 // load parses cron.json. Returns an error on malformed JSON (loud, not silent).
-// The caller holds s.mu. Round 21 Sec H4: routes through SafeReadAbs so an
+// The caller holds s.mu. routes through SafeReadAbs so an
 // agent-planted `<dataDir>/cron.json → ~/Library/Application Support/Claude/
 // claude.json` (or any sensitive JSON) cannot exfiltrate target bytes via
 // the malformed-JSON error path (the Go json error message includes the
@@ -92,7 +92,7 @@ func (s *Store) load() ([]Task, error) {
 }
 
 // save atomically writes the task array (temp file + rename + symlink leaf
-// refusal). The caller holds s.mu. Round 21 Sec H4 / Arch H1: routed
+// refusal). The caller holds s.mu. /: routed
 // through SafeWriteAbs so an agent-planted leaf-symlink can't redirect
 // the write (the prior atomicfile.Write's os.Rename silently replaced a
 // symlink with our content under the operator uid).

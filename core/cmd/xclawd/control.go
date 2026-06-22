@@ -249,7 +249,7 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 				// Sanitize at the store boundary so a malicious FromName
 				// (control chars, bidi overrides, bracket forgery) can't
 				// later resurface as part of a future prompt rendering
-				// (round 14 Sec L2: defense in depth — the prompt path
+				// (Sec L2: defense in depth — the prompt path
 				// already sanitizes via groupctx, but the on-disk task
 				// shouldn't carry the unsafe form forward).
 				FromName: safety.SanitizeDisplayName(b.FromName, owner),
@@ -354,7 +354,7 @@ func channelTypeFor(explicit int, channelID string) int {
 }
 
 // cronTaskInfo projects a stored cron task onto the wire type (nextRun rendered
-// as RFC3339, mirroring cron-tool.ts summarize()).
+// as RFC3339, mirroring cron-tool.ts summarize).
 func cronTaskInfo(t cron.Task) control.CronTaskInfo {
 	next := ""
 	if t.NextRun != 0 {

@@ -4,6 +4,6 @@
 // dedicated pane re-injects on save). Stays the FRONTEND view of reserved-
 // ness — the daemon doesn't care which pane wrote a key.
 //
-//   OCTO_BOT_ID — Octo 集成 pane reads/writes (server-assigned robot id; the
-//                 wizard sets it from OctoAddBot).
+// OCTO_BOT_ID — Octo 集成 pane reads/writes (server-assigned robot id; the
+// wizard sets it from OctoAddBot).
 export const RESERVED_ENV_KEYS: ReadonlySet<string> = new Set(["OCTO_BOT_ID"]);

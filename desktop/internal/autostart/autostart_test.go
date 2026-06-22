@@ -48,7 +48,7 @@ func TestEnableRefusesOutsideBundle(t *testing.T) {
 		t.Skip("darwin-only")
 	}
 	// `go test` runs the test binary from a temp dir that is NOT inside a
-	// .app/Contents/MacOS layout, so Enable must refuse with the bundle-path
+	//.app/Contents/MacOS layout, so Enable must refuse with the bundle-path
 	// error — and must NOT have written a plist or run launchctl.
 	t.Setenv("HOME", t.TempDir())
 	err := Enable()

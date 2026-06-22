@@ -13,7 +13,7 @@ import (
 )
 
 // TestCronControlHandlers exercises cron.create/list/delete over the multi-bot
-// control handler. After MLT-29 the owner-gate keys off the SERVER-resolved
+// control handler. After the owner-gate keys off the SERVER-resolved
 // owner uid, never the body uid: a forged body uid does not change authorization
 // and the created task binds to the resolved owner. The Manager uses a fixed
 // clock so the schedule is deterministic.

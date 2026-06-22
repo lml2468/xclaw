@@ -96,7 +96,7 @@ func TestSettingByteBits(t *testing.T) {
 	}
 }
 
-// TestQueuedTurnsCarryOwnTarget is the regression for round-8 F1-Arch: cron and
+// TestQueuedTurnsCarryOwnTarget is the regression forcron and
 // real inbound used to share c.targets[key], so a concurrent enqueue could
 // stomp one turn's target → the other turn's reply went to the wrong channel
 // AND one reply was silently dropped. The fix attaches the target to each
@@ -131,14 +131,12 @@ func TestQueuedTurnsCarryOwnTarget(t *testing.T) {
 	c.mu.Unlock()
 }
 
-// TestEnqueueCronCarriesPersonaGrantor is the regression for the round-8
-// F1-Arch persona slice + round-10 Sec J4 simplification: cron fires from a
+// TestEnqueueCronCarriesPersonaGrantor proves that cron fires from a
 // persona-OBO bot always stamp the grantor onto the queued target so the
 // cron reply speaks `on_behalf_of` the same identity as live replies.
-// The trust boundary is cron.SetOwnerUID's foreign-CreatedBy prune (rounds
-// 9 F1 + 10 J1): any task that survives that pruning belongs to the
+// The trust boundary is cron.SetOwnerUID's foreign-CreatedBy prune: any task that survives that pruning belongs to the
 // current owner and the operator-configured persona is allowed to speak
-// for it. Round 10 dropped the `taskCreatedBy == c.persona.UID` filter
+// for it. dropped the `taskCreatedBy == c.persona.UID` filter
 // here because, in production, task.CreatedBy is the bot OWNER uid (set
 // from server-resolved OwnerUID), not the persona grantor uid — so the
 // filter was effectively dead code and persona-clone cron always replied
@@ -178,8 +176,8 @@ func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 	c2.mu.Unlock()
 }
 
-// TestNoTargetMapStompUnderConcurrentEnqueue is the regression for round-9 F1:
-// round 8 kept c.targets[key] = tgt in onInbound "for the persona tests", which
+// TestNoTargetMapStompUnderConcurrentEnqueue is the regression for F1:
+// kept c.targets[key] = tgt in onInbound "for the persona tests", which
 // put the stomp race BACK — OnReply for an in-flight turn would read whichever
 // target the LAST onInbound wrote, not the one drainTurns popped. With that
 // kept-write deleted, drainTurns is the SOLE writer of c.targets and the

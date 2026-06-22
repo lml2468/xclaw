@@ -14,11 +14,11 @@ import (
 )
 
 // Crypto handshake, wire-compatible with cc-channel-octo (socket.ts):
-//   - curve25519 keypair (seed clamped exactly like curve25519-js)
-//   - DH shared secret = X25519(clientPriv, serverPub)
-//   - AES-128 key = first 16 ASCII chars of lowercase-hex MD5(base64(secret))
-//   - IV = first 16 bytes of the salt string
-//   - RECV payload = base64 text of an AES-128-CBC (PKCS7) ciphertext
+// - curve25519 keypair (seed clamped exactly like curve25519-js)
+// - DH shared secret = X25519(clientPriv, serverPub)
+// - AES-128 key = first 16 ASCII chars of lowercase-hex MD5(base64(secret))
+// - IV = first 16 bytes of the salt string
+// - RECV payload = base64 text of an AES-128-CBC (PKCS7) ciphertext
 //
 // Security note: this scheme (CBC, deterministic IV, no MAC/AEAD) is dictated by
 // the WuKongIM wire protocol and matched byte-for-byte for interop — we cannot

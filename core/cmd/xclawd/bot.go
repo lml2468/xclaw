@@ -58,7 +58,7 @@ type botRuntime struct {
 
 	// target is the per-bot control-handler target, owned for the runtime's
 	// lifetime so the embedded turnsWG is shared across all session.send
-	// goroutines for this bot (a fresh botTarget per resolve() would give
+	// goroutines for this bot (a fresh botTarget per resolve would give
 	// each goroutine its own WaitGroup and defeat the shutdown barrier).
 	target *botTarget
 
@@ -197,16 +197,15 @@ func registerFailedBot(reg *botRegistry, cfg config.Resolved, errMsg string) {
 // agent events are also broadcast to the control bus tagged with the bot id, and
 // the bot is registered for command routing + bots.list. Blocks until ctx done.
 func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *control.Server) error {
-	// Round 20 Sec H4: was `os.MkdirAll(cfg.DataDir, 0o755)` which follows
-	// symlinks at every intermediate component. An agent (Bash + bypass) in
-	// any EXISTING bot's cwd can plant `~/.xclaw/<newbotID>` as a symlink
-	// to `~/.ssh/` BEFORE the operator adds the new bot; the next daemon
-	// restart's MkdirAll silently follows it, and store.Open then creates
-	// xclaw.db/.wal/.shm under .ssh. Walk dir-by-dir via safepath so any
-	// symlinked intermediate is refused with ErrSymlink. The default layout
-	// is `<home>/.xclaw/<botID>/data` — when DataDir is under $HOME we use
-	// the dirfd walk; an operator-supplied absolute path outside $HOME
-	// falls back to bare MkdirAll (operator-trusted).
+	// SafeMkdirAllAbs walks the parent chain via dirfd, refusing any
+	// symlinked intermediate with ErrSymlink. An agent (Bash + bypass)
+	// in any existing bot's cwd could otherwise plant
+	// `~/.xclaw/<newbotID>` as a symlink to `~/.ssh/` BEFORE the operator
+	// adds the new bot; a bare MkdirAll would silently follow it, and
+	// store.Open would then create xclaw.db/.wal/.shm under .ssh. When
+	// DataDir is outside $HOME (operator-supplied absolute path)
+	// SafeMkdirAllAbs falls back to bare MkdirAll — that boundary is
+	// operator-trusted.
 	if err := safepath.SafeMkdirAllAbs(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("bot %s: mkdir data: %w", cfg.BotID, err)
 	}
@@ -303,8 +302,8 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// gates create/delete is resolved from the bot registration (owner_uid).
 	// Declared at this scope so the post-Run shutdown chain below can Wait on it,
 	// and so it can be wired into botRuntime/target BEFORE reg.add — that way
-	// the resolve() handler doesn't have to lock-free write `bot.target.cron`
-	// on every call, which raced concurrent control commands (round 15 Go #1).
+	// the resolve handler doesn't have to lock-free write `bot.target.cron`
+	// on every call, which raced concurrent control commands.
 	var cm *cron.Manager
 	if cfg.Agent.Cron {
 		cm = cron.NewManager(cron.NewStore(filepath.Join(cfg.DataDir, "cron.json")), "", nil)
@@ -316,15 +315,15 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	}
 
 	// Eager-init the per-bot control-handler target so its embedded turnsWG is
-	// pinned for runBot's shutdown barrier (round 13 F1/F2): the lazy-init in
-	// resolve() left target nil for bots that no control-bus command ever
+	// pinned for runBot's shutdown barrier: the lazy-init in
+	// resolve left target nil for bots that no control-bus command ever
 	// reached (headless-mode operator, octo+cron-only bot), which then
-	// nil-derefs on `rtBot.target.turnsWG.Wait()` in the shutdown chain. The
+	// nil-derefs on `rtBot.target.turnsWG.Wait` in the shutdown chain. The
 	// resolver still races on first call (two control commands could both see
 	// nil), which would silently split session.send goroutines across two
 	// targets — one outside the wait barrier. Setting it here ensures a single
 	// target shared by every codepath. cron is also wired in upfront so the
-	// resolve()-side per-call write was racing concurrent reads (round 15 #1).
+	// resolve-side per-call write was racing concurrent reads.
 	rtBot := &botRuntime{
 		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
 		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
@@ -341,7 +340,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	if cm != nil {
 		cm.Start()
-		// Note: NO `defer cm.Stop()` here. The explicit shutdown chain below
+		// Note: NO `defer cm.Stop` here. The explicit shutdown chain below
 		// stops the scheduler BEFORE the connector/store drain so a late tick
 		// can't enqueue work after we've waited it out. A deferred Stop would
 		// run AFTER the function returns, missing the wait.
@@ -352,7 +351,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
 	err = connector.Run(ctx)
-	// Shutdown ordering (round 9 F2 — the round-8 defer-only chain had two
+	// Shutdown ordering (F2 — the defer-only chain had two
 	// holes: tick → safeFire → EnqueueCron → enqueueTurn(add to
 	// connector.turnsWG, spawn drainTurns) → return; cm.firesWG was satisfied
 	// the instant EnqueueCron returned, even though the new drainTurns was
@@ -360,10 +359,10 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// before the function returned could spawn yet another drainTurns into
 	// the freshly-closed store):
 	//
-	//   1. Stop the cron scheduler FIRST so no fresh tick can fire.
-	//   2. Wait for any in-flight safeFire to finish (cm.Wait).
-	//   3. Wait for the connector's drainTurns + control-bus session.send.
-	//   4. THEN the deferred st.Close at the top of the function runs.
+	// 1. Stop the cron scheduler FIRST so no fresh tick can fire.
+	// 2. Wait for any in-flight safeFire to finish (cm.Wait).
+	// 3. Wait for the connector's drainTurns + control-bus session.send.
+	// 4. THEN the deferred st.Close at the top of the function runs.
 	if cm != nil {
 		cm.Stop()
 		cm.Wait()
@@ -376,7 +375,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 // fireCronTask delivers one due cron task through the full turn pipeline. It
 // enqueues a synthetic CronFire message onto the connector's per-session worker
 // so it serializes with any concurrent real inbound on the same sessionKey
-// (round 8 F1-Arch: direct gw.Handle here used to race onInbound's target
+// (direct gw.Handle here used to race onInbound's target
 // write, mis-delivering one reply and dropping the other). Best-effort: a
 // failed enqueue is logged, never propagated, so the scheduler loop survives.
 func fireCronTask(connector *octo.Connector, t cron.Task) {
@@ -419,14 +418,14 @@ func makeMultiBotHandler(ctx context.Context, reg *botRegistry, started time.Tim
 			// nil gateway/store + a populated LastError. Without this check
 			// the resolve-fallback would wire nil into a botTarget, and the
 			// first handler dereferencing `t.gateway` / `t.store` would nil-
-			// deref the whole daemon (round 14 Go HIGH). Test fixtures also
+			// deref the whole daemon. Test fixtures also
 			// carry nil gateway/store but no LastError, so they keep using
 			// the test-friendly lazy fallback below.
 			if bot.gateway == nil && bot.info().LastError != "" {
 				return nil, fmt.Errorf("bot %q failed to start: %s", botID, bot.info().LastError)
 			}
-			// runBot eager-initializes target AND cron (round 13 F1/F2 +
-			// round 15 Go #1); this fallback covers tests that build a
+			// runBot eager-initializes target AND cron (F1/F2 +
+			//); this fallback covers tests that build a
 			// minimal botRuntime by hand without going through runBot.
 			// Production never sees nil here.
 			if bot.target == nil {

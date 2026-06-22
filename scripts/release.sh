@@ -66,7 +66,7 @@ if [[ -z "${XCLAW_SIGN_IDENTITY:-}" ]]; then
       XCLAW_SIGN_IDENTITY="${identities[1]}"
       echo "▸ signing identity (auto): $XCLAW_SIGN_IDENTITY"
       ;;
-    *)
+ *)
       echo "✗ multiple Developer ID Application identities in Keychain:" >&2
       for id in "${identities[@]}"; do echo "    $id" >&2; done
       echo "  pass the one you want as XCLAW_SIGN_IDENTITY=… and re-run." >&2

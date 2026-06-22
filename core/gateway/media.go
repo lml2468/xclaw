@@ -6,14 +6,14 @@
 // WITHOUT downloading (it has no session cwd). The gateway materializes them in
 // runTurn AFTER the session cwd is resolved and BEFORE driver.Query:
 //
-//   - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.xclaw-media/ so the
-//     agent's Read tool can open them natively, and a Read hint is appended to
-//     THIS turn's prompt body (not stored history).
-//   - Small text files (<20 KiB) are inlined as base64 inside a <file_content>
-//     wrapper — base64's alphabet can't forge the closing tag, defeating the
-//     "--- file end ---" prompt-injection break-out (file-inline-wrap.ts S2).
-//   - Larger / binary files are downloaded to <cwd>/.xclaw-media/ and described
-//     with a path hint.
+// - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.xclaw-media/ so the
+// agent's Read tool can open them natively, and a Read hint is appended to
+// THIS turn's prompt body (not stored history).
+// - Small text files (<20 KiB) are inlined as base64 inside a <file_content>
+// wrapper — base64's alphabet can't forge the closing tag, defeating the
+// "--- file end ---" prompt-injection break-out (file-inline-wrap.ts S2).
+// - Larger / binary files are downloaded to <cwd>/.xclaw-media/ and described
+// with a path hint.
 //
 // SSRF: every download (and every redirect hop) is re-validated against
 // config.AssertPublicURL. The bot Authorization header is scoped per hop via the
@@ -97,18 +97,18 @@ type MediaAuth func(url string) string
 
 // mediaHTTPClient is the media downloader's transport.
 //
-//   - redirect: manual — we walk the chain ourselves so each hop is
-//     SSRF-revalidated and the Authorization header is recomputed per hop
-//     (fetchWithRedirectGuard parity).
-//   - DialControl: the actual socket address chosen by the resolver is
-//     re-checked against the private/local ranges at *dial time*. This closes the
-//     DNS-rebinding TOCTOU: AssertPublicURL resolves once for the policy check,
-//     but the transport resolves again to dial — a hostile authoritative DNS
-//     could return a public IP to the first lookup and 169.254.169.254 / a
-//     private IP to the second. Validating in Control (which runs on the exact
-//     address being connected) makes the check authoritative for the connection.
-//   - explicit Transport timeouts + per-host conn cap so a slow/hostile endpoint
-//     can't tie up connections (the ctx deadline still bounds the whole fetch).
+// - redirect: manual — we walk the chain ourselves so each hop is
+// SSRF-revalidated and the Authorization header is recomputed per hop
+// (fetchWithRedirectGuard parity).
+// - DialControl: the actual socket address chosen by the resolver is
+// re-checked against the private/local ranges at *dial time*. This closes the
+// DNS-rebinding TOCTOU: AssertPublicURL resolves once for the policy check,
+// but the transport resolves again to dial — a hostile authoritative DNS
+// could return a public IP to the first lookup and 169.254.169.254 / a
+// private IP to the second. Validating in Control (which runs on the exact
+// address being connected) makes the check authoritative for the connection.
+// - explicit Transport timeouts + per-host conn cap so a slow/hostile endpoint
+// can't tie up connections (the ctx deadline still bounds the whole fetch).
 var mediaHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -203,7 +203,7 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 			// Bound by mediaConcurrency, but honor ctx so a per-turn cancel
 			// (timeout / shutdown) releases the goroutine immediately
 			// instead of waiting on a busy slot whose holder may be slow
-			// to observe cancellation itself (round 12 G6).
+			// to observe cancellation itself.
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
@@ -270,10 +270,10 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 		return "", fmt.Errorf("unsupported image type: %s", rawType)
 	}
 
-	// Round 20 Sec F4: agent owns `cwd` (Bash + bypass) — bare MkdirAll
+	// agent owns `cwd` (Bash + bypass) — bare MkdirAll
 	// would follow an agent-planted `.xclaw-media → ~/.ssh/` and the
 	// subsequent writeCapped would land attacker-supplied IM bytes under
-	// .ssh/. safepath's dirfd walk refuses the symlinked entry. cwd
+	//.ssh/. safepath's dirfd walk refuses the symlinked entry. cwd
 	// itself is operator-trusted as the sandbox root.
 	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir media dir: %w", err)
@@ -338,7 +338,7 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	if cwd == "" {
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
-	// Round 20 Sec F4: dirfd-walk MkdirAll refuses an agent-planted
+	// dirfd-walk MkdirAll refuses an agent-planted
 	// `.xclaw-media → ~/.ssh/` redirect; same fix as the image path above.
 	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return fmt.Sprintf("[文件: %s - 下载错误: %v]", filename, err)
@@ -436,7 +436,7 @@ func (b *cancelOnCloseBody) Close() error {
 
 // writeCapped reads src into memory (capped at max bytes) and writes it via
 // safepath.SafeWriteAbs — symlink-safe (refuses a planted leaf-symlink AND
-// dirfd-walks the parent), atomic temp+rename. Round 21 H1: was bare
+// dirfd-walks the parent), atomic temp+rename. was bare
 // os.OpenFile that re-traversed the absolute path, so the prior R20
 // SafeMkdirAll on `.xclaw-media` was undone here by an agent racing a
 // symlink swap on the directory between the verified mkdir and the

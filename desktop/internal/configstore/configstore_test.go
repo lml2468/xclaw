@@ -311,7 +311,7 @@ func filepathContains(haystack, needle string) bool {
 	return false
 }
 
-// TestSaveRejectsDuplicateOctoBotID is the regression for round-4 R3: two bots
+// TestSaveRejectsDuplicateOctoBotID is the regression for R3: two bots
 // must not share an OCTO_BOT_ID. They would otherwise share an octo-cli disk
 // profile, and deleting one bot's profile would silently break the other's
 // auth on its next agent spawn.

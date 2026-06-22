@@ -7,7 +7,7 @@
     octopus = false,
   }: { name?: string; size?: number; octopus?: boolean } = $props();
 
-  // Curated, muted avatar palette (paired bg/fg) — deterministic per name.
+ // Curated, muted avatar palette (paired bg/fg) — deterministic per name.
   const palette = [
     "#3b7fe0", "#e07a3b", "#2faf73", "#a05fd6",
     "#d65f8f", "#3aa6b9", "#c79a2e", "#6b74d6",
@@ -18,10 +18,10 @@
     return Math.abs(h);
   }
   const color = $derived(palette[hash(name || "x") % palette.length]);
-  // Unicode-safe first character: `name[0]` indexes UTF-16 CODE UNITS, so
-  // for a name starting with an emoji or a surrogate-pair script
-  // (`🐙Bot`, `𠮷田` — JIS extension kanji at U+20BB7) it returns half a
-  // surrogate pair and renders mojibake. `[...str]` iterates code points.
+ // Unicode-safe first character: `name[0]` indexes UTF-16 CODE UNITS, so
+ // for a name starting with an emoji or a surrogate-pair script
+ // (`🐙Bot`, `𠮷田` — JIS extension kanji at U+20BB7) it returns half a
+ // surrogate pair and renders mojibake. `[...str]` iterates code points.
   const initial = $derived((([...name.trim()][0]) || "?").toUpperCase());
   const radius = $derived(Math.round(size * 0.09));
 </script>

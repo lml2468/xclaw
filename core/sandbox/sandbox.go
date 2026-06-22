@@ -8,8 +8,8 @@
 // channel kind — so the cwd partition can never drift from the history
 // partition:
 //
-//	DM:    sessionKey = "<spaceId>:<uid>" (or bare uid)  → dm:<key>
-//	Group: sessionKey = "<channelID>"                    → group:<key>
+//	DM: sessionKey = "<spaceId>:<uid>" (or bare uid) → dm:<key>
+//	Group: sessionKey = "<channelID>" → group:<key>
 //
 // Group sessionKey is the channel id alone, so all members of a group share one
 // sandbox (a group is a collective workspace); DM is per-user (private). The
@@ -71,14 +71,13 @@ func SessionDirName(ctx SessionCtx) string {
 // its absolute path. Idempotent — safe to call on every turn. Sandboxes are
 // persistent (no TTL reclamation).
 //
-// Round 21 Sec H2: routes through safepath.SafeMkdirAllAbs so a
-// cross-bot agent that planted a symlink at the predictable
-// <cwdBase>/<hash> path (the hash is pure-public via SessionDirName)
-// can't redirect bot-B's cwd into ~/.ssh — SafeMkdirAllAbs refuses the
-// symlinked leaf with ErrSymlink. cwdBase itself is operator-trusted;
-// SafeMkdirAllAbs walks via dirfd only when cwdBase is under $HOME and
-// falls back to bare MkdirAll for operator-supplied absolute paths
-// outside $HOME (matching the rest of the daemon).
+// Routes through safepath.SafeMkdirAllAbs so a cross-bot agent that
+// planted a symlink at the predictable <cwdBase>/<hash> path (the hash is
+// pure-public via SessionDirName) can't redirect bot-B's cwd into ~/.ssh
+// — SafeMkdirAllAbs refuses the symlinked leaf with ErrSymlink. cwdBase
+// itself is operator-trusted; SafeMkdirAllAbs walks via dirfd only when
+// cwdBase is under $HOME and falls back to bare MkdirAll for operator-
+// supplied absolute paths outside $HOME (matching the rest of the daemon).
 func ResolveSessionCwd(cwdBase string, ctx SessionCtx) (string, error) {
 	dir := filepath.Join(cwdBase, SessionDirName(ctx))
 	if err := safepath.SafeMkdirAllAbs(dir, 0o755); err != nil {

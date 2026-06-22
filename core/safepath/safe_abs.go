@@ -7,7 +7,7 @@
 // back to the bare os.* primitive so legitimate OS-level symlinks like
 // macOS /tmp → /private/tmp don't refuse on startup.
 //
-// Round 21: factored from core/cmd/xclawd/safemkdir.go + the inline copies
+// factored from core/cmd/xclawd/safemkdir.go + the inline copies
 // in octocli/autostart/configstore so the home-prefix policy + the
 // macOS /tmp carve-out + the Windows case-insensitive compare all live in
 // one place.
@@ -35,7 +35,7 @@ func randHex() string {
 // insensitive (NTFS is case-preserving but case-insensitive), and both
 // sides are normalized via filepath.Clean so a config-supplied
 // `C:/Users/X/.xclaw/...` (forward-slash JSON-friendly) matches a
-// $HOME of `C:\Users\X` (round 21 Go F1).
+// $HOME of `C:\Users\X`.
 func underHome(absPath string) (home, rel string, ok bool) {
 	h, err := os.UserHomeDir()
 	if err != nil || h == "" {
@@ -122,7 +122,7 @@ func SafeWriteAbs(absPath string, data []byte, perm os.FileMode) error {
 // SafeMkdirAllAbs creates absPath via SafeMkdirAll when under $HOME, else
 // falls back to os.MkdirAll (operator-trusted). The home-prefix policy +
 // macOS /tmp carve-out previously lived in core/cmd/xclawd/safemkdir.go;
-// promoted to safepath in round 21.
+// promoted to safepath in.
 func SafeMkdirAllAbs(absPath string, perm os.FileMode) error {
 	if home, rel, ok := underHome(absPath); ok {
 		if rel == "" || rel == "." {

@@ -49,7 +49,7 @@ type XClawService struct {
 }
 
 // maxOversizedRedials bounds consecutive ErrTooLong re-dials before escalating to
-// a full reconnect (H9). The most likely cause of an over-cap frame is the daemon
+// a full reconnect. The most likely cause of an over-cap frame is the daemon
 // itself producing a large event, which a re-dial won't fix — so don't loop on it.
 const maxOversizedRedials = 3
 
@@ -112,7 +112,7 @@ func (x *XClawService) connect() error {
 		// mean the daemon died. Re-dialing the LIVE daemon can clear a transient
 		// desync — but the likeliest cause is the daemon emitting a legitimately
 		// over-cap event, which a re-dial won't fix and would busy-loop on. So
-		// bound the re-dials (H9) and route them through the epoch guard (H8) so a
+		// bound the re-dials and route them through the epoch guard so a
 		// concurrent RestartCore can't be raced; after the cap, fall back to a full
 		// reconnect.
 		if errors.Is(err, bufio.ErrTooLong) {
@@ -197,7 +197,7 @@ func (x *XClawService) epochCurrent(e uint64) bool {
 
 // emitConnState pushes a synthetic bridge.status event to the frontend so the UI
 // can reflect the bus connection state (connected / reconnecting) instead of
-// silently freezing on its last state when the daemon drops (H9 observability).
+// silently freezing on its last state when the daemon drops.
 func (x *XClawService) emitConnState(connected bool, detail string) {
 	app := application.Get()
 	if app == nil {
@@ -391,7 +391,7 @@ func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
 func (x *XClawService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResult, error) {
 	// Bound the call so the wizard UI can't strand a request forever — the
 	// octoapi httpClient has a 30 s timeout but no caller-side ceiling
-	// (round 13 arch #7, matching the OctoCliRelogin / Logout pattern).
+	// (arch #7, matching the OctoCliRelogin / Logout pattern).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return octoapi.AddBot(ctx, apiURL, apiKey, name)

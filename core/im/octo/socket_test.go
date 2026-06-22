@@ -46,7 +46,7 @@ func TestSocketRunStopsOnContextCancel(t *testing.T) {
 		if err := c.WriteMessage(websocket.BinaryMessage, connack); err != nil {
 			return
 		}
-		// Idle: never send another frame, so the client's run() blocks in
+		// Idle: never send another frame, so the client's run blocks in
 		// ReadMessage — exactly the state the cancel path must break out of.
 		for {
 			if _, _, err := c.ReadMessage(); err != nil {
@@ -68,7 +68,7 @@ func TestSocketRunStopsOnContextCancel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- sock.run(ctx) }()
 
-	// Give run() a moment to settle into the blocking read, then cancel.
+	// Give run a moment to settle into the blocking read, then cancel.
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 

@@ -65,11 +65,11 @@ func extractThreadShortID(channelID string) string {
 // aimed. The returned (channelID, rerouted) is the channel to actually send to.
 //
 // Reroute fires only when ALL hold (mirroring actions.ts):
-//   - currentChannelID is a thread ref (bot is in a thread session), and
-//   - targetChannelID is NOT itself a thread ref (an explicit thread target
-//     always wins — never overridden), and
-//   - targetChannelID equals the parent group_no of the current thread (the
-//     bare-parent mistake). Cross-group sends are left untouched.
+// - currentChannelID is a thread ref (bot is in a thread session), and
+// - targetChannelID is NOT itself a thread ref (an explicit thread target
+// always wins — never overridden), and
+// - targetChannelID equals the parent group_no of the current thread (the
+// bare-parent mistake). Cross-group sends are left untouched.
 //
 // Any explicit thread target, or a target in a different group, passes through
 // unchanged.

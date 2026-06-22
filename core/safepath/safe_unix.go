@@ -118,7 +118,7 @@ func splitLeaf(rel string) (string, string, error) {
 // every component. The returned *os.File is guaranteed to be a regular file
 // reached without traversing any symlink. Caller MUST Close.
 //
-// Round 19 Go #2: opens with O_NONBLOCK and post-fstats to reject FIFOs,
+// opens with O_NONBLOCK and post-fstats to reject FIFOs,
 // devices, sockets — an agent with Bash in its sandbox can mkfifo a file
 // in workspace/, then a click in the file-preview pane would otherwise
 // block the desktop's Wails IPC handler forever waiting for a writer.
@@ -165,9 +165,7 @@ func SafeOpen(root, rel string) (*os.File, error) {
 
 // SafeRead is SafeOpen + ReadAll. Cap is enforced as a HARD limit: if the
 // file is larger than cap bytes, returns an error instead of silently
-// truncating (round 20 Go HIGH — round-19's LimitReader trick swallowed
-// oversize SOUL.md so the daemon shipped a half-prompt as the operator's
-// trusted identity). Pass cap = 0 to read without a cap.
+// truncating. Pass cap = 0 to read without a cap.
 func SafeRead(root, rel string, cap int64) ([]byte, error) {
 	f, err := SafeOpen(root, rel)
 	if err != nil {
@@ -191,14 +189,14 @@ func SafeRead(root, rel string, cap int64) ([]byte, error) {
 // verified (no symlinks); the leaf is written to a temp inside the verified
 // parent dirfd and renamed into place. Two structural guarantees:
 //
-//   - Path safety: openat/renameat on a dirfd never re-traverses an absolute
-//     path, so an attacker who swaps a parent to a symlink between our walk
-//     and our rename cannot redirect the write.
-//   - Symlink-leaf refusal: if the destination already exists as a symlink,
-//     the renameat WOULD silently replace it with our regular file. We
-//     fstatat the leaf first and refuse with ErrSymlink so the operator
-//     learns about the tampering instead of having the symlink quietly
-//     disappear. (Refusing also matches the SafeOpen behavior — symmetry.)
+// - Path safety: openat/renameat on a dirfd never re-traverses an absolute
+// path, so an attacker who swaps a parent to a symlink between our walk
+// and our rename cannot redirect the write.
+// - Symlink-leaf refusal: if the destination already exists as a symlink,
+// the renameat WOULD silently replace it with our regular file. We
+// fstatat the leaf first and refuse with ErrSymlink so the operator
+// learns about the tampering instead of having the symlink quietly
+// disappear. (Refusing also matches the SafeOpen behavior — symmetry.)
 func SafeWrite(root, rel string, data []byte, perm os.FileMode) error {
 	if _, err := ResolveLexical(root, rel); err != nil {
 		return err
@@ -213,7 +211,7 @@ func SafeWrite(root, rel string, data []byte, perm os.FileMode) error {
 	}
 	defer parent.Close()
 
-	// Refuse to write through a leaf symlink (round-15+ invariant). AT_SYMLINK_
+	// Refuse to write through a leaf symlink (the invariant). AT_SYMLINK_
 	// NOFOLLOW makes fstatat report the symlink itself rather than its target.
 	var st unix.Stat_t
 	if err := unix.Fstatat(int(parent.Fd()), leaf, &st, unix.AT_SYMLINK_NOFOLLOW); err == nil {

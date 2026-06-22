@@ -15,7 +15,7 @@ import (
 
 // ClaudeDriver drives Claude Code headlessly via:
 //
-//	claude -p - --output-format stream-json --verbose [--resume <id>] ...
+//	claude -p - --output-format stream-json --verbose [--resume <id>]...
 //
 // with the prompt fed on stdin, and normalizes its line-delimited JSON
 // ("stream-json") into AgentEvents. This is the concrete proof that the CLI can
@@ -29,7 +29,7 @@ type ClaudeDriver struct {
 	Bin string
 	// ExtraArgs are appended verbatim.
 	ExtraArgs []string
-	// Env are extra KEY=VALUE entries layered onto os.Environ() for the spawned
+	// Env are extra KEY=VALUE entries layered onto os.Environ for the spawned
 	// CLI (e.g. ANTHROPIC_BASE_URL, OCTO_BOT_ID, GH_TOKEN).
 	Env []string
 	// EnvFn, when set, is evaluated on every Query to build the extra env,
@@ -99,7 +99,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}
 	// Feed the prompt on stdin (matches `-p -`). This is a private in-memory
 	// reader holding ONLY the prompt — never os.Stdin, which on the daemon
-	// carries the control-bus capability token (MLT-40). os/exec copies it to the
+	// carries the control-bus capability token. os/exec copies it to the
 	// child in a goroutine and closes the pipe at EOF.
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	extraEnv := d.Env
@@ -155,7 +155,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	var sawTurnDone atomic.Bool
 
 	// emit sends an event unless the turn's context is cancelled. Selecting on
-	// ctx.Done() means an abandoned/cancelled consumer can't wedge a reader on a
+	// ctx.Done means an abandoned/cancelled consumer can't wedge a reader on a
 	// full channel (which would leak the goroutine and the claude subprocess).
 	emit := func(ev AgentEvent) {
 		select {

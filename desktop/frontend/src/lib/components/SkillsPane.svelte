@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Per-bot Skills pane: lifted from the old SkillsPanel body. The Settings
-  // modal owns bot selection + scaffolding; this is just the bundle list +
-  // file editor for one bot. Writes through to disk immediately (not part
-  // of the basic/octo "save" dirty flag).
+ // Per-bot Skills pane: lifted from the old SkillsPanel body. The Settings
+ // modal owns bot selection + scaffolding; this is just the bundle list +
+ // file editor for one bot. Writes through to disk immediately (not part
+ // of the basic/octo "save" dirty flag).
   import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
@@ -33,10 +33,10 @@
 
   $effect(() => { botId; sel = null; files = []; activeFile = null; content = ""; dirty = false; load(); });
 
-  // Generation counter discards stale list responses — switching bots
-  // quickly used to let an older BotSkillsList response clobber `skills`
-  // with the prior bot's entries (round 16 FE #2). The bot id captured
-  // at call time is also compared so a switch DURING load is robust.
+ // Generation counter discards stale list responses — switching bots
+ // quickly used to let an older BotSkillsList response clobber `skills`
+ // with the prior bot's entries. The bot id captured
+ // at call time is also compared so a switch DURING load is robust.
   let loadGen = 0;
   async function load() {
     const gen = ++loadGen;
@@ -65,11 +65,11 @@
 
   async function selectSkill(name: string) {
     sel = name; activeFile = null; content = ""; dirty = false; error = "";
-    // Generation counter (round 17 FE #2): clicking skill A → B fast,
-    // A's slower BotSkillFiles response used to land second and overwrite
-    // B's files list — then auto-openFile(first) read A's SKILL.md into
-    // B's editor, and a "保存" wrote A's content into B's file. Discard
-    // any response whose target skill is no longer selected.
+ // Generation counter: clicking skill A → B fast,
+ // A's slower BotSkillFiles response used to land second and overwrite
+ // B's files list — then auto-openFile(first) read A's SKILL.md into
+ // B's editor, and a "保存" wrote A's content into B's file. Discard
+ // any response whose target skill is no longer selected.
     const gen = ++selectGen;
     const capturedBot = botId;
     try {
@@ -87,7 +87,7 @@
   async function openFile(rel: string) {
     if (dirty && !(await confirm({ message: "放弃未保存的改动?", confirmLabel: "放弃", danger: true }))) return;
     activeFile = rel; error = "";
-    // Same generation guard for file reads (round 17 FE #2).
+ // Same generation guard for file reads.
     const gen = ++openGen;
     const capturedBot = botId, capturedSel = sel;
     try {

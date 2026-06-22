@@ -71,7 +71,7 @@ Be concise. Cite sources when asserting facts.>
 `
 
 // readFile parses config.json into the daemon's File shape (empty File if absent).
-// Round 20 H2: routes through safepath.SafeRead so an agent (Bash + bypass)
+// routes through safepath.SafeRead so an agent (Bash + bypass)
 // that plants `~/.xclaw/config.json → /attacker.json` cannot redirect the
 // operator-trusted bot roster on the next GUI load.
 func readFile() (config.File, error) {
@@ -121,7 +121,7 @@ func Load() ([]BotConfig, error) {
 }
 
 // LoadOne returns just one bot, doing exactly ONE config.json parse + ONE pair
-// of keychain reads + ONE pair of SOUL/AGENTS reads — vs Load(), which fans
+// of keychain reads + ONE pair of SOUL/AGENTS reads — vs Load, which fans
 // the keychain + file work over every bot just to satisfy a single-bot caller.
 // Returns (BotConfig{}, false, nil) when the id isn't in config.json; non-nil
 // err is reserved for genuine I/O / parse failures.
@@ -169,20 +169,20 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 }
 
 // Save writes the view model back to disk:
-//   - config.json: each bot is MERGED onto its existing entry, so per-bot
-//     overrides the editor doesn't model (rateLimit/context/groupConfigDir/
-//     onBehalfOf and the mentionFreeGroups/knownBotUids/allowedBotUids/
-//     botBlocklist gating lists, plus agent.cron/toolProgress) survive a Save;
-//     editor-owned fields are persisted only when they DIFFER from the
-//     top-level default (so the defaults keep propagating and aren't frozen
-//     into N per-bot copies), and tokens are stripped (they live in the OS
-//     keychain, never config.json);
-//   - per-bot SOUL.md / AGENTS.md and tokens to the credential store;
-//   - pruning ONLY the bots named in removedIDs — an explicit deletion list
-//     from the editor — and only when their on-disk data dir actually exists.
-//     Pruning is NEVER inferred from a set-difference: a stale editor snapshot
-//     (a second session, a hand-edit, a restart-rewrite) would otherwise look
-//     like "every other bot was removed" and irreversibly wipe their data.
+// - config.json: each bot is MERGED onto its existing entry, so per-bot
+// overrides the editor doesn't model (rateLimit/context/groupConfigDir/
+// onBehalfOf and the mentionFreeGroups/knownBotUids/allowedBotUids/
+// botBlocklist gating lists, plus agent.cron/toolProgress) survive a Save;
+// editor-owned fields are persisted only when they DIFFER from the
+// top-level default (so the defaults keep propagating and aren't frozen
+// into N per-bot copies), and tokens are stripped (they live in the OS
+// keychain, never config.json);
+// - per-bot SOUL.md / AGENTS.md and tokens to the credential store;
+// - pruning ONLY the bots named in removedIDs — an explicit deletion list
+// from the editor — and only when their on-disk data dir actually exists.
+// Pruning is NEVER inferred from a set-difference: a stale editor snapshot
+// (a second session, a hand-edit, a restart-rewrite) would otherwise look
+// like "every other bot was removed" and irreversibly wipe their data.
 //
 // config.json is written (atomically) BEFORE the per-bot side effects, so a
 // mid-way failure can't leave the index stale while bot files / keychain are
@@ -275,11 +275,11 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	// Per-bot side effects (idempotent). On failure, config.json already
 	// reflects the intended set and a retry re-applies these.
 	for _, b := range bots {
-		// Round 19 Sec #4: was `os.MkdirAll(botDir(b.ID), 0o755)` which
+		// was `os.MkdirAll(botDir(b.ID), 0o755)` which
 		// follows symlinks at every intermediate component. An agent that
 		// plants `~/.xclaw/<newbotID>` as a symlink to `~/.ssh/` BEFORE
 		// the first SaveConfig would silently get future SOUL.md writes
-		// landing under .ssh — and worse, the operator-trusted prompt
+		// landing under.ssh — and worse, the operator-trusted prompt
 		// source would thereafter be agent-controlled. SafeMkdirAll
 		// walks via dirfd, refusing symlinks at every component.
 		home, _ := os.UserHomeDir()
@@ -287,10 +287,10 @@ func Save(bots []BotConfig, removedIDs []string) error {
 			return err
 		}
 		// SOUL.md / AGENTS.md handling:
-		//   - operator supplied non-empty content   → overwrite (explicit save)
-		//   - operator left field blank             → scaffold the default
-		//     template atomically via O_CREATE|O_EXCL; no-op if a file
-		//     already exists.
+		// - operator supplied non-empty content → overwrite (explicit save)
+		// - operator left field blank → scaffold the default
+		// template atomically via O_CREATE|O_EXCL; no-op if a file
+		// already exists.
 		// The prior implementation stat'd botDir to derive `firstTime` and
 		// then overwrote SOUL.md with the template when that flag was set
 		// AND the operator's field was blank — a TOCTOU window where an
@@ -339,7 +339,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		if _, err := os.Stat(filepath.Join(botDir(id), "data")); err != nil {
 			continue // no data/ child → not an established bot dir; never RemoveAll
 		}
-		// Round 19 Sec #3: was `os.RemoveAll(botDir(id))` which descends
+		// was `os.RemoveAll(botDir(id))` which descends
 		// into symlinked subdirectories — an agent that planted
 		// `~/.xclaw/<id>/data/x → ~/Documents` would have Documents
 		// contents unlinked when the operator deleted the bot. SafeRemoveAll
@@ -369,7 +369,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 // readBotFile reads SOUL.md / AGENTS.md from a bot's dir. Routed through
 // safepath.SafeRead so a symlinked file (e.g. an agent-planted
 // `~/.xclaw/<id>/SOUL.md → ~/.aws/credentials`) is refused at open time
-// instead of having its target read back to the GUI editor (round 19 Sec #1).
+// instead of having its target read back to the GUI editor.
 func readBotFile(id, name string) string {
 	if !safepath.ValidSlug(id) {
 		return ""
@@ -382,21 +382,20 @@ func readBotFile(id, name string) string {
 }
 
 // writeOrScaffoldBotFile is the safe write path for SOUL.md / AGENTS.md:
-//   - non-empty content → atomic 0o600 overwrite via atomicfile.Write so a
-//     crash mid-write can't leave the operator-trusted prompt half-written
-//     (round 15 Go #3 — was os.WriteFile previously, the only call in this
-//     package not routed through the atomicfile helper);
-//   - empty content     → scaffold tmpl atomically via O_CREATE|O_EXCL|O_WRONLY,
-//     a no-op when the file already exists. Closes a Stat-then-write TOCTOU
-//     where an agent that planted SOUL.md between our Stat and our write
-//     would have been silently overwritten.
+// - non-empty content → atomic 0o600 overwrite via atomicfile.Write so a
+// crash mid-write can't leave the operator-trusted prompt half-written
+// ;
+// - empty content → scaffold tmpl atomically via O_CREATE|O_EXCL|O_WRONLY,
+// a no-op when the file already exists. Closes a Stat-then-write TOCTOU
+// where an agent that planted SOUL.md between our Stat and our write
+// would have been silently overwritten.
 func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	if strings.TrimSpace(content) != "" {
-		// Round 21 Arch H2: was atomicfile.Write (follows parent-chain
+		// was atomicfile.Write (follows parent-chain
 		// symlinks). Now routes through safepath: an agent-planted
 		// `~/.xclaw/<id>/SOUL.md → /etc/cron.d/x` can't redirect this
 		// write into operator-trusted system files. Same trust region
-		// as R19's SOUL/AGENTS READ path.
+		// as the prior SOUL/AGENTS READ path.
 		return safepath.SafeWriteAbs(filepath.Join(botDir(id), name), []byte(content), 0o600)
 	}
 	path := filepath.Join(botDir(id), name)
@@ -421,7 +420,7 @@ func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 // validURL delegates to the canonical SSRF policy (config.IsAllowedURL) used
 // by core/config.Load itself. The prior HasPrefix-based check accepted
 // lookalike hosts like `http://localhost.evil.com` and `http://127.0.0.1.attacker.tld`
-// — same hazard round 3 closed in desktop/internal/octoapi for the wizard's
+// — same hazard closed in desktop/internal/octoapi for the wizard's
 // POST. Two places hand-rolling the same policy is the drift we're trying to
 // stop; reuse the canonical check.
 func validURL(s string) error {

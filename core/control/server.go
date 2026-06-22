@@ -76,7 +76,7 @@ func (c *client) writeLoop() {
 }
 
 // enqueue queues a line for the client. Never blocks and never panics: sendCh is
-// never closed (close() signals via the separate done channel), so a send here
+// never closed (close signals via the separate done channel), so a send here
 // can only fill the buffer (dropped via default) or lose the select to done (the
 // client is going away) — neither sends on a closed channel.
 func (c *client) enqueue(line []byte) {

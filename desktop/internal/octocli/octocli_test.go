@@ -118,7 +118,7 @@ func TestExtractTarGz(t *testing.T) {
 }
 
 // runUpgrade points the package's HTTP seams at an httptest server and HOME at a
-// temp dir (so Dir()/BinPath() never touch the real ~/.xclaw), then runs Upgrade.
+// temp dir (so Dir/BinPath never touch the real ~/.xclaw), then runs Upgrade.
 func runUpgrade(t *testing.T, h http.HandlerFunc) (string, error) {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -201,7 +201,7 @@ func TestLoginRequiresRobotIDAndToken(t *testing.T) {
 }
 
 func TestLoginMissingBinaryErrors(t *testing.T) {
-	// Point HOME at an empty temp dir so BinPath() resolves to a path that
+	// Point HOME at an empty temp dir so BinPath resolves to a path that
 	// doesn't exist; Login must refuse with a clear error rather than spawn.
 	home := t.TempDir()
 	t.Setenv("HOME", home)

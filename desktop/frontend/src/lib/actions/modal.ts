@@ -1,12 +1,12 @@
 // Shared modal behaviour for the full-window settings panes and overlays:
-//   - Escape closes (calls opts.onclose)
-//   - marks the node aria-modal and gives it a focus target
-//   - moves focus into the dialog on mount, restores it to the opener on destroy
-//   - traps Tab focus inside the dialog (keyboard users can't tab out into the
-//     inert background)
+// - Escape closes (calls opts.onclose)
+// - marks the node aria-modal and gives it a focus target
+// - moves focus into the dialog on mount, restores it to the opener on destroy
+// - traps Tab focus inside the dialog (keyboard users can't tab out into the
+// inert background)
 //
-// Usage:  <div class="modal" use:modal={{ onclose }}> … </div>
-// window.confirm() is a no-op in the Wails webview, so closing is always routed
+// Usage: <div class="modal" use:modal={{ onclose }}> … </div>
+// window.confirm is a no-op in the Wails webview, so closing is always routed
 // through the supplied onclose (which may itself run an in-app confirm first).
 
 type ModalOpts = { onclose: () => void };
@@ -27,8 +27,8 @@ export function modal(node: HTMLElement, opts: ModalOpts) {
       return;
     }
     if (e.key === "Tab") {
-      // Trap focus: cycle within the dialog's focusable controls so Tab/Shift+Tab
-      // can't move focus into the inert background behind the modal.
+ // Trap focus: cycle within the dialog's focusable controls so Tab/Shift+Tab
+ // can't move focus into the inert background behind the modal.
       const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
         (el) => !el.hasAttribute("disabled") && el.offsetParent !== null,
       );
@@ -50,10 +50,10 @@ export function modal(node: HTMLElement, opts: ModalOpts) {
   }
   node.addEventListener("keydown", onKey);
 
-  // Focus the first natural control, else the dialog itself.
-  // queueMicrotask (was: setTimeout 40ms) so focus lands within the same
-  // turn the modal mounts — a fast Tab keypress during the 40ms window
-  // previously landed on a button behind the modal.
+ // Focus the first natural control, else the dialog itself.
+ // queueMicrotask (was: setTimeout 40ms) so focus lands within the same
+ // turn the modal mounts — a fast Tab keypress during the 40ms window
+ // previously landed on a button behind the modal.
   const focusable = node.querySelector<HTMLElement>(FOCUSABLE);
   if (focusable) {
     queueMicrotask(() => focusable.focus());

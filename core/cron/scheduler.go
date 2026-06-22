@@ -60,18 +60,18 @@ type Manager struct {
 	stopCh chan struct{}
 	onFire func(Fire)
 
-	// firesWG tracks every in-flight onFire goroutine spawned by Tick (round 7
+	// firesWG tracks every in-flight onFire goroutine spawned by Tick (
 	// switched to async dispatch so a slow turn never blocks subsequent ticks).
-	// The daemon calls Wait() before closing the store on shutdown so a
+	// The daemon calls Wait before closing the store on shutdown so a
 	// cron-fired turn isn't half-flushed when st.Close fires — same shape as
-	// connector.WaitTurns + botTarget.turnsWG (round 5 A3).
+	// connector.WaitTurns + botTarget.turnsWG.
 	firesWG sync.WaitGroup
 
 	// loopWG tracks the scheduler loop goroutine itself so Stop can
-	// synchronously wait for it to exit. Without this (round 10 finding),
-	// `Stop()` would return as soon as it closed stopCh, but the loop
-	// goroutine could still be mid-`Tick()` — and Tick is what increments
-	// firesWG. Result: cm.Stop() → cm.Wait() race window in which Wait sees
+	// synchronously wait for it to exit. Without this (finding),
+	// `Stop` would return as soon as it closed stopCh, but the loop
+	// goroutine could still be mid-`Tick` — and Tick is what increments
+	// firesWG. Result: cm.Stop → cm.Wait race window in which Wait sees
 	// firesWG=0 and returns, then the still-running Tick spawns a fire
 	// goroutine, then connector.WaitTurns sets c.closed=true, then the fire
 	// reaches enqueueTurn(closed) and SILENTLY drops the cron prompt.
@@ -79,7 +79,7 @@ type Manager struct {
 
 	// fireSync, when true, makes Tick invoke onFire on the caller goroutine
 	// instead of dispatching to a new goroutine. Tests flip this so
-	// `Tick(); checkFireCount()` works without a poll-wait. Production
+	// `Tick; checkFireCount` works without a poll-wait. Production
 	// always leaves it false so a slow turn never blocks subsequent ticks.
 	fireSync bool
 }
@@ -103,15 +103,15 @@ func (m *Manager) SetLabel(label string) { m.label = label }
 // Drops any persisted task whose CreatedBy isn't the new owner, in two
 // scenarios:
 //
-//  1. In-process owner CHANGE (non-empty prior → different non-empty new):
-//     rotation/handoff while the daemon is running. Round 9's original case.
-//  2. First-time owner resolution after RESTART (prior empty, persisted
-//     cron.json carries tasks whose CreatedBy != new owner): the operator
-//     restarted with a rotated bf_ token; the disk-loaded tasks are still
-//     authored by the prior owner and must not silently fire under the new
-//     owner. Round 10 Sec J1.
+// 1. In-process owner CHANGE (non-empty prior → different non-empty new):
+// rotation/handoff while the daemon is running. the prior original case.
+// 2. First-time owner resolution after RESTART (prior empty, persisted
+// cron.json carries tasks whose CreatedBy != new owner): the operator
+// restarted with a rotated bf_ token; the disk-loaded tasks are still
+// authored by the prior owner and must not silently fire under the new
+// owner..
 //
-// Rationale (round 9 Sec F1): an octo bot whose owner transfers — legitimate
+// Rationale: an octo bot whose owner transfers — legitimate
 // handoff OR an attacker who rotates the bf_ token and re-registers — would
 // otherwise inherit every previously scheduled prompt. Those prompts fire
 // with FromUID = old owner; for persona-OBO bots they fire `on_behalf_of`
@@ -119,9 +119,9 @@ func (m *Manager) SetLabel(label string) { m.label = label }
 // never consented.
 func (m *Manager) SetOwnerUID(uid string) {
 	// Refuse empty uid OUTRIGHT — don't even swap. An empty m.ownerUID
-	// turns cron.Create's `RequestUID == OwnerUID()` gate into
+	// turns cron.Create's `RequestUID == OwnerUID` gate into
 	// `"" == ""`, letting an unauthenticated control-bus caller create
-	// tasks under the bot's identity (round 11 Sec). The only legitimate
+	// tasks under the bot's identity (Sec). The only legitimate
 	// callers are connector.OnOwner (fires only after a successful
 	// BotRegisterResp with a non-empty server-resolved uid) and tests; both
 	// already pass non-empty values, so a "" arriving here means a
@@ -319,11 +319,11 @@ func (m *Manager) Start() {
 
 // Stop halts the scan and waits for the loop goroutine to exit. Once Stop
 // returns, the loop is guaranteed not to run another Tick (and therefore
-// not to enqueue any further onFire goroutines). Wait() then drains the
+// not to enqueue any further onFire goroutines). Wait then drains the
 // fires that DID get started. Without the loopWG.Wait here, a Tick that
 // began before Stop's close-stopCh observation would still run to
 // completion AFTER Stop returned, spawning fires that the caller's
-// subsequent Wait() couldn't see (round 10 R10-F1).
+// subsequent Wait couldn't see (R10-F1).
 func (m *Manager) Stop() {
 	m.runMu.Lock()
 	if m.timer == nil {
@@ -346,16 +346,16 @@ func (m *Manager) Wait() { m.firesWG.Wait() }
 
 // Tick performs one scan: fire due tasks, advance/drop them, persist. Exposed
 // for tests. Never panics out — a failing onFire is logged and skipped, never
-// crashing the loop. Mirrors cron-scheduler.ts tick(): a single atomic
+// crashing the loop. Mirrors cron-scheduler.ts tick: a single atomic
 // read-modify-write fires due tasks and persists the survivor set in one pass,
 // so a concurrent create/delete can't lose updates.
 func (m *Manager) Tick() {
-	// Round 17 Go #1: refuse to fire while no bot owner has been resolved
+	// refuse to fire while no bot owner has been resolved
 	// yet (connector.Run hasn't successfully registered with octo-server,
 	// or the bot is between OwnerUID rotations). The SetOwnerUID prune
 	// runs from OnOwner — between cm.Start and the first OnOwner callback
 	// there's a window where a tick could fire persisted tasks under the
-	// PRIOR owner's identity (round 9 F1 partial re-open). Holding fires
+	// PRIOR owner's identity (F1 partial re-open). Holding fires
 	// until owner is known closes that window. Tasks aren't lost: the
 	// next Tick after OwnerUID arrives fires them normally.
 	if m.OwnerUID() == "" {
@@ -443,5 +443,5 @@ func (m *Manager) safeFire(f Fire) {
 }
 
 // unixMS converts a time to Unix milliseconds (the on-disk unit, matching
-// cc-channel's Date.now()).
+// cc-channel's Date.now).
 func unixMS(t time.Time) int64 { return t.UnixNano() / int64(time.Millisecond) }

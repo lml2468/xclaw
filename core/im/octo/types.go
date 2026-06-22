@@ -283,12 +283,12 @@ func (m BotMessage) ExplicitlyMentionsBot(botUID string) bool {
 // accounting for persona-clone semantics. Mirrors openclaw inbound.ts
 // `isMentioned` (~L1701-1705):
 //
-//   - explicit @bot uid → always;
-//   - pure @AI (ais=1, no broadcast flags) → yes; @AI suppressed under a
-//     broadcast (the server rewrites @所有人 to also set ais=1);
-//   - @所有人 (humans=1) → only persona clones (a human is part of the
-//     broadcast, the clone acts for them);
-//   - grantor @-mentioned → persona clones (targets the grantor identity).
+// - explicit @bot uid → always;
+// - pure @AI (ais=1, no broadcast flags) → yes; @AI suppressed under a
+// broadcast (the server rewrites @所有人 to also set ais=1);
+// - @所有人 (humans=1) → only persona clones (a human is part of the
+// broadcast, the clone acts for them);
+// - grantor @-mentioned → persona clones (targets the grantor identity).
 //
 // For a non-clone (zero grantor) this collapses to the plain mention gate.
 func (m BotMessage) Triggers(botUID string, grantor persona.Grantor) bool {

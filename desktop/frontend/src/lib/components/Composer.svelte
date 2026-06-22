@@ -10,11 +10,11 @@
   export function setDraft(text: string) {
     draft = text;
     ta?.focus();
-    // Wait for Svelte to commit the new bind:value before measuring
-    // ta.scrollHeight — running autogrow synchronously here measured the
-    // OLD textarea content, so a long EmptyState prompt landed at 1 row
-    // until the next keystroke (round 15 FE #5). Matches the send()
-    // pattern below.
+ // Wait for Svelte to commit the new bind:value before measuring
+ // ta.scrollHeight — running autogrow synchronously here measured the
+ // OLD textarea content, so a long EmptyState prompt landed at 1 row
+ // until the next keystroke. Matches the send
+ // pattern below.
     requestAnimationFrame(autogrow);
   }
   function autogrow() {
@@ -29,26 +29,26 @@
     requestAnimationFrame(autogrow);
   }
   function onKey(e: KeyboardEvent) {
-    // Skip during IME composition (CJK Pinyin / Wubi / Kana / Hangul commit
-    // candidates with Enter, delivered as keydown with isComposing=true).
-    // Without this guard the handler swallows the commit and ships a
-    // half-typed pinyin/romaji string — every other message for Chinese,
-    // Japanese, Korean users.
+ // Skip during IME composition (CJK Pinyin / Wubi / Kana / Hangul commit
+ // candidates with Enter, delivered as keydown with isComposing=true).
+ // Without this guard the handler swallows the commit and ships a
+ // half-typed pinyin/romaji string — every other message for Chinese,
+ // Japanese, Korean users.
     if (isImeComposing(e)) return;
-    // ⌘↩ / Ctrl-↩ is the canonical "force send" — bypass the Shift-Enter
-    // newline path and send even if a newline character is present
-    // (matches Slack/Discord/Linear muscle memory; round 12 F14). Require
-    // !shiftKey too so Shift+Cmd+Enter retains the prior insert-newline
-    // behavior and doesn't silently force-send (round 13 F5).
+ // ⌘↩ / Ctrl-↩ is the canonical "force send" — bypass the Shift-Enter
+ // newline path and send even if a newline character is present
+ // (matches Slack/Discord/Linear muscle memory). Require
+ // !shiftKey too so Shift+Cmd+Enter retains the prior insert-newline
+ // behavior and doesn't silently force-send.
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
       e.preventDefault();
       send();
       return;
     }
-    // Plain Enter sends; Shift / Alt / Option-Enter insert a newline.
-    // Round 14 F #4: previously only Shift was excluded, so Alt+Enter
-    // (VS Code "quick fix" muscle memory) and Option+Enter would silently
-    // force-send a half-drafted message.
+ // Plain Enter sends; Shift / Alt / Option-Enter insert a newline.
+ // previously only Shift was excluded, so Alt+Enter
+ // (VS Code "quick fix" muscle memory) and Option+Enter would silently
+ // force-send a half-drafted message.
     if (e.key === "Enter" && !e.shiftKey && !e.altKey) { e.preventDefault(); send(); }
   }
 </script>

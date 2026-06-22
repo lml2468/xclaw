@@ -88,8 +88,8 @@ func newManager(t *testing.T, owner string, clk *frozenClock) *Manager {
 	t.Helper()
 	m := NewManager(tempStore(t), owner, clk.now)
 	// Production fires onFire on its own goroutine so a long turn doesn't
-	// block subsequent Ticks; tests need sync dispatch so `Tick();
-	// checkFireCount()` works without a poll-wait.
+	// block subsequent Ticks; tests need sync dispatch so `Tick;
+	// checkFireCount` works without a poll-wait.
 	m.fireSync = true
 	return m
 }
@@ -339,7 +339,7 @@ func TestOwnerUIDConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// TestTickDoesNotBlockOnSlowFire is the regression for the round-7 F3 bug:
+// TestTickDoesNotBlockOnSlowFire is the regression for the F3 bug:
 // Tick used to call onFire inline, so a long-running turn for one task would
 // starve subsequent ticks (the timer's channel only buffers one tick). Now
 // onFire runs on its own goroutine. With fireSync=false (production

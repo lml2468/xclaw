@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -468,8 +469,10 @@ func extractTarGz(archive []byte) ([]byte, error) {
 		}
 		// Reject any traversal segment — the archive should only contain
 		// flat or single-level paths under a well-known directory, and a
-		// `../../../` name is never something we want to honor.
-		if strings.Contains(h.Name, "..") {
+		// `../../../` name is never something we want to honor. Match
+		// real path segments (split on /), not substrings: a benign name
+		// like "foo..bar" should not trip the gate.
+		if hasTraversalSegment(h.Name) {
 			continue
 		}
 		if filepath.Base(h.Name) == binName() {
@@ -490,7 +493,7 @@ func extractZip(archive []byte) ([]byte, error) {
 		if f.FileInfo().IsDir() || f.FileInfo().Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		if strings.Contains(f.Name, "..") {
+		if hasTraversalSegment(f.Name) {
 			continue
 		}
 		if filepath.Base(f.Name) == binName() {
@@ -503,6 +506,14 @@ func extractZip(archive []byte) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("%s not found in archive", binName())
+}
+
+// hasTraversalSegment reports whether any '/'-separated segment of name
+// is exactly "..". strings.Contains(name, "..") rejected harmless names
+// like "foo..bar" and accepted nothing extra a path-segment check
+// wouldn't already catch.
+func hasTraversalSegment(name string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(name), "/"), "..")
 }
 
 // readArchiveEntry reads an archive member with a hard size cap, erroring

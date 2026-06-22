@@ -2,13 +2,12 @@
   import type { Message } from "../store.svelte";
   import { renderMarkdown, onMarkdownCopyClick } from "../markdown";
   import Avatar from "./Avatar.svelte";
-  import Typewriter from "./Typewriter.svelte";
 
   let { message }: { message: Message } = $props();
 
   const isUser = $derived(message.role === "user");
   const isTool = $derived(message.role === "tool");
-  const html = $derived(!isUser && !isTool && !message.streaming ? renderMarkdown(message.text) : "");
+  const html = $derived(!isUser && !isTool ? renderMarkdown(message.text) : "");
 
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -82,8 +81,6 @@
       </button>
       {#if isUser}
         <span class="plain">{message.text}</span>
-      {:else if message.streaming}
-        <Typewriter text={message.text} />
       {:else}
         <div class="md" onclick={onMarkdownCopyClick} role="presentation">{@html html}</div>
       {/if}

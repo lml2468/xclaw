@@ -138,10 +138,11 @@ func main() {
 		srv.SetHandler(handler)
 		configureBusAuth(srv, *authStdin) // arm the capability-token gate before serving
 		// Wait for control-bus turns to finish before defer st.Close fires.
-		// Defers are LIFO and this defer registers BEFORE serveControlBus's
-		// cleanup, so the order on shutdown is: cancel ctx → close listener
-		// (serveControlBus) → wait for in-flight session.send (here) →
-		// st.Close (the earlier defer at top of function).
+		// Defers are LIFO; the actual shutdown order is:
+		//   connector.WaitTurns (registered below)
+		//   → close control listener (serveControlBus)
+		//   → wait for in-flight session.send (target.turnsWG, here)
+		//   → cron.Wait + drv.Close + st.Close (the earlier defers)
 		defer target.turnsWG.Wait()
 		defer serveControlBus(srv, *controlSock)()
 	}

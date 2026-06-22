@@ -186,6 +186,19 @@ func (g *GroupContext) SetCursor(channelID string, lastID int64) {
 	}
 }
 
+// RewindCursor unconditionally sets the cursor — the only path that may
+// move it backward. Used by gateway.runTurn to roll back the cursor when
+// the turn aborts AFTER buildGroupPrompt has already advanced past the
+// current message (e.g. AppendUser failed). Without this the bumped
+// cursor would silently exclude the un-persisted message from every
+// subsequent [Recent group messages] delta even though every other
+// group member saw it on IM.
+func (g *GroupContext) RewindCursor(channelID string, lastID int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cursors[channelID] = lastID
+}
+
 // BuildContextSince renders the messages strictly newer than sinceID, capped by
 // the char budget (UTF-16 units), and returns the rendered RAW block plus the
 // highest id seen (the new cursor). The delta is split into two segments by

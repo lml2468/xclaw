@@ -197,7 +197,7 @@
 
     <div class="body">
       <aside class="rail">
-        {#each bots as b, i (b.id || `__draft_${i}__`)}
+        {#each bots as b, i (`${i}::${b.id || "draft"}`)}
           <button class="botrow" class:sel={i === sel} onclick={() => selectBot(i)}>
             <Avatar name={b.id || "bot"} size={26} />
             <span class="bn">{b.id || "(未命名)"}</span>

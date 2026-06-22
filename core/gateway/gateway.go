@@ -494,7 +494,9 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Persist the (original) user message.
 	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName); err != nil {
 		if hasGroupCursor {
-			g.groups.SetCursor(msg.ChannelID, preCursor)
+			// SetCursor is monotonic (refuses backward moves), so rolling
+			// back the bumped cursor needs the dedicated rewind path.
+			g.groups.RewindCursor(msg.ChannelID, preCursor)
 		}
 		return g.failTurn(sessionKey, "store.AppendUser", err)
 	}

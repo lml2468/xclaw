@@ -27,7 +27,6 @@ export interface Message {
   role: Role;
   text: string;
   ts: number;
-  streaming: boolean;
 }
 
 // ProcStep is one process item shown in the status strip: a tool call or a
@@ -240,9 +239,9 @@ class Store {
         ],
       },
       inputTokens: 1450, outputTokens: 92, cachedInputTokens: 1200, costUsd: 0.0123, lastActivity: Date.now(), messages: [
-        { id: newId(), role: "user", text: "List the files in the project root and summarize what this repo does.", ts: 0, streaming: false },
-        { id: newId(), role: "assistant", text: "It's a **Go + Svelte** monorepo:\n\n- `core/` — the `xclawd` gateway daemon\n- `desktop/` — this Wails app\n- `proto/` — the control-bus contract\n\n```go\nfunc main() {\n    app.Run()\n}\n```\n\nWant me to open the README?", ts: 0, streaming: false },
-        { id: newId(), role: "user", text: "yes, and the proto contract too", ts: 0, streaming: false },
+        { id: newId(), role: "user", text: "List the files in the project root and summarize what this repo does.", ts: 0 },
+        { id: newId(), role: "assistant", text: "It's a **Go + Svelte** monorepo:\n\n- `core/` — the `xclawd` gateway daemon\n- `desktop/` — this Wails app\n- `proto/` — the control-bus contract\n\n```go\nfunc main() {\n    app.Run()\n}\n```\n\nWant me to open the README?", ts: 0 },
+        { id: newId(), role: "user", text: "yes, and the proto contract too", ts: 0 },
       ],
     };
     this.sessions = [s];
@@ -382,7 +381,7 @@ class Store {
     if (!this.isConsole && this.selectedKey != null) return;
     const key = CONSOLE_UID;
     const s = this.ensureSession(botId, key);
-    s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000, streaming: false });
+    s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000 });
     s.awaiting = true;
     s.awaitingSince = Date.now();
     s.lastActivity = Date.now();
@@ -507,7 +506,7 @@ class Store {
  // assembled assistant text here (the same text it persists), so we use it
  // verbatim — no client-side reconstruction. Then clear the status strip.
         const final = (env.body.text ?? "").trim();
-        if (final) s.messages.push({ id: newId(), role: "assistant", text: final, ts: Date.now() / 1000, streaming: false });
+        if (final) s.messages.push({ id: newId(), role: "assistant", text: final, ts: Date.now() / 1000 });
         s.awaiting = false;
         s.proc = emptyProc();   // clear the status strip
         s.lastActivity = Date.now();
@@ -611,19 +610,32 @@ class Store {
  // matches when the server has acknowledged the message, otherwise
  // keeps the local copy.
     const persisted = rows.map((r) => ({
-      id: newId(), role: r.role as Role, text: r.content, ts: r.ts, streaming: false,
+      id: newId(), role: r.role as Role, text: r.content, ts: r.ts,
     }));
     if (s.messages.length === 0) {
       s.messages = persisted;
       return;
     }
- // use Math.floor so the local fractional-second ts
- // (send writes Date.now/1000) matches the daemon's integer-
- // truncated time.Now.Unix — the prior Math.round straddled the
- // 1-second boundary and the dedupe failed for local 1000.789 vs
- // server 1000.
-    const seen = new Set(persisted.map((m) => `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`));
-    const localOnly = s.messages.filter((m) => !seen.has(`${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`));
+ // count by (role, text, floored-ts) tuple — a Set incorrectly dedupes
+ // two distinct user messages with identical text that landed in the
+ // same wall-clock second (e.g. an operator retry "ok"/"ok"), dropping
+ // the second local copy in favor of the persisted row. Decrementing
+ // the count means each persisted occurrence matches at most ONE local
+ // copy; extra local duplicates stay visible.
+    const counts = new Map<string, number>();
+    for (const m of persisted) {
+      const k = `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const localOnly = s.messages.filter((m) => {
+      const k = `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`;
+      const n = counts.get(k) ?? 0;
+      if (n > 0) {
+        counts.set(k, n - 1);
+        return false;
+      }
+      return true;
+    });
     s.messages = persisted.concat(localOnly);
   }
 

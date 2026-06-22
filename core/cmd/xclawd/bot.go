@@ -341,18 +341,20 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		cfg: cfg, gateway: gw, store: st, secrets: sec, cron: cm,
 		target: &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, cron: cm},
 	}
-	// Same panic-safety pattern as the cm defer below: a panic from
-	// connector.Run (or anywhere between here and the explicit chain at
-	// the bottom of runBot) would otherwise skip the connector + target
-	// drain, letting in-flight drainTurns workers + control-bus
-	// session.send goroutines continue calling gw.Handle on the store
-	// AFTER defer st.Close has fired. Both Waits are idempotent
-	// (turnsWG-zero is a no-op; WaitTurns flips a flag once), so the
-	// explicit chain on the happy path remains the source of truth for
-	// ordering. LIFO ordering on panic: cm.Stop+Wait (registered last,
-	// fires first) → connector.WaitTurns + target.turnsWG.Wait → st.Close
-	// (registered first, fires last) — matches the explicit chain.
+	// Single drain defer covers both happy path and panic. Earlier code
+	// expressed the same sequence THREE times (defer for connector/target,
+	// defer for cron, and an explicit tail chain) with paragraph-long
+	// rationale. All four steps are idempotent so the defer can be the
+	// only call site:
+	//   1. cm.Stop+Wait — no fresh tick, in-flight safeFire drained
+	//   2. connector.WaitTurns — drainTurns workers done
+	//   3. target.turnsWG.Wait — control-bus session.send done
+	//   4. (defer st.Close from top of function fires last on LIFO)
 	defer func() {
+		if cm != nil {
+			cm.Stop()
+			cm.Wait()
+		}
 		connector.WaitTurns()
 		rtBot.target.turnsWG.Wait()
 	}()
@@ -368,16 +370,6 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	if cm != nil {
 		cm.Start()
-		// Defer Stop+Wait so a panic from connector.Run (or anything
-		// between Start and the explicit chain below) does not leave
-		// the scheduler ticking against a freshly-closed store: defer
-		// st.Close fires on unwind regardless, but the explicit
-		// shutdown chain at the bottom of runBot is skipped on panic.
-		// Both Stop and Wait are idempotent, so the explicit chain
-		// below can still run them on the happy path without harm
-		// (Stop short-circuits on m.timer==nil; Wait on a zero WG is
-		// a no-op).
-		defer func() { cm.Stop(); cm.Wait() }()
 		fmt.Printf("[%s] cron scheduler armed (tick %s)\n", cfg.BotID, cron.CronTickInterval)
 	}
 
@@ -385,24 +377,6 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
 
 	err = connector.Run(ctx)
-	// Shutdown ordering (F2 — the defer-only chain had two
-	// holes: tick → safeFire → EnqueueCron → enqueueTurn(add to
-	// connector.turnsWG, spawn drainTurns) → return; cm.firesWG was satisfied
-	// the instant EnqueueCron returned, even though the new drainTurns was
-	// mid-gw.Handle. Worse, a tick landing AFTER connector.WaitTurns but
-	// before the function returned could spawn yet another drainTurns into
-	// the freshly-closed store):
-	//
-	// 1. Stop the cron scheduler FIRST so no fresh tick can fire.
-	// 2. Wait for any in-flight safeFire to finish (cm.Wait).
-	// 3. Wait for the connector's drainTurns + control-bus session.send.
-	// 4. THEN the deferred st.Close at the top of the function runs.
-	if cm != nil {
-		cm.Stop()
-		cm.Wait()
-	}
-	connector.WaitTurns()
-	rtBot.target.turnsWG.Wait()
 	return err
 }
 

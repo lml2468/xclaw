@@ -25,10 +25,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/desktop/internal/safehttp"
 )
 
 // ValidRobotID is the strictest character class we can put on a value that's
@@ -108,24 +108,15 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 		Timeout: httpTimeout,
 		Transport: &http.Transport{
 			// Dial-time guard defends against DNS rebinding between the
-			// AssertPublicURL resolve above and the actual TCP connect
-			// (the resolver can return a different IP at dial time). For
+			// AssertPublicURL resolve above and the actual TCP connect (the
+			// resolver can return a different IP at dial time). For
 			// http://localhost we still allow loopback dials; for any other
-			// host we refuse private/local addresses. Mirrors octocli's
-			// dialControlGuard.
+			// host we refuse private/local addresses. Shared with octocli
+			// via safehttp.Guard.
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
-				Control: func(network, address string, _ syscall.RawConn) error {
-					host, _, err := net.SplitHostPort(address)
-					if err != nil {
-						return fmt.Errorf("octoapi dial: bad address %q: %w", address, err)
-					}
-					if !strings.HasPrefix(apiURL, "http://") && config.IsPrivateOrLocalAddress(host) {
-						return fmt.Errorf("octoapi dial: refusing private/local address %s", host)
-					}
-					return nil
-				},
+				Control:   safehttp.Guard(safehttp.Options{Tag: "octoapi", AllowLoopback: strings.HasPrefix(apiURL, "http://")}),
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
 			TLSHandshakeTimeout:   10 * time.Second,

@@ -106,9 +106,11 @@ func (s *Store) load() ([]Task, error) {
 // quarantine renames a corrupt cron.json to a timestamped sidecar so the
 // operator can recover their tasks; logs to stderr. Best-effort — if the
 // rename fails (e.g. the source already vanished) we still log and continue.
+// Routed through safepath.SafeRenameAbs so an agent-planted symlink at the
+// destination's parent can't redirect the corrupt-bytes elsewhere.
 func (s *Store) quarantine(reason error) {
 	sidecar := fmt.Sprintf("%s.corrupt.%d", s.path, time.Now().UnixNano())
-	if rerr := os.Rename(s.path, sidecar); rerr != nil {
+	if rerr := safepath.SafeRenameAbs(s.path, sidecar); rerr != nil {
 		fmt.Fprintf(os.Stderr, "cron: %s %v, resetting to empty (sidecar rename failed: %v)\n", s.path, reason, rerr)
 		return
 	}

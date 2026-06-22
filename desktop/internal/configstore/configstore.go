@@ -152,24 +152,18 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
 	}
 	// Inherit top-level env only when the per-bot agent block is absent
-	// (b.Agent == nil) — an explicit `agent: {env: {}}` is an opt-out
-	// signal that the operator wants NO inherited env, even if the
-	// resulting map is empty. The prior `len(bc.Env) == 0` check
-	// conflated those two states and silently re-inherited on every Load.
-	envInheritOK := b.Agent == nil
+	// (b.Agent == nil) OR present but env is nil (field absent in JSON).
+	// An explicit empty-but-non-nil per-bot env (`agent: {env: {}}`) is
+	// an opt-out signal that the operator wants NO inherited env.
+	envInherit := b.Agent == nil || b.Agent.Env == nil
 	if b.Agent != nil {
 		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
 		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
 		maps.Copy(bc.Env, b.Agent.Env)
-		// Treat a nil per-bot env map (field absent) as "inherit"; an
-		// empty-but-non-nil map (`env: {}`) as "explicit opt-out".
-		if b.Agent.Env == nil {
-			envInheritOK = true
-		}
 	} else {
 		bc.Model, bc.GatewayBaseURL = topModel, topGW
 	}
-	if envInheritOK && len(bc.Env) == 0 {
+	if envInherit {
 		maps.Copy(bc.Env, topEnv)
 	}
 
@@ -273,7 +267,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 
 	// Write config.json first (atomically via temp+rename) — the authoritative
 	// index the daemon reads.
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	if err := safepath.SafeMkdirAllAbs(Dir(), 0o755); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(f, "", "  ")
@@ -400,25 +394,18 @@ func readBotFile(id, name string) string {
 	return string(raw)
 }
 
-// writeOrScaffoldBotFile is the safe write path for SOUL.md / AGENTS.md:
-//   - non-empty content → atomic 0o600 overwrite via safepath.SafeWriteAbs so
-//     a crash mid-write can't leave the operator-trusted prompt half-written,
-//     AND a leaf symlink is refused with ErrSymlink instead of redirected.
-//   - empty content → no-op if the file already exists, else scaffold the
-//     default template via SafeWriteAbs (also leaf-symlink-refusing).
+// writeOrScaffoldBotFile is the safe write path for SOUL.md / AGENTS.md.
+// Non-empty content overwrites atomically via SafeWriteAbs (leaf-symlink
+// refusing). Empty content is a no-op if the file already exists, else
+// scaffolds the default template.
 func writeOrScaffoldBotFile(id, name, content, tmpl string) error {
 	path := filepath.Join(botDir(id), name)
 	if strings.TrimSpace(content) != "" {
 		return safepath.SafeWriteAbs(path, []byte(content), 0o600)
 	}
-	// Scaffold branch: only write if the file is absent. Use the bot dir
-	// directly as the safepath root — earlier code did
-	// `safepath.SafeLstat(home, TrimPrefix(path, home+sep))` which silently
-	// degraded when os.UserHomeDir returned an empty string (CI / sandboxed
-	// mac without HOME): TrimPrefix became a no-op, SafeLstat got an
-	// absolute rel, errored, and we fell through to SafeWriteAbs — bypassing
-	// the exists-check entirely. SafeLstat under botDir() avoids the
-	// round-trip and works whether or not HOME is set.
+	// SafeLstat is rooted at botDir(id) directly rather than
+	// (home, TrimPrefix(path, home+sep)) — the trimmed-relpath form
+	// silently bypassed the exists-check when HOME was unset.
 	if fi, err := safepath.SafeLstat(botDir(id), name); err == nil {
 		_ = fi // exists (regular file or symlink) — operator's prior save wins, do not touch
 		return nil

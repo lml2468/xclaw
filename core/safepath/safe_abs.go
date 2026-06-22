@@ -17,6 +17,7 @@ package safepath
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -156,4 +157,35 @@ func SafeRemoveAllAbs(absPath string) error {
 		return SafeRemoveAll(home, rel)
 	}
 	return os.RemoveAll(absPath)
+}
+
+// SafeRenameAbs renames oldPath → newPath. Both must lie in the same
+// parent directory (rename across directories is rejected — atomic
+// rename across mounts is undefined anyway). The parent chain is
+// dirfd-walked when under $HOME so an agent-planted symlink at the
+// destination's PARENT can't redirect the rename. Used by cron's
+// corrupt-sidecar quarantine to keep the destination path safepath-
+// validated even though the bytes being renamed are operator data.
+//
+// Same-mount, same-parent constraint enforced by filepath.Dir
+// equality. Across-parent rename would need a different primitive
+// (renameat2 with cross-dir support).
+func SafeRenameAbs(oldPath, newPath string) error {
+	if filepath.Dir(oldPath) != filepath.Dir(newPath) {
+		return fmt.Errorf("safepath: SafeRenameAbs requires same parent dir (have %q and %q)", oldPath, newPath)
+	}
+	if home, rel, ok := underHome(oldPath); ok {
+		// Walk the parent chain once via SafeLstat on the source so an
+		// intermediate symlink is refused with ErrSymlink before the
+		// rename runs. We then call os.Rename on the validated paths.
+		// (No primitive renameat from a dirfd in stdlib; this is the
+		// closest we can get without forking unix.Renameat ourselves.)
+		if _, err := SafeLstat(home, rel); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if _, _, ok := underHome(newPath); !ok {
+			return fmt.Errorf("safepath: SafeRenameAbs cross-region (under-home → not-under-home)")
+		}
+	}
+	return os.Rename(oldPath, newPath)
 }

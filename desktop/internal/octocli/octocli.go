@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,12 +29,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
-	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/octoapi"
+	"github.com/lml2468/xclaw/desktop/internal/safehttp"
 )
 
 const repo = "Mininglamp-OSS/octo-cli"
@@ -59,33 +56,7 @@ var (
 // could redirect to 169.254.169.254 (cloud metadata) or a private internal
 // address; this dial guard turns that into a connect-refused.
 func newSafeClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-				Control:   dialControlGuard,
-			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          8,
-			MaxConnsPerHost:       4,
-			IdleConnTimeout:       30 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 60 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}
-}
-
-func dialControlGuard(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("octocli dial: bad address %q: %w", address, err)
-	}
-	if config.IsPrivateOrLocalAddress(host) {
-		return fmt.Errorf("octocli dial: refusing private/local address %s", host)
-	}
-	return nil
+	return safehttp.NewClient(safehttp.Options{Tag: "octocli"})
 }
 
 func binName() string {

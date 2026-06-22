@@ -534,11 +534,26 @@ class Store {
  // Synthetic event from the Go bridge: the control-bus connection state.
  // Lets the UI show "reconnecting" instead of silently freezing when the
  // daemon drops, and clear it when the bus comes back.
+        const prev = this.connected;
         this.connected = !!env.body?.connected;
         if (this.connected) {
  // Daemon reachable again — drop any dismissal so a fresh failure
  // later can re-pin its banner.
           this.dismissedError = "";
+ // On reconnect after a disconnect, cancel any sessions still
+ // waiting on a turn that started before the drop — the killed
+ // daemon won't emit turnDone for those, so Composer.canSend
+ // would stay false (gated on !awaiting) until sweepStuckTurns
+ // fires at TURN_MAX_MS (22 min). Operator can re-send instead
+ // of waiting; the original message stays in transcript.
+          if (!prev) {
+            for (const s of this.sessions) {
+              if (s.awaiting) {
+                s.awaiting = false;
+                s.proc = emptyProc();
+              }
+            }
+          }
         }
         if (!this.connected && env.body?.detail) this.setError(env.body.detail);
         break;

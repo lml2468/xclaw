@@ -124,6 +124,14 @@ func (s *socketConn) writeRaw(b []byte) error {
 }
 
 func (s *socketConn) readConnack() error {
+	// Bound the CONNACK wait. The ctx-watcher goroutine that calls
+	// s.close() on cancellation is only started later in run(); without
+	// a deadline here, a peer that completes the HTTP upgrade but never
+	// sends the first frame blocks the dial forever and wedges daemon
+	// shutdown (Connector.Run blocks → runBot blocks → defer chain
+	// can't fire → SIGTERM ineffective without SIGKILL).
+	_ = s.conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	defer s.conn.SetReadDeadline(time.Time{})
 	_, data, err := s.conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read connack: %w", err)

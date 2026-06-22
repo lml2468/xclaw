@@ -83,7 +83,7 @@ var sectionMarkerRE = regexp.MustCompile(
 // tag-chars. All escapers MUST be kept in sync: invisibleFormatRE (used by
 // body escapers via normalizeLineBreaks) shares the bidi+ZW set verbatim.
 var nameUnsafeRE = regexp.MustCompile(
-	`[\[\]\x{0000}-\x{0008}\x{000a}-\x{001f}\x{007f}-\x{009f}\x{034f}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2028}\x{2029}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
+	`[\[\]\x{0000}-\x{0008}\x{000a}-\x{001f}\x{007f}-\x{009f}\x{034f}\x{061c}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2028}\x{2029}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
 )
 
 // Separators a model may render as a new line but RE2's (?m)^ does NOT anchor
@@ -101,6 +101,7 @@ var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\
 // untouched. We strip these unconditionally before pattern matching — they
 // have no legitimate purpose in any prompt input. Covers:
 // - U+034F COMBINING GRAPHEME JOINER
+// - U+061C ARABIC LETTER MARK (bidi sibling of LRM/RLM, Unicode 6.3+)
 // - U+115F/1160 Hangul choseong/jungseong fillers
 // - U+180E MONGOLIAN VOWEL SEPARATOR + U+1806 MONGOLIAN TODO SOFT HYPHEN
 // - U+17B4/17B5 Khmer inherent vowels
@@ -115,7 +116,7 @@ var extraLineBreaksRE = regexp.MustCompile(`[\r\x{000b}\x{000c}\x{0085}\x{2028}\
 // closes the same class of attack for free-form bodies. The character set is
 // kept in sync with nameUnsafeRE — any addition here MUST be mirrored there.
 var invisibleFormatRE = regexp.MustCompile(
-	`[\x{034f}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
+	`[\x{034f}\x{061c}\x{115f}\x{1160}\x{17b4}\x{17b5}\x{1806}\x{180e}\x{200b}-\x{200f}\x{202a}-\x{202e}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{fe00}-\x{fe0f}\x{feff}\x{e0020}-\x{e007f}]`,
 )
 
 // normalizeLineBreaks turns boundary-forging separators into \n and strips

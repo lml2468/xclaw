@@ -1,11 +1,36 @@
-// Package safepath centralizes the slug + path-traversal + symlink-containment
-// checks the desktop's local-file CRUD packages (skills, workflows, workspace,
-// configstore) all rely on. Keeping them in one place stops the defenses from
-// drifting apart — previously each package reimplemented them and only workspace
-// had grown the symlink-realpath check, leaving skills/workflows weaker.
+// Package safepath is the single source of truth for path safety in the
+// desktop's local-file CRUD packages (skills, workflows, workspace,
+// configstore). It enforces three invariants in one place so callers can
+// stop worrying about them:
+//
+//  1. Slug validation: per-component names must match a strict character
+//     class (ValidSlug). The caller's `name` arg is checked once at the
+//     boundary; afterwards it can't contain a path separator or "..".
+//
+//  2. Containment: the resolved absolute path must lie inside `root`.
+//     Enforced lexically by ResolveLexical (no FS touch) AND structurally
+//     by the Safe* file ops below (every path component walked with
+//     O_NOFOLLOW so an intermediate symlink can't redirect).
+//
+//  3. Symlink refusal: every Safe* op refuses to traverse OR overwrite a
+//     symlink at any path component. Race-free on Unix via dirfd-walk
+//     (openat with O_NOFOLLOW per component, then operations on the
+//     verified dirfd via openat/renameat/unlinkat — the kernel never
+//     re-traverses an absolute path that an attacker could have swapped
+//     between our check and our use). On Windows, an Lstat-chain
+//     fallback; structural openat-equivalents need x/sys/windows
+//     reparse-point handling that's not implemented here. Windows
+//     residual: a same-uid attacker with Developer Mode CAN race the
+//     Lstat-then-open window; documented but unmitigated.
+//
+// Callers should NEVER do their own os.Lstat / filepath.EvalSymlinks /
+// O_NOFOLLOW / symlink-mode checks for paths under a `root`. Those are
+// this package's responsibility; sprinkling them at callsites is what
+// led to the round-15 → round-17 incremental defenses we collapsed here.
 package safepath
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +54,10 @@ func ValidSlug(s string) bool {
 // ResolveLexical validates that rel is a clean relative path inside root and
 // returns the absolute path WITHOUT touching the filesystem. It rejects empty,
 // absolute, and any ".." segment outright (rather than silently rewriting), with
-// a final lexical containment check. Use this when the target may not exist yet.
+// a final lexical containment check. Use this when the target may not exist yet
+// AND you don't need symlink safety (e.g. computing a display path). For
+// anything that opens / reads / writes / lists a path, use the Safe* ops below;
+// they call this internally as a pre-filter and then add the symlink-safe walk.
 func ResolveLexical(root, rel string) (string, error) {
 	rel = filepath.ToSlash(rel)
 	if rel == "" {
@@ -55,58 +83,16 @@ func ResolveLexical(root, rel string) (string, error) {
 	return full, nil
 }
 
-// AssertNoSymlinkEscape verifies, in real-path space, that full resolves to a
-// location inside root — defending against an intermediate symlinked component
-// that lexical checks miss (an agent with Bash could plant a symlink inside the
-// catalog, since the catalog is reachable via absolute paths). dirOnly resolves
-// the PARENT of full when full itself may not exist yet (a create), so the symlink
-// check still covers every existing ancestor directory.
-//
-// Returns nil when neither root nor the resolved path can be symlink-resolved
-// because they don't exist yet AND no existing ancestor escapes — i.e. a brand
-// new tree under a real root is allowed.
-func AssertNoSymlinkEscape(root, full string, dirOnly bool) error {
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		// Root doesn't exist yet (first write into a fresh catalog dir): fall back
-		// to lexical containment, already enforced by ResolveLexical's caller.
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	target := full
-	if dirOnly {
-		target = filepath.Dir(full)
-	}
-	real, err := resolveExistingPrefix(target)
-	if err != nil {
-		return err
-	}
-	if real != realRoot && !strings.HasPrefix(real, realRoot+string(os.PathSeparator)) {
-		return fmt.Errorf("path escapes root via symlink: %q", full)
-	}
-	return nil
-}
+// ErrSymlink is the sentinel returned (wrapped) by Safe* ops when they refuse
+// to traverse or overwrite a symlink anywhere on the path. Callers can use
+// errors.Is(err, safepath.ErrSymlink) to detect tampering and surface a
+// distinct user-facing message; everything else (not-found, permission, etc.)
+// bubbles up as the underlying os error.
+var ErrSymlink = errors.New("safepath: refusing to follow symlink")
 
-// resolveExistingPrefix EvalSymlinks the longest existing ancestor of p, then
-// re-appends the non-existent tail lexically. This lets us symlink-check a path
-// whose final components don't exist yet (a create) while still resolving every
-// real (and possibly symlinked) ancestor directory.
-func resolveExistingPrefix(p string) (string, error) {
-	p = filepath.Clean(p)
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return real, nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p, nil // reached the root; nothing more to resolve
-	}
-	realParent, err := resolveExistingPrefix(parent)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(realParent, filepath.Base(p)), nil
+// pathErrSymlink wraps ErrSymlink with the path that tripped it, so error
+// messages identify WHERE the tampering was detected without leaking the
+// (possibly attacker-influenced) symlink target.
+func pathErrSymlink(rel string) error {
+	return fmt.Errorf("%w: %q", ErrSymlink, rel)
 }

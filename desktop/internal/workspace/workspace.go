@@ -113,8 +113,8 @@ func Tree(botID, sessionKey string) (*Node, error) {
 	return out, nil
 }
 
-func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
-	entries, err := os.ReadDir(abs)
+func readDir(root, rel string, depth int, count *int) ([]*Node, error) {
+	entries, err := safepath.SafeReadDir(root, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -148,13 +148,13 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 		if rel != "" {
 			childRel = rel + "/" + name
 		}
-		// Never follow symlinks: a symlinked dir (e.g. .claude/skills/<bundle>)
-		// would escape into the global catalog. Surface it as a leaf.
+		// Never follow symlinks: a symlinked dir would let an agent escape
+		// the sandbox in the tree view. Surface as leaf.
 		isSymlink := e.Type()&os.ModeSymlink != 0
 		isDir := e.IsDir() && !isSymlink
 		n := &Node{Name: name, Path: childRel, IsDir: isDir}
 		if isDir && depth < maxDepth && !skipDir(name) {
-			kids, err := readDir(filepath.Join(abs, name), childRel, depth+1, count)
+			kids, err := readDir(root, childRel, depth+1, count)
 			if err == nil {
 				n.Children = kids
 			}
@@ -164,16 +164,12 @@ func readDir(abs, rel string, depth int, count *int) ([]*Node, error) {
 	return nodes, nil
 }
 
-// resolveIn validates that rel is a clean relative path inside root and returns
-// the absolute path (lexical only; callers that read also EvalSymlinks-check).
-// Shared with the other CRUD packages via safepath.
-func resolveIn(root, rel string) (string, error) {
-	return safepath.ResolveLexical(root, rel)
-}
-
 // File reads one workspace file for inline preview. It refuses symlinks and
 // directories, caps the read at 1 MiB (setting Truncated), and base64-encodes
 // non-text content (images, binaries) so the UI can render it via a data URL.
+// All path safety — lexical containment, parent-chain symlink refusal,
+// race-free leaf open — lives in safepath; this function has no Lstat /
+// EvalSymlinks / O_NOFOLLOW concerns of its own.
 func File(botID, sessionKey, relPath string) (FileContent, error) {
 	var fc FileContent
 	// Refuse credential-bearing dotfiles at the door (Sec J2). A hand-crafted
@@ -199,60 +195,27 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 	if !exists {
 		return fc, fmt.Errorf("no workspace yet for this session")
 	}
-	full, err := resolveIn(root, relPath)
-	if err != nil {
-		return fc, err
-	}
-	// Round 17 Arch #3: delegate the real-path containment check to the
-	// shared safepath helper instead of inlining EvalSymlinks-both-sides
-	// + HasPrefix. The hand-rolled version drifted on error wrapping and
-	// risked future divergence from the canonical rule.
-	if err := safepath.AssertNoSymlinkEscape(root, full, false); err != nil {
-		return fc, err
-	}
-	// Lstat (not Stat) so a symlink final component is refused rather than followed.
-	fi, err := os.Lstat(full)
-	if err != nil {
-		return fc, err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return fc, fmt.Errorf("refusing to read symlink: %q", relPath)
-	}
-	if fi.IsDir() {
-		return fc, fmt.Errorf("not a file: %q", relPath)
-	}
 
-	// safepath.OpenNoFollow refuses a final-component symlink at open
-	// time, closing the TOCTOU window where an agent with Bash could swap
-	// the regular file for a symlink between our Lstat above and the open
-	// below (round 13 M2 + round 16 promoted the helper to safepath so
-	// skills/workflows can reuse it). Windows lacks O_NOFOLLOW, so the
-	// Windows shim falls back to os.Open after the Lstat guard.
-	f, err := safepath.OpenNoFollow(full)
+	// One call does it all: lexical containment, parent-chain symlink walk
+	// via dirfd, leaf O_NOFOLLOW open. The returned FD is guaranteed to be
+	// reached without traversing any symlink, race-free against an agent
+	// swapping parents mid-open.
+	f, err := safepath.SafeOpen(root, relPath)
 	if err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
+		if errors.Is(err, safepath.ErrSymlink) {
 			return fc, fmt.Errorf("refusing to read symlink: %q", relPath)
 		}
 		return fc, err
 	}
 	defer f.Close()
-	// Round 17 H3: close the EvalSymlinks→Open parent-dir TOCTOU. An agent
-	// with Bash can swap an intermediate directory to a symlink AFTER
-	// AssertNoSymlinkEscape passes but BEFORE the open lands —
-	// OpenNoFollow only guards the leaf, the kernel still traverses the
-	// new parent symlink. After the open succeeds, re-resolve the path
-	// from the FD-side (via /proc/self/fd or, portably, a second
-	// EvalSymlinks) and verify it still resolves inside realRoot. If a
-	// parent was swapped, the resolved path will now point outside —
-	// abort before reading.
-	realRoot, rerr := filepath.EvalSymlinks(root)
-	if rerr == nil {
-		if real, rerr2 := filepath.EvalSymlinks(full); rerr2 == nil {
-			if real != realRoot && !strings.HasPrefix(real, realRoot+string(os.PathSeparator)) {
-				return fc, fmt.Errorf("path escaped workspace mid-open: %q", relPath)
-			}
-		}
+	fi, err := f.Stat()
+	if err != nil {
+		return fc, err
 	}
+	if fi.IsDir() {
+		return fc, fmt.Errorf("not a file: %q", relPath)
+	}
+
 	// Read up to the larger (binary) cap + 1 sentinel byte; we decide the real cap
 	// once isTextual classifies the content below. Size the buffer to the file when
 	// it's smaller than the cap, so a small text file doesn't allocate 8 MiB.
@@ -269,7 +232,7 @@ func File(botID, sessionKey, relPath string) (FileContent, error) {
 	}
 	data := buf[:n]
 
-	mime := mimeOf(full, data)
+	mime := mimeOf(relPath, data)
 	textual := isTextual(mime, data)
 	// Per-kind cap: text previews at 1 MiB, binary (image/PDF/…) at 8 MiB.
 	limit := maxBinaryBytes

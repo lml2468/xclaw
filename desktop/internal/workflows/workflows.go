@@ -4,12 +4,14 @@
 // (~/.xclaw/<id>/.claude/workflows), so the agent's Workflow tool resolves
 // them by name on every spawn — no per-turn sandbox linking. There is no
 // shared marketplace anymore: every bot owns its own workflows, period.
+//
+// All file ops go through safepath; this file has no Lstat / EvalSymlinks /
+// O_NOFOLLOW concerns of its own.
 package workflows
 
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,18 +31,20 @@ func botDir(botID string) (string, error) {
 	return filepath.Join(home, ".xclaw", botID, ".claude", "workflows"), nil
 }
 
-// pathIn resolves and validates a workflow's .js file inside a given root. The
-// name is a single slug (no separators); the parent chain is symlink-checked so
-// an intermediate symlink can't redirect a write outside root.
-func pathIn(root, name string) (string, error) {
+// workflowRel returns "<name>.js" after slug-validating name. The result
+// is passed straight to safepath — no per-call symlink concerns here.
+func workflowRel(name string) (string, error) {
 	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid workflow name %q — letters, digits, . _ - only", name)
 	}
-	full := filepath.Join(root, name+".js")
-	if err := safepath.AssertNoSymlinkEscape(root, full, true); err != nil {
-		return "", err
+	return name + ".js", nil
+}
+
+func translateSymlink(verb, name string, err error) error {
+	if errors.Is(err, safepath.ErrSymlink) {
+		return fmt.Errorf("refusing to %s symlink: %q", verb, name)
 	}
-	return full, nil
+	return err
 }
 
 // Info summarizes a per-bot workflow for the list view.
@@ -53,7 +57,7 @@ var descRe = regexp.MustCompile(`description\s*:\s*["']([^"']+)["']`)
 
 // listIn returns every workflow (*.js) directly under root.
 func listIn(root string) ([]Info, error) {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.SafeReadDir(root, "")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Info{}, nil
@@ -66,10 +70,6 @@ func listIn(root string) ([]Info, error) {
 		if strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".js") || e.IsDir() {
 			continue
 		}
-		// Round 15 Arch #7 / Sec H3 mirror: refuse symlinks in the workflow
-		// listing. A workflow.js → /etc/passwd link would otherwise have
-		// its target surfaced via descriptionIn + BotRead. Matches the
-		// round-14 skills discipline.
 		if e.Type()&os.ModeSymlink != 0 {
 			continue
 		}
@@ -84,16 +84,11 @@ func listIn(root string) ([]Info, error) {
 }
 
 func descriptionIn(root, name string) string {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return ""
 	}
-	f, err := safepath.OpenNoFollow(p)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
+	b, err := safepath.SafeRead(root, rel, 1<<20) // 1 MiB cap; workflow headers are tiny
 	if err != nil {
 		return ""
 	}
@@ -104,53 +99,37 @@ func descriptionIn(root, name string) string {
 }
 
 func readIn(root, name string) (string, error) {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return "", err
 	}
-	// Round 16 H2: race-free symlink refusal via O_NOFOLLOW (round 15 used
-	// Lstat-before-Read which races vs an agent rename).
-	f, err := safepath.OpenNoFollow(p)
+	b, err := safepath.SafeRead(root, rel, 0)
 	if err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
-			return "", fmt.Errorf("refusing to read symlink: %q", name)
-		}
-		return "", err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return "", err
+		return "", translateSymlink("read", name, err)
 	}
 	return string(b), nil
 }
 
 func writeIn(root, name, content string) error {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
-	// Round 17 Go #4: AtomicWriteNoFollow combines the round-16 symlink
-	// refusal with atomicfile's temp+fsync+rename, so a crash mid-write
-	// can't leave a half-written workflow script behind.
-	if err := safepath.AtomicWriteNoFollow(p, []byte(content), 0o600); err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
-			return fmt.Errorf("refusing to write through symlink: %q", name)
-		}
-		return err
+	if err := safepath.SafeWrite(root, rel, []byte(content), 0o600); err != nil {
+		return translateSymlink("write through", name, err)
 	}
 	return nil
 }
 
 func createIn(root, name string) error {
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(p); err == nil {
+	if safepath.SafeExists(root, rel) {
 		return fmt.Errorf("workflow %q already exists", name)
 	}
 	tmpl := fmt.Sprintf(`export const meta = {
@@ -210,9 +189,12 @@ func BotDelete(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	p, err := pathIn(root, name)
+	rel, err := workflowRel(name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(p)
+	if err := safepath.SafeRemove(root, rel); err != nil {
+		return translateSymlink("delete", name, err)
+	}
+	return nil
 }

@@ -6,13 +6,14 @@
 // skills, period.
 //
 // Backs the desktop Skills window: list/create/edit/delete per-bot skills with
-// slug + path-traversal validation.
+// slug + path-traversal validation. All file ops go through safepath, which
+// owns the symlink-refusal + structural-containment invariants — this file
+// has no Lstat / EvalSymlinks / O_NOFOLLOW concerns of its own.
 package skills
 
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,33 +32,25 @@ func botDir(botID string) (string, error) {
 	return filepath.Join(home, ".xclaw", botID, ".claude", "skills"), nil
 }
 
-// skillDirIn resolves and validates a skill's directory inside a given root.
-func skillDirIn(root, name string) (string, error) {
+// bundleRoot composes <root>/<name> as the validated per-bundle root, so the
+// user-supplied `rel` flows DIRECTLY into safepath (without sanitization)
+// and ResolveLexical correctly rejects absolute / .. paths instead of
+// silently re-rooting them under the bundle.
+func bundleRoot(root, name string) (string, error) {
 	if !safepath.ValidSlug(name) {
 		return "", fmt.Errorf("invalid skill name %q — letters, digits, . _ - only", name)
 	}
 	return filepath.Join(root, name), nil
 }
 
-// resolveInSkill validates that rel is a clean relative path inside the skill
-// dir (under root) and returns the absolute path. Rejects empty, absolute, and
-// any ".." segment outright (lexical), plus a real-path symlink-escape check so
-// an intermediate symlinked component can't redirect a write outside the bundle.
-func resolveInSkill(root, name, rel string) (string, error) {
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return "", err
+// translateSymlink converts safepath.ErrSymlink into a user-facing message
+// scoped to the operation, so the GUI surfaces tampering without leaking
+// the (possibly attacker-influenced) symlink target.
+func translateSymlink(verb string, rel string, err error) error {
+	if errors.Is(err, safepath.ErrSymlink) {
+		return fmt.Errorf("refusing to %s symlink: %q", verb, rel)
 	}
-	full, err := safepath.ResolveLexical(dir, rel)
-	if err != nil {
-		return "", err
-	}
-	// dirOnly: the file itself may not exist yet (a create), so check the parent
-	// chain in real-path space.
-	if err := safepath.AssertNoSymlinkEscape(dir, full, true); err != nil {
-		return "", err
-	}
-	return full, nil
+	return err
 }
 
 // SkillInfo summarizes a per-bot skill for the list view.
@@ -67,9 +60,11 @@ type SkillInfo struct {
 	Files       int    `json:"files"`
 }
 
-// listIn returns every skill bundle directly under root.
+// listIn returns every skill bundle directly under root. Symlinked entries
+// are silently skipped — listing them would let an attacker make a tampered
+// link appear as a real bundle.
 func listIn(root string) ([]SkillInfo, error) {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.SafeReadDir(root, "")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []SkillInfo{}, nil
@@ -79,22 +74,8 @@ func listIn(root string) ([]SkillInfo, error) {
 	out := []SkillInfo{}
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") || e.Type()&os.ModeSymlink != 0 || !e.IsDir() {
 			continue
-		}
-		// Symlink check FIRST — Lstat reports the link itself, so
-		// info.IsDir() is false for a symlink-to-dir, which would hit the
-		// generic stray-file continue below before ever reaching the
-		// explicit symlink branch (round 15 Arch #1 found the round-14
-		// branch was unreachable). Refusing symlinks explicitly here makes
-		// the intent clear and protects against a future change that
-		// relaxes the IsDir gate.
-		if e.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		info, statErr := os.Lstat(filepath.Join(root, name))
-		if statErr != nil || !info.IsDir() {
-			continue // stray file or unreadable — not a skill
 		}
 		files, _ := filesIn(root, name)
 		out = append(out, SkillInfo{
@@ -108,20 +89,14 @@ func listIn(root string) ([]SkillInfo, error) {
 }
 
 // descriptionIn extracts the `description:` from a skill's SKILL.md frontmatter.
+// Returns empty string for any failure (missing file, symlink, parse error) —
+// the GUI shows "(no description)" rather than surfacing a per-bundle error.
 func descriptionIn(root, name string) string {
-	dir, err := skillDirIn(root, name)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return ""
 	}
-	full := filepath.Join(dir, "SKILL.md")
-	// Round 16 H2: use safepath.OpenNoFollow for race-free symlink refusal
-	// (round 15 used Lstat-before-Read which races vs an agent rename).
-	f, err := safepath.OpenNoFollow(full)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
+	b, err := safepath.SafeRead(br, "SKILL.md", 1<<20) // 1 MiB cap; SKILL.md is tiny
 	if err != nil {
 		return ""
 	}
@@ -141,27 +116,39 @@ func descriptionIn(root, name string) string {
 }
 
 // filesIn lists the relative paths of every file in a skill bundle (sorted).
+// Walks via SafeReadDir recursively so symlinks are skipped at every level.
 func filesIn(root, name string) ([]string, error) {
-	dir, err := skillDirIn(root, name)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
-	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	var walk func(rel string) error
+	walk = func(rel string) error {
+		entries, err := safepath.SafeReadDir(br, rel)
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
+		for _, e := range entries {
+			if e.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			child := e.Name()
+			childRel := child
+			if rel != "" {
+				childRel = rel + "/" + child
+			}
+			if e.IsDir() {
+				if werr := walk(childRel); werr != nil {
+					return werr
+				}
+				continue
+			}
+			out = append(out, childRel)
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		out = append(out, filepath.ToSlash(rel))
 		return nil
-	})
-	if err != nil {
+	}
+	if err := walk(""); err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
 		}
@@ -172,91 +159,60 @@ func filesIn(root, name string) ([]string, error) {
 }
 
 func readFileIn(root, name, rel string) (string, error) {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return "", err
 	}
-	// Round 16 H2: replaced round-15's racy Lstat-before-Read with an
-	// O_NOFOLLOW open via safepath.OpenNoFollow, closing the TOCTOU
-	// window where an agent with Bash could swap the regular file for a
-	// symlink between our Lstat and the os.ReadFile. ErrSymlinkLeaf is
-	// translated to the same user-facing refusal message.
-	f, err := safepath.OpenNoFollow(full)
+	b, err := safepath.SafeRead(br, rel, 0)
 	if err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
-			return "", fmt.Errorf("refusing to read symlink: %q", rel)
-		}
-		return "", err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return "", err
+		return "", translateSymlink("read", rel, err)
 	}
 	return string(b), nil
 }
 
 func writeFileIn(root, name, rel, content string) error {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return err
-	}
-	// Round 16 Go #1 / Sec H2: bare os.WriteFile would follow a symlink at
-	// the final component and clobber whatever it pointed at (an agent with
-	// Bash plants `bundle/SKILL.md → ~/.zshrc`, next GUI save overwrites
-	// .zshrc). Round 17 Go #4: upgraded from WriteNoFollow to
-	// AtomicWriteNoFollow so a crash mid-write can't leave a partial
-	// SKILL.md / bundle file behind — matches the round-15 crash-safety
-	// upgrade for SOUL/AGENTS.
-	if err := safepath.AtomicWriteNoFollow(full, []byte(content), 0o600); err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
-			return fmt.Errorf("refusing to write through symlink: %q", rel)
+	// Ensure parent dir exists (safepath.SafeWrite refuses an absent
+	// parent chain). MkdirAll is idempotent and itself symlink-safe.
+	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rel)))
+	if parent != "." && parent != "" {
+		if err := safepath.SafeMkdirAll(br, parent, 0o755); err != nil {
+			return translateSymlink("write through", rel, err)
 		}
-		return err
+	}
+	if err := safepath.SafeWrite(br, rel, []byte(content), 0o600); err != nil {
+		return translateSymlink("write through", rel, err)
 	}
 	return nil
 }
 
 func deleteFileIn(root, name, rel string) error {
-	full, err := resolveInSkill(root, name, rel)
+	br, err := bundleRoot(root, name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(full)
+	if err := safepath.SafeRemove(br, rel); err != nil {
+		return translateSymlink("delete through", rel, err)
+	}
+	return nil
 }
 
 func createIn(root, name string) error {
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return err
+	if !safepath.ValidSlug(name) {
+		return fmt.Errorf("invalid skill name %q", name)
 	}
-	if _, err := os.Lstat(dir); err == nil {
+	if safepath.SafeExists(root, name) {
 		return fmt.Errorf("skill %q already exists", name)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	// Round 17 Sec H1: between the Lstat above and this MkdirAll, an
-	// agent with Bash can plant `<root>/<name> → /tmp/payload` —
-	// MkdirAll on an existing symlink-to-dir silently no-ops, and the
-	// next WriteNoFollow's O_NOFOLLOW only guards the leaf "SKILL.md",
-	// not the parent traversal. Re-verify the dir resolves inside root
-	// before writing into it.
-	if err := safepath.AssertNoSymlinkEscape(root, dir, true); err != nil {
-		return fmt.Errorf("refusing to create skill in tampered location %q: %w", name, err)
+	if err := safepath.SafeMkdirAll(root, name, 0o755); err != nil {
+		return translateSymlink("create through", name, err)
 	}
 	tmpl := fmt.Sprintf("---\nname: %s\ndescription: One line on when the agent should use this skill.\n---\n\n# %s\n\nDescribe what this skill does and how to use it.\n", name, name)
-	// Round 16 Go #2 / round 17 Go #4: AtomicWriteNoFollow refuses
-	// SKILL.md if it's a symlink AND atomically commits via temp+rename
-	// so a crash mid-write can't leave a partial frontmatter file behind.
-	if err := safepath.AtomicWriteNoFollow(filepath.Join(dir, "SKILL.md"), []byte(tmpl), 0o644); err != nil {
-		if errors.Is(err, safepath.ErrSymlinkLeaf) {
-			return fmt.Errorf("refusing to write through symlink in new skill %q", name)
-		}
-		return err
+	if err := safepath.SafeWrite(root, name+"/SKILL.md", []byte(tmpl), 0o644); err != nil {
+		return translateSymlink("write through", name+"/SKILL.md", err)
 	}
 	return nil
 }
@@ -326,9 +282,11 @@ func BotDelete(botID, name string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := skillDirIn(root, name)
-	if err != nil {
-		return err
+	if !safepath.ValidSlug(name) {
+		return fmt.Errorf("invalid skill name %q", name)
 	}
-	return os.RemoveAll(dir)
+	if err := safepath.SafeRemoveAll(root, name); err != nil {
+		return translateSymlink("delete", name, err)
+	}
+	return nil
 }

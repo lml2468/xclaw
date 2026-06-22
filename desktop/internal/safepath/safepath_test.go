@@ -1,6 +1,7 @@
 package safepath
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,27 +39,74 @@ func TestResolveLexicalRejectsEscape(t *testing.T) {
 	}
 }
 
-// TestAssertNoSymlinkEscape proves a symlinked intermediate component is caught
-// even when the lexical path looks clean — the gap that left skills/workflows
-// weaker than workspace.
-func TestAssertNoSymlinkEscape(t *testing.T) {
+// TestSafeOpenRefusesSymlink proves the dirfd-walk refuses a symlinked
+// final component AND a symlinked intermediate directory. Replaces the
+// round-15 AssertNoSymlinkEscape test (helper deleted in R18).
+func TestSafeOpenRefusesSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-
-	// A plain new file under root is allowed (parent chain is real).
-	full := filepath.Join(root, "bundle", "file.txt")
-	if err := AssertNoSymlinkEscape(root, full, true); err != nil {
-		t.Fatalf("clean path should pass: %v", err)
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("leak"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	// Plant a symlinked subdir inside root pointing outside, then a write through
-	// it must be rejected.
-	link := filepath.Join(root, "evil")
+	// Leaf symlink — refused.
+	link := filepath.Join(root, "leak.txt")
+	if err := os.Symlink(filepath.Join(outside, "secret"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := SafeOpen(root, "leak.txt"); err == nil {
+		t.Fatal("SafeOpen on a symlink should error")
+	} else if !errors.Is(err, ErrSymlink) {
+		t.Errorf("expected ErrSymlink, got %v", err)
+	}
+
+	// Intermediate-dir symlink — refused too (the structural close we wanted).
+	subLink := filepath.Join(root, "sub")
+	_ = os.Symlink(outside, subLink)
+	if _, err := SafeOpen(root, "sub/secret"); err == nil {
+		t.Fatal("SafeOpen through a symlinked subdir should error")
+	} else if !errors.Is(err, ErrSymlink) {
+		t.Errorf("expected ErrSymlink for sub-path, got %v", err)
+	}
+}
+
+// TestSafeWriteAtomicReplacesSymlink: an existing symlink at the
+// destination is refused (operator learns about tampering) rather than
+// silently overwritten with a regular file.
+func TestSafeWriteRefusesSymlinkLeaf(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "target")
+	_ = os.WriteFile(outside, []byte("orig"), 0o600)
+	link := filepath.Join(root, "file.txt")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	escaping := filepath.Join(link, "pwned.txt")
-	if err := AssertNoSymlinkEscape(root, escaping, true); err == nil {
-		t.Fatal("write through symlinked subdir should be rejected")
+	if err := SafeWrite(root, "file.txt", []byte("clobber"), 0o600); err == nil {
+		t.Fatal("SafeWrite over a symlink leaf should error")
+	} else if !errors.Is(err, ErrSymlink) {
+		t.Errorf("expected ErrSymlink, got %v", err)
+	}
+	// And the symlink target must be untouched.
+	b, _ := os.ReadFile(outside)
+	if string(b) != "orig" {
+		t.Errorf("symlink target was modified: %q", string(b))
+	}
+}
+
+// TestSafeWriteAtomic proves a clean write commits via temp+rename.
+func TestSafeWriteAtomic(t *testing.T) {
+	root := t.TempDir()
+	if err := SafeMkdirAll(root, "a/b", 0o755); err != nil {
+		t.Fatalf("SafeMkdirAll: %v", err)
+	}
+	if err := SafeWrite(root, "a/b/c.txt", []byte("hi"), 0o600); err != nil {
+		t.Fatalf("SafeWrite: %v", err)
+	}
+	b, err := SafeRead(root, "a/b/c.txt", 0)
+	if err != nil {
+		t.Fatalf("SafeRead: %v", err)
+	}
+	if string(b) != "hi" {
+		t.Errorf("round-trip mismatch: %q", string(b))
 	}
 }

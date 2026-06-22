@@ -132,9 +132,11 @@ func TestSaveDoesNotMaterializeDefaults(t *testing.T) {
 	}
 }
 
-// Pruning happens ONLY for explicitly-removed ids whose data dir exists; a bot
-// merely absent from the saved set (no explicit removal) is never wiped, and a
-// removed id without a data/ dir is left alone.
+// Pruning happens ONLY for explicitly-removed ids whose bot dir exists; a bot
+// silently absent from the bots[] list (e.g. a hand-edited config.json without
+// going through the GUI) must never be wiped — that would dataloss any bot the
+// GUI hadn't yet learned about. The bot dir is the gate (not data/, which only
+// the daemon creates) so a wizard Add-then-delete still prunes.
 func TestSavePrunesOnlyExplicitRemovals(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{Bots: []config.BotEntry{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
@@ -160,15 +162,17 @@ func TestSavePrunesOnlyExplicitRemovals(t *testing.T) {
 		t.Errorf("explicitly-removed bot c should be pruned, stat err=%v", err)
 	}
 
-	// A removed id whose data/ dir doesn't exist must be left alone.
+	// A removed id whose dir exists (even without daemon-created data/) MUST
+	// be pruned — the wizard scaffolds SOUL/AGENTS before any daemon restart,
+	// so an Add-then-immediately-delete used to orphan ~/.xclaw/<id>/ forever.
 	if err := os.MkdirAll(botDir("d"), 0o755); err != nil { // no data/ child
 		t.Fatal(err)
 	}
 	if err := Save(keep, []string{"d"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(botDir("d")); err != nil {
-		t.Errorf("removed id without data/ dir should not be RemoveAll'd: %v", err)
+	if _, err := os.Stat(botDir("d")); !os.IsNotExist(err) {
+		t.Errorf("explicitly-removed bot d (no data/ child) should still be pruned, stat err=%v", err)
 	}
 }
 

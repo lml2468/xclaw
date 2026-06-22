@@ -5,7 +5,11 @@
   let draft = $state("");
   let ta: HTMLTextAreaElement;
 
-  const canSend = $derived(draft.trim().length > 0 && !!store.selectedBotId);
+  // Gated on `awaiting` so Enter-spam while the typing indicator is up
+  // doesn't queue duplicate user bubbles + Send RPCs. The daemon's per-
+  // session lock serializes them, but the UI shouldn't accept a burst
+  // the operator only intended once.
+  const canSend = $derived(draft.trim().length > 0 && !!store.selectedBotId && !store.currentSession?.awaiting);
 
   export function setDraft(text: string) {
     draft = text;

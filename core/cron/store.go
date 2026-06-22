@@ -75,22 +75,25 @@ func NewStore(cronJSONPath string) *Store {
 // can't exfiltrate target bytes via JSON-parse error messages on the
 // control bus. The caller holds s.mu.
 //
-// A corrupt or oversize cron.json is preserved as `cron.json.corrupt.<unix-ns>`
-// and treated as empty for the caller. Returning an error would wedge cron
-// permanently (Update bails before mutating, every scheduler tick and every
-// create/delete handler fails forever). Resetting to an empty task list lets
-// cron self-heal on the next save; the .corrupt sidecar keeps the operator's
-// data on disk for forensic recovery rather than letting the first save after
-// corruption silently erase it. A persistent agent that keeps clobbering
-// cron.json is a separate "agent has bash" problem.
+// A malformed JSON or oversize file is preserved as
+// `cron.json.corrupt.<unix-ns>` and treated as empty for the caller:
+// returning an error would wedge cron permanently (Update bails before
+// mutating, every scheduler tick and every create/delete handler fails
+// forever). The .corrupt sidecar keeps the operator's data on disk for
+// forensic recovery rather than letting the first save after corruption
+// silently erase it. Other read errors (EIO, EACCES, symlink refusal,
+// …) are returned as errors WITHOUT quarantine so a transient I/O hiccup
+// or temporary permission flip doesn't destroy data; the caller (Update)
+// then aborts the mutation rather than committing an empty list. A
+// persistent agent that keeps clobbering cron.json is a separate
+// "agent has bash" problem.
 func (s *Store) load() ([]Task, error) {
 	raw, err := safepath.SafeReadAbs(s.path, 16<<20) // 16 MiB cap
 	if os.IsNotExist(err) {
 		return []Task{}, nil
 	}
 	if err != nil {
-		s.quarantine(fmt.Errorf("unreadable: %w", err))
-		return []Task{}, nil
+		return nil, fmt.Errorf("cron: read %s: %w", s.path, err)
 	}
 	var tasks []Task
 	if err := json.Unmarshal(raw, &tasks); err != nil {

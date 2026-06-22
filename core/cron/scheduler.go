@@ -323,18 +323,23 @@ func (m *Manager) Start() {
 // fires that DID get started. Without the loopWG.Wait here, a Tick that
 // began before Stop's close-stopCh observation would still run to
 // completion AFTER Stop returned, spawning fires that the caller's
-// subsequent Wait couldn't see (R10-F1).
+// subsequent Wait couldn't see.
+//
+// loopWG.Wait runs INSIDE the runMu critical section: releasing runMu
+// before the wait would let a concurrent Start observe a nilled timer +
+// spawn a second loop goroutine while the first is still draining,
+// producing two parallel Tick cycles that double-fire every due task.
+// Tick does not acquire runMu, so holding it across the wait is safe.
 func (m *Manager) Stop() {
 	m.runMu.Lock()
+	defer m.runMu.Unlock()
 	if m.timer == nil {
-		m.runMu.Unlock()
 		return
 	}
 	m.timer.Stop()
 	close(m.stopCh)
 	m.timer = nil
 	m.stopCh = nil
-	m.runMu.Unlock()
 	m.loopWG.Wait()
 }
 

@@ -48,15 +48,21 @@
  // on the bound input, which reads `robotId` BEFORE Svelte's bind:value has
  // flushed the new keystroke (the bind and the inline handler both react to
  // the same input event), so every commit wrote the PRIOR character.
- // Reading robotId inside $effect runs after the bind has settled.
+ // Reading robotId inside $effect runs after the bind has settled. The
+ // bot.env spread + reassign happens inside untrack() so reassigning the
+ // field doesn't re-trigger this effect — without untrack the write to
+ // bot.env (a $bindable Proxy) re-runs the effect with the same robotId
+ // value but a fresh object identity, in a tight self-loop.
   $effect(() => {
     const v = robotId.trim();
     if (v === lastSeededRobotId.trim()) return; // not a user edit
-    const env = { ...(bot.env ?? {}) };
-    if (v) env.OCTO_BOT_ID = v;
-    else delete env.OCTO_BOT_ID;
-    bot.env = env;
-    ondirty();
+    untrack(() => {
+      const env = { ...(bot.env ?? {}) };
+      if (v) env.OCTO_BOT_ID = v;
+      else delete env.OCTO_BOT_ID;
+      bot.env = env;
+      ondirty();
+    });
   });
 
  // octo-cli profile status (preview-mode mock or live).

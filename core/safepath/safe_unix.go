@@ -314,27 +314,36 @@ func SafeMkdirAll(root, rel string, perm os.FileMode) error {
 		}
 		// If fstatat says it's a symlink, the kernel may have returned
 		// ENOTDIR (e.g. macOS with O_DIRECTORY|O_NOFOLLOW) — surface as
-		// ErrSymlink before treating as missing.
+		// ErrSymlink before treating as missing. If it exists as a real
+		// directory, another goroutine raced us to create it (concurrent
+		// SafeMkdirAll under the same parent): skip the mkdirat and
+		// re-open rather than surfacing the now-stale ENOENT from our
+		// Openat.
+		raced := false
 		var st unix.Stat_t
 		if serr := unix.Fstatat(cur, p, &st, unix.AT_SYMLINK_NOFOLLOW); serr == nil {
 			if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 				return pathErrSymlink(strings.Join(parts[:i+1], "/"))
 			}
-			// Exists but isn't a directory and isn't a symlink — surface
-			// the genuine open error.
+			if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+				// Exists but isn't a directory and isn't a symlink — surface
+				// the genuine open error.
+				return oerr
+			}
+			raced = true
+		} else if !errors.Is(oerr, unix.ENOENT) {
 			return oerr
 		}
-		if !errors.Is(oerr, unix.ENOENT) {
-			return oerr
-		}
-		// Component missing — mkdirat then re-open with O_NOFOLLOW.
-		if merr := unix.Mkdirat(cur, p, uint32(perm)); merr != nil {
-			// Race-tolerant: another caller may have created the dir
-			// between our openat and our mkdirat. EEXIST is fine as long
-			// as the now-existing component is a directory (re-openat
-			// with O_DIRECTORY|O_NOFOLLOW will succeed).
-			if !errors.Is(merr, unix.EEXIST) {
-				return merr
+		if !raced {
+			// Component missing — mkdirat then re-open with O_NOFOLLOW.
+			if merr := unix.Mkdirat(cur, p, uint32(perm)); merr != nil {
+				// Race-tolerant: another caller may have created the dir
+				// between our openat and our mkdirat. EEXIST is fine as long
+				// as the now-existing component is a directory (re-openat
+				// with O_DIRECTORY|O_NOFOLLOW will succeed).
+				if !errors.Is(merr, unix.EEXIST) {
+					return merr
+				}
 			}
 		}
 		next, oerr = unix.Openat(cur, p, noFollowDirFlags, 0)

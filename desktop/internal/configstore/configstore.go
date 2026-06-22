@@ -337,8 +337,15 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		if keep[id] || !safepath.ValidSlug(id) {
 			continue
 		}
-		if _, err := safepath.SafeLstat(botDir(id), "data"); err != nil {
-			continue // no data/ child (or refused symlinked path) → never RemoveAll
+		// Gate on the bot dir itself, not on its data/ subdir — data/ is
+		// only created at daemon startup, so a bot the operator added via
+		// the wizard and immediately deleted (before any daemon restart)
+		// would otherwise leave ~/.xclaw/<id>/ (with SOUL/AGENTS/secrets/
+		// octo profile) orphaned forever. SafeLstat refuses a symlinked
+		// bot dir, so the agent-planting concern that motivated this gate
+		// still holds.
+		if _, err := safepath.SafeLstat(Dir(), id); err != nil {
+			continue // bot dir absent (or refused symlinked path) → never RemoveAll
 		}
 		// was `os.RemoveAll(botDir(id))` which descends
 		// into symlinked subdirectories — an agent that planted

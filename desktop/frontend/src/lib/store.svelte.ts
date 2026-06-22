@@ -406,8 +406,16 @@ class Store {
       s.proc = emptyProc();
  // Bump the epoch so any History response issued before this reset
  // (still in flight over the control bus) is dropped on arrival
- // instead of restoring the rows the operator just cleared.
+ // instead of restoring the rows the operator just cleared. Also
+ // set loaded=true so a subsequent loadHistory (e.g. from a reconnect's
+ // applySessionsList tail-fetch, or a re-selection) does not auto-
+ // restore the persisted rows the operator explicitly cleared. The
+ // shared `expectedHistoryEpoch` field would otherwise be overwritten
+ // by that second fetch, letting the still-in-flight first response
+ // pass the guard. Operator wants it back → they reload by another
+ // explicit action (not implemented today; out of scope).
       s.historyEpoch = (s.historyEpoch ?? 0) + 1;
+      s.loaded = true;
     }
   }
 

@@ -455,8 +455,8 @@ func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (
 
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
-	// Ensure the session row exists (refreshes TTL). Touch avoids the extra
-	// read-back the turn doesn't use.
+	// Ensure the session row exists and bump updated_at (drives ListSessions
+	// ordering). Touch avoids the extra read-back the turn doesn't use.
 	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
 		return g.failTurn(sessionKey, "store.Touch", err)
 	}
@@ -476,10 +476,26 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// Build the prompt. For group messages this injects the [Recent group
 	// messages] delta as untrusted background and demarcates the real request
 	// with the current-message anchor; DM messages pass through unchanged.
+	// Snapshot the pre-build group cursor for this channel so AppendUser
+	// failure can roll it back — buildGroupPrompt advances the cursor past
+	// the current message, and an unrolled failure would silently drop this
+	// message from every subsequent [Recent group messages] delta even
+	// though every other group member saw it on IM.
+	var (
+		preCursor      int64
+		hasGroupCursor bool
+	)
+	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
+		preCursor = g.groups.Cursor(msg.ChannelID)
+		hasGroupCursor = true
+	}
 	prompt := g.buildGroupPrompt(sessionKey, msg)
 
 	// Persist the (original) user message.
 	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName); err != nil {
+		if hasGroupCursor {
+			g.groups.SetCursor(msg.ChannelID, preCursor)
+		}
 		return g.failTurn(sessionKey, "store.AppendUser", err)
 	}
 

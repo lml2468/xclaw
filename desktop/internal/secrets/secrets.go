@@ -12,7 +12,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/lml2468/xclaw/core/control/wire"
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // service is the credential-store service name (shared with the legacy Swift

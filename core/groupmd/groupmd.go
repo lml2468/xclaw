@@ -35,6 +35,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // MaxBytes caps an instruction file we will inject, keeping the prompt bounded.
@@ -177,16 +179,20 @@ func (l *Loader) loadFile(id string) (string, bool) {
 		return cached.content, cached.content != ""
 	}
 
-	content := readCapped(path)
+	content := readCapped(l.dir, id+".md")
 	l.remember(path, cacheEntry{modTime: mod, size: st.Size(), content: content})
 	return content, content != ""
 }
 
 // readCapped reads at most MaxBytes+1 bytes (so an oversized file can't allocate
 // unbounded memory), trims, and appends a truncation notice when over the cap.
-// A read error degrades to "".
-func readCapped(path string) string {
-	f, err := os.Open(path)
+// A read error degrades to "". Round 20 Sec H3: opens via safepath.SafeOpen
+// (dirfd-walk + O_NOFOLLOW) so an agent with Bash that plants
+// `<groupConfigDir>/<id>.md → ~/.aws/credentials` cannot redirect the
+// operator-trusted `[Group instructions]` source — same class of attack
+// as round-19's SOUL/AGENTS fix, against the SAME trusted region.
+func readCapped(dir, leaf string) string {
+	f, err := safepath.SafeOpen(dir, leaf)
 	if err != nil {
 		return ""
 	}

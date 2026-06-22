@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // AgentConfig is the on-disk "agent" block: the model and the model-gateway
@@ -210,8 +212,14 @@ func Load(path string) ([]Resolved, error) {
 }
 
 // readFile parses a config.json, returning a zero File if it doesn't exist.
+// Round 20 H1: routes through safepath.SafeRead so an agent (Bash + bypass)
+// that plants `~/.xclaw/config.json → /attacker-controlled.json` cannot
+// redirect the operator-trusted bot roster (URLs, ports, agent dirs,
+// on-behalf-of grantors) at next daemon restart.
 func readFile(path string) (File, error) {
-	data, err := os.ReadFile(path)
+	dir := filepath.Dir(path)
+	leaf := filepath.Base(path)
+	data, err := safepath.SafeRead(dir, leaf, 4<<20) // 4 MiB cap (1k-bot roster fits easily)
 	if os.IsNotExist(err) {
 		return File{}, nil
 	}
@@ -387,15 +395,15 @@ func mergeCtx(dst *ContextConfig, src *ContextConfig) {
 // dir: SOUL.md (identity/persona) followed by AGENTS.md (behavior norms). Each
 // is trimmed; missing/empty files are skipped. Returns "" if neither exists.
 //
-// Round 19 Sec #1: opens with O_NOFOLLOW so an agent (Bash + bypass) that
-// plants `~/.xclaw/<id>/SOUL.md → /Users/victim/.aws/credentials` cannot
-// redirect the trusted-prompt source. The bytes from the symlink target
-// would otherwise have been injected verbatim as TrustedText into every
-// system prompt, leaking the file contents on next reply.
+// Round 19/20 Sec H1: routes through safepath.SafeRead so an agent (Bash +
+// bypass) that plants `~/.xclaw/<id>/SOUL.md → /Users/victim/.aws/credentials`
+// cannot redirect the trusted-prompt source. The bytes from the symlink
+// target would otherwise have been injected verbatim as TrustedText into
+// every system prompt, leaking the file contents on next reply.
 func soul(botRoot string) string {
 	var parts []string
 	for _, name := range []string{"SOUL.md", "AGENTS.md"} {
-		data, err := readNoFollow(filepath.Join(botRoot, name))
+		data, err := safepath.SafeRead(botRoot, name, 1<<20) // 1 MiB cap; errors on oversize
 		if err != nil {
 			continue
 		}
@@ -405,12 +413,6 @@ func soul(botRoot string) string {
 	}
 	return strings.Join(parts, "\n\n")
 }
-
-// readNoFollow is defined per-OS (config_read_unix.go / config_read_windows.go).
-// On Unix it opens with O_NOFOLLOW so a symlinked SOUL.md / AGENTS.md is
-// refused at open time. On Windows there's no O_NOFOLLOW analogue; the
-// fallback Lstats first then opens, with the documented small TOCTOU
-// window (Windows symlinks require admin/Developer Mode).
 
 // assertGroupConfigDirOutsideCwd enforces that groupConfigDir (whose files are
 // injected UNSANITIZED into the system prompt) is neither the agent-writable

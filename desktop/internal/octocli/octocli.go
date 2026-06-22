@@ -34,8 +34,8 @@ import (
 
 	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/octoapi"
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
 )
 
 const repo = "Mininglamp-OSS/octo-cli"
@@ -104,15 +104,15 @@ func Dir() string {
 // BinPath is ~/.xclaw/bin/octo-cli.
 func BinPath() string { return filepath.Join(Dir(), binName()) }
 
-func versionFile() string { return filepath.Join(Dir(), "octo-cli.version") }
-
 // InstalledVersion returns the recorded version of the installed binary, or ""
-// if octo-cli isn't installed.
+// if octo-cli isn't installed. Round 20 Sec H5: routed through SafeRead so
+// an agent-planted `~/.xclaw/bin/octo-cli.version → ~/.ssh/known_hosts`
+// can't surface arbitrary file contents in the tray as a "version" string.
 func InstalledVersion() string {
 	if !isFile(BinPath()) {
 		return ""
 	}
-	b, err := os.ReadFile(versionFile())
+	b, err := safepath.SafeRead(Dir(), "octo-cli.version", 256)
 	if err != nil {
 		return "" // installed but version unknown
 	}
@@ -186,7 +186,12 @@ func EnsureInstalled() error {
 	if err != nil {
 		return fmt.Errorf("EnsureInstalled: bundled octo-cli integrity check failed: %w", err)
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	// Round 20 H1 / Go #2: was `os.MkdirAll(Dir(), 0o755)` which follows
+	// symlinks at every intermediate. Agent plants `~/.xclaw/bin → ~/.ssh/`;
+	// MkdirAll silently follows; subsequent installBinary writes the 0o700
+	// octo-cli executable under .ssh. SafeMkdirAll walks via dirfd.
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
 		return err
 	}
 	if err := installBinary("", buf); err != nil {
@@ -345,7 +350,10 @@ func Upgrade(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	// Round 20 H1 / Go #2: same dirfd-walk MkdirAll as EnsureInstalled
+	// (replacement for os.MkdirAll which follows symlinks).
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
 		return "", err
 	}
 	// Snapshot the current binary as .prev before replacing it, so a bad upgrade
@@ -354,7 +362,7 @@ func Upgrade(ctx context.Context) (string, error) {
 	// Round 19 Sec #2: routed through safepath so an agent-planted
 	// `~/.xclaw/bin/octo-cli.prev → <attacker-writable-path>` can't redirect
 	// the 0o700-mode write (executable!) to a path of the attacker's choosing.
-	if cur, rerr := os.ReadFile(BinPath()); rerr == nil {
+	if cur, rerr := safepath.SafeRead(Dir(), binName(), 64<<20); rerr == nil {
 		_ = safepath.SafeWrite(Dir(), binName()+".prev", cur, 0o700)
 	}
 	if err := installBinary("", bin); err != nil {

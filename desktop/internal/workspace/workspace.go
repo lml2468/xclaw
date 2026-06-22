@@ -25,7 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/lml2468/xclaw/core/sandbox"
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or

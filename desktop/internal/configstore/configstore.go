@@ -19,8 +19,8 @@ import (
 
 	"github.com/lml2468/xclaw/core/atomicfile"
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/octocli"
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
 	"github.com/lml2468/xclaw/desktop/internal/secrets"
 )
 
@@ -72,9 +72,13 @@ Be concise. Cite sources when asserting facts.>
 `
 
 // readFile parses config.json into the daemon's File shape (empty File if absent).
+// Round 20 H2: routes through safepath.SafeRead so an agent (Bash + bypass)
+// that plants `~/.xclaw/config.json → /attacker.json` cannot redirect the
+// operator-trusted bot roster on the next GUI load.
 func readFile() (config.File, error) {
 	var f config.File
-	raw, err := os.ReadFile(Path())
+	home, _ := os.UserHomeDir()
+	raw, err := safepath.SafeRead(home, ".xclaw/config.json", 4<<20) // 4 MiB cap
 	if err != nil {
 		if os.IsNotExist(err) {
 			return f, nil

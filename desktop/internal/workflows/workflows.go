@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lml2468/xclaw/desktop/internal/safepath"
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 // botDir is ~/.xclaw/<botID>/.claude/workflows — inside CLAUDE_CONFIG_DIR so

@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+
+	"github.com/lml2468/xclaw/core/safepath"
 )
 
 const label = "com.xclaw.desktop"
@@ -90,17 +92,25 @@ func Enable() error {
 </dict>
 </plist>
 `, label, exe)
-	path := plistPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// Round 20 Sec F5: was `os.MkdirAll + os.WriteFile` which follows
+	// symlinks at every component. An agent with Bash on the operator's
+	// account plants `~/Library/LaunchAgents/<label>.plist → <attacker
+	// plist or another service's plist>`; next Enable() rewrites that
+	// file with our ProgramArguments under the operator's uid. Symlink
+	// creation in ~/Library/LaunchAgents requires no privilege.
+	// safepath walks via dirfd; refuses any symlinked component.
+	home, _ := os.UserHomeDir()
+	if err := safepath.SafeMkdirAll(home, "Library/LaunchAgents", 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
+	if err := safepath.SafeWrite(home, "Library/LaunchAgents/"+label+".plist", []byte(plist), 0o644); err != nil {
 		return err
 	}
 	// Reload: bootout any stale registration (might point at an old bundle
 	// path), then bootstrap fresh. bootout exits non-zero when nothing is
 	// loaded — that's fine, ignore.
 	uid := strconv.Itoa(os.Getuid())
+	path := plistPath()
 	_ = exec.Command("launchctl", "bootout", "gui/"+uid, path).Run()
 	if out, err := exec.Command("launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w (output: %s)", err, string(out))

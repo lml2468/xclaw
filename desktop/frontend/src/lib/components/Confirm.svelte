@@ -15,7 +15,7 @@
   // would hand focus to the outer modal's Tab trap, which cycles through the
   // whole form behind the confirm; a subsequent Esc then fires from a node
   // outside .cscrim and closes the modal instead of cancelling the confirm.
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   let { message, confirmLabel = "确认", cancelLabel = "取消", danger = false, onresult }:
     { message: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean; onresult: (ok: boolean) => void } = $props();
 
@@ -44,7 +44,11 @@
     const opener = (document.activeElement as HTMLElement) ?? null;
     const node = scrim;
     node?.addEventListener("keydown", onKey);
-    primary?.focus();
+    // Wait one tick so bind:this on `primary` has committed before we
+    // focus — on slow first paint primary?.focus() ran while primary
+    // was still undefined, leaving focus on the body so Tab→ went to
+    // [Cancel] instead of [Confirm]. Round 20 frontend #1.
+    void tick().then(() => primary?.focus());
     return () => {
       node?.removeEventListener("keydown", onKey);
       try { opener?.focus?.(); } catch (_) {}

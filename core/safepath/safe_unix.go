@@ -163,18 +163,28 @@ func SafeOpen(root, rel string) (*os.File, error) {
 	return f, nil
 }
 
-// SafeRead is SafeOpen + ReadAll. Cap is enforced via io.LimitReader; pass 0
-// to read without a cap.
+// SafeRead is SafeOpen + ReadAll. Cap is enforced as a HARD limit: if the
+// file is larger than cap bytes, returns an error instead of silently
+// truncating (round 20 Go HIGH — round-19's LimitReader trick swallowed
+// oversize SOUL.md so the daemon shipped a half-prompt as the operator's
+// trusted identity). Pass cap = 0 to read without a cap.
 func SafeRead(root, rel string, cap int64) ([]byte, error) {
 	f, err := SafeOpen(root, rel)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	if cap > 0 {
-		return io.ReadAll(io.LimitReader(f, cap))
+	if cap <= 0 {
+		return io.ReadAll(f)
 	}
-	return io.ReadAll(f)
+	buf, err := io.ReadAll(io.LimitReader(f, cap+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > cap {
+		return nil, fmt.Errorf("safepath: file %q exceeds %d byte cap", rel, cap)
+	}
+	return buf, nil
 }
 
 // SafeWrite atomically writes data to <root>/<rel>. The parent chain is
@@ -321,11 +331,17 @@ func SafeMkdirAll(root, rel string, perm os.FileMode) error {
 		}
 		// Component missing — mkdirat then re-open with O_NOFOLLOW.
 		if merr := unix.Mkdirat(cur, p, uint32(perm)); merr != nil {
-			return merr
+			// Race-tolerant: another caller may have created the dir
+			// between our openat and our mkdirat. EEXIST is fine as long
+			// as the now-existing component is a directory (re-openat
+			// with O_DIRECTORY|O_NOFOLLOW will succeed).
+			if !errors.Is(merr, unix.EEXIST) {
+				return merr
+			}
 		}
 		next, oerr = unix.Openat(cur, p, noFollowDirFlags, 0)
 		if oerr != nil {
-			return oerr
+			return classifyOpenErr(cur, p, oerr, strings.Join(parts[:i+1], "/"))
 		}
 		unix.Close(cur)
 		cur = next

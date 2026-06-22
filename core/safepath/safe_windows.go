@@ -82,10 +82,18 @@ func SafeRead(root, rel string, cap int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if cap > 0 {
-		return io.ReadAll(io.LimitReader(f, cap))
+	if cap <= 0 {
+		return io.ReadAll(f)
 	}
-	return io.ReadAll(f)
+	// Hard cap (round 20 Go HIGH): error rather than silently truncate.
+	buf, err := io.ReadAll(io.LimitReader(f, cap+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > cap {
+		return nil, fmt.Errorf("safepath: file %q exceeds %d byte cap", rel, cap)
+	}
+	return buf, nil
 }
 
 func SafeWrite(root, rel string, data []byte, perm os.FileMode) error {

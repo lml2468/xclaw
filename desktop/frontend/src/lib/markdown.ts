@@ -114,9 +114,19 @@ export function renderMarkdown(src: string): string {
   //
   // We do NOT forbid <button> because the code-block renderer above
   // emits its own <button class="cb-copy"> for the copy-code affordance.
+  //
+  // Round 20 frontend #4: ALLOWED_URI_REGEXP pins href/src/xlink:href
+  // to safe schemes only. DOMPurify's default already blocks
+  // javascript: + most weird schemes, but `data:` is allowed by
+  // default — an `<img src="data:text/html,...">` or SVG
+  // `<use xlink:href="https://tracker">` can phone home for tracking
+  // even though it can't execute. Restrict to https/mailto/anchors/
+  // relative paths; no `data:` exfil unless the renderer explicitly
+  // wants images (then loosen to `data:image/`).
   const clean = DOMPurify.sanitize(raw, {
     ADD_ATTR: ["target"],
     FORBID_TAGS: ["form"],
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|#|\/(?!\/))/i,
   });
   if (cache.size >= MAX) {
     const first = cache.keys().next().value;

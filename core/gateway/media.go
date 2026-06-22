@@ -40,6 +40,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lml2468/xclaw/core/config"
 	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/xclaw/core/safepath"
 	"github.com/lml2468/xclaw/core/safety"
 )
 
@@ -269,11 +270,16 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 		return "", fmt.Errorf("unsupported image type: %s", rawType)
 	}
 
-	dir := filepath.Join(cwd, InboundMediaDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Round 20 Sec F4: agent owns `cwd` (Bash + bypass) — bare MkdirAll
+	// would follow an agent-planted `.xclaw-media → ~/.ssh/` and the
+	// subsequent writeCapped would land attacker-supplied IM bytes under
+	// .ssh/. safepath's dirfd walk refuses the symlinked entry. cwd
+	// itself is operator-trusted as the sandbox root.
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir media dir: %w", err)
 	}
 	name := fmt.Sprintf("%s-image.%s", uuid.NewString(), ext)
+	dir := filepath.Join(cwd, InboundMediaDir)
 	localPath := filepath.Join(dir, name)
 	if err := writeCapped(localPath, resp.Body, maxImageBytes); err != nil {
 		return "", err
@@ -332,10 +338,12 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	if cwd == "" {
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
-	dir := filepath.Join(cwd, InboundMediaDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Round 20 Sec F4: dirfd-walk MkdirAll refuses an agent-planted
+	// `.xclaw-media → ~/.ssh/` redirect; same fix as the image path above.
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return fmt.Sprintf("[文件: %s - 下载错误: %v]", filename, err)
 	}
+	dir := filepath.Join(cwd, InboundMediaDir)
 	safeName := sanitizeFileBaseName(filename)
 	localPath := filepath.Join(dir, fmt.Sprintf("%s-%s", uuid.NewString(), safeName))
 	// Concatenate the already-read head with the remaining body, capped.

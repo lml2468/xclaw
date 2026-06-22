@@ -107,12 +107,10 @@ if [[ -n "$octo_tag" ]]; then
   # non-code file would break the bundle signature.
   mkdir -p "$bundle/Contents/Resources"
   cp "$out/octo-cli.version" "$bundle/Contents/Resources/octo-cli.version"
-  # SHA-256 sidecar (round 11 Sec) — EnsureInstalled verifies the helper
-  # against this before copying it to ~/.xclaw/bin. Without it, anyone with
-  # write access to Helpers/ (admin, tampered .zip, post-install attacker)
-  # could swap the binary and have it silently executed as the user on
-  # next launch. Sits in Resources so it's sealed as data, not signed code.
-  ( cd "$bundle/Contents/Helpers" && shasum -a 256 octo-cli ) > "$bundle/Contents/Resources/octo-cli.sha256"
+  # The SHA-256 sidecar is computed AFTER the inside-out codesign step below —
+  # signing rewrites the binary's signature region, so hashing it pre-sign
+  # would store a digest that the installed binary no longer matches and
+  # EnsureInstalled would fail-closed on every launch.
 fi
 
 if [[ -n "$sign_identity" ]]; then
@@ -122,6 +120,16 @@ if [[ -n "$sign_identity" ]]; then
     "$bundle/Contents/Helpers/xclawd"
   [[ -n "$octo_tag" ]] && codesign --force --options runtime --timestamp --sign "$sign_identity" \
     "$bundle/Contents/Helpers/octo-cli"
+  # SHA-256 sidecar (round 11 Sec) — EnsureInstalled verifies the helper
+  # against this before copying it to ~/.xclaw/bin. Without it, anyone with
+  # write access to Helpers/ (admin, tampered .zip, post-install attacker)
+  # could swap the binary and have it silently executed as the user on
+  # next launch. Sits in Resources so it's sealed as data, not signed code.
+  # MUST run after the Helpers codesign above and before the outer app
+  # codesign so the digest matches the on-disk signed binary AND gets sealed
+  # into the bundle's outer signature.
+  [[ -n "$octo_tag" ]] && \
+    ( cd "$bundle/Contents/Helpers" && shasum -a 256 octo-cli ) > "$bundle/Contents/Resources/octo-cli.sha256"
   codesign --force --options runtime --timestamp \
     --entitlements "$entitlements" --sign "$sign_identity" "$bundle"
   codesign --verify --deep --strict --verbose=2 "$bundle"
@@ -129,6 +137,9 @@ else
   echo "▸ ad-hoc signing (no XCLAW_SIGN_IDENTITY)…"
   codesign --force --sign - "$bundle/Contents/Helpers/xclawd" 2>/dev/null || true
   [[ -n "$octo_tag" ]] && codesign --force --sign - "$bundle/Contents/Helpers/octo-cli" 2>/dev/null || true
+  # Sidecar after ad-hoc signing, same reason as the Developer-ID branch.
+  [[ -n "$octo_tag" ]] && \
+    ( cd "$bundle/Contents/Helpers" && shasum -a 256 octo-cli ) > "$bundle/Contents/Resources/octo-cli.sha256"
   codesign --force --sign - "$bundle" 2>/dev/null || true
 fi
 

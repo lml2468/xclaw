@@ -486,10 +486,14 @@ func (x *OctoBuddyService) BotSkillDeleteFile(botID, name, rel string) error {
 }
 
 // BotSkillCreate scaffolds a new per-bot skill bundle.
-func (x *OctoBuddyService) BotSkillCreate(botID, name string) error { return skills.BotCreate(botID, name) }
+func (x *OctoBuddyService) BotSkillCreate(botID, name string) error {
+	return skills.BotCreate(botID, name)
+}
 
 // BotSkillDelete removes one of the bot's skill bundles.
-func (x *OctoBuddyService) BotSkillDelete(botID, name string) error { return skills.BotDelete(botID, name) }
+func (x *OctoBuddyService) BotSkillDelete(botID, name string) error {
+	return skills.BotDelete(botID, name)
+}
 
 // --- workflows: per-bot (~/.octobuddy/<id>/.claude/workflows) ---
 

@@ -407,23 +407,11 @@ func resolveMultipleForwardText(users []forwardUser, msgs []forwardMessage, apiU
 		capped = capped[:MultipleForwardMaxMessages]
 	}
 
-	userMap := make(map[string]string, len(users))
-	for _, u := range users {
-		if u.UID != "" && u.Name != "" {
-			safe := safety.SanitizeDisplayName(u.Name, "")
-			if safe == "" {
-				safe = safety.SanitizeDisplayName(u.UID, "unknown")
-			}
-			userMap[u.UID] = safe
-		}
-	}
+	userMap := forwardUserNameMap(users)
 
 	lines := []string{"[合并转发: 聊天记录]"}
 	for _, m := range capped {
-		senderName, ok := userMap[m.FromUID]
-		if !ok {
-			senderName = safety.SanitizeDisplayName(m.FromUID, "unknown")
-		}
+		senderName := forwardSenderName(userMap, m.FromUID)
 		if MessageType(m.Payload.Type) == MsgMultipleForward {
 			nested := resolveMultipleForwardText(m.Payload.Users, m.Payload.Msgs, apiURL, depth+1)
 			lines = append(lines, senderName+": [合并转发]", nested)
@@ -437,6 +425,27 @@ func resolveMultipleForwardText(users []forwardUser, msgs []forwardMessage, apiU
 	}
 	out := strings.Join(lines, "\n")
 	return truncateByBytes(out, MultipleForwardMaxOutputBytes, "\n[合并转发: 输出已截断]")
+}
+
+func forwardUserNameMap(users []forwardUser) map[string]string {
+	userMap := make(map[string]string, len(users))
+	for _, u := range users {
+		if u.UID != "" && u.Name != "" {
+			safe := safety.SanitizeDisplayName(u.Name, "")
+			if safe == "" {
+				safe = safety.SanitizeDisplayName(u.UID, "unknown")
+			}
+			userMap[u.UID] = safe
+		}
+	}
+	return userMap
+}
+
+func forwardSenderName(userMap map[string]string, uid string) string {
+	if senderName, ok := userMap[uid]; ok {
+		return senderName
+	}
+	return safety.SanitizeDisplayName(uid, "unknown")
 }
 
 // --- Core resolver ---

@@ -527,29 +527,8 @@ func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (
 
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
-	// Echo the inbound to observer sinks (control bus → GUI) before any work
-	// so a desktop attached to an IM-originated session can render the user's
-	// message immediately, not just see the bot's reply appear out of nowhere.
-	// Placed at the very top so /reset and other slash commands still produce
-	// an echo (matches user expectation: "I typed something, show it").
-	g.sink.OnUserMessage(sessionKey, msg)
-
-	// Ensure the session row exists and bump updated_at (drives ListSessions
-	// ordering). Touch avoids the extra read-back the turn doesn't use.
-	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
-		return g.failTurn(sessionKey, "store.Touch", err)
-	}
-
-	// In-chat slash commands (/reset, /config, /help) — handled BEFORE group
-	// -context caching, history append, and the agent query, so a command never
-	// reaches the LLM, is not stored as a turn, and does not leak into other
-	// members' group context. Scoped to this sessionKey: in a group that's the
-	// whole channel's shared session (commands.ts / index.ts handleMessage).
-	if reply, handled := g.handleCommand(msg.Text, sessionKey); handled {
-		if reply != "" {
-			g.sink.OnReply(sessionKey, reply)
-		}
-		return nil // skip context, history, and the agent query entirely
+	if handled, err := g.startTurn(sessionKey, msg); err != nil || handled {
+		return err
 	}
 
 	// Build the prompt. For group messages this injects the [Recent group
@@ -562,22 +541,8 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	// message silently drops from every subsequent [Recent group messages]
 	// delta. Set turnDelivered=true once the reply is on its way out so the
 	// happy path keeps the cursor advanced.
-	var (
-		preCursor      int64
-		hasGroupCursor bool
-		turnDelivered  bool
-	)
-	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
-		preCursor = g.groups.Cursor(msg.ChannelID)
-		hasGroupCursor = true
-		defer func() {
-			if hasGroupCursor && !turnDelivered {
-				// SetCursor is monotonic (refuses backward moves), so use the
-				// dedicated rewind path.
-				g.groups.RewindCursor(msg.ChannelID, preCursor)
-			}
-		}()
-	}
+	turnDelivered := false
+	defer g.rewindGroupCursorUnlessDelivered(msg, &turnDelivered)()
 	prompt := g.buildGroupPrompt(sessionKey, msg)
 
 	// Persist the (original) user message. CronFire is persisted so the
@@ -606,13 +571,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return g.failTurn(sessionKey, "resolve sandbox cwd", err)
 	}
 
-	// For GROUP turns, inject the channel roster + structured-mention format as
-	// operator-trusted system context (gateway-authored, not user text). DMs get
-	// no roster. Computed here where the channel id is in scope.
-	var rosterPrefix string
-	if g.groups != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
-		rosterPrefix = g.groups.MemberListPrefix(msg.ChannelID)
-	}
+	rosterPrefix := g.rosterPrefix(msg)
 
 	// Materialize inbound media/file attachments now that the session cwd is
 	// known but before driver.Query (inbound.ts G1/G2 + media-inbound.ts #86):
@@ -851,6 +810,40 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		}
 	}
 	return nil
+}
+
+func (g *Gateway) startTurn(sessionKey string, msg router.InboundMessage) (bool, error) {
+	g.sink.OnUserMessage(sessionKey, msg)
+	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
+		return false, g.failTurn(sessionKey, "store.Touch", err)
+	}
+	reply, handled := g.handleCommand(msg.Text, sessionKey)
+	if !handled {
+		return false, nil
+	}
+	if reply != "" {
+		g.sink.OnReply(sessionKey, reply)
+	}
+	return true, nil
+}
+
+func (g *Gateway) rewindGroupCursorUnlessDelivered(msg router.InboundMessage, delivered *bool) func() {
+	if g.groups == nil || msg.ChannelType != router.ChannelGroup || msg.ChannelID == "" {
+		return func() {}
+	}
+	preCursor := g.groups.Cursor(msg.ChannelID)
+	return func() {
+		if !*delivered {
+			g.groups.RewindCursor(msg.ChannelID, preCursor)
+		}
+	}
+}
+
+func (g *Gateway) rosterPrefix(msg router.InboundMessage) string {
+	if g.groups == nil || msg.ChannelType != router.ChannelGroup || msg.ChannelID == "" {
+		return ""
+	}
+	return g.groups.MemberListPrefix(msg.ChannelID)
 }
 
 // buildSystemPrompt assembles the frozen system-prompt append: the

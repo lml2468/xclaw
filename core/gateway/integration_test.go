@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/groupctx"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // TestGroupContextInjectionAndSafety verifies the integrated pipeline: a group
@@ -15,13 +17,7 @@ import (
 // request with the current-message anchor, and carries the security prefix +
 // SOUL prompt in SystemAppend.
 func TestGroupContextInjectionAndSafety(t *testing.T) {
-	st := newTestStore(t)
-	drv := &fakeDriver{threadID: "t", reply: "ok"}
-	gc := groupctx.New(6000)
-	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
-		WithGroupContext(gc).
-		WithSystemPrompt("you are OctoBuddy").
-		WithModel("claude-opus-4-8")
+	gw, drv := newGroupContextGateway(t, "you are OctoBuddy", "claude-opus-4-8")
 
 	// alice chats in the group WITHOUT mentioning the bot — observed as
 	// background, no turn triggered.
@@ -41,8 +37,27 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	if len(drv.requests) != 1 {
 		t.Fatalf("want 1 request (only the @-mention), got %d", len(drv.requests))
 	}
-	second := drv.requests[0]
+	assertGroupContextRequest(t, drv.requests[0])
+}
 
+func newGroupContextGateway(t *testing.T, systemPrompt, model string) (*Gateway, *fakeDriver) {
+	t.Helper()
+
+	st := newTestStore(t)
+	drv := &fakeDriver{threadID: "t", reply: "ok"}
+	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
+		WithGroupContext(groupctx.New(6000))
+	if systemPrompt != "" {
+		gw = gw.WithSystemPrompt(systemPrompt)
+	}
+	if model != "" {
+		gw = gw.WithModel(model)
+	}
+	return gw, drv
+}
+
+func assertGroupContextRequest(t *testing.T, second agent.Request) {
+	t.Helper()
 	// The delta must include alice's prior message under the group header.
 	if !strings.Contains(second.Prompt, safety.RecentGroupMessagesHeader) {
 		t.Fatalf("missing group header in prompt:\n%s", second.Prompt)
@@ -274,32 +289,13 @@ func TestReplyCursorAdvancesAndSegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The current message must NOT appear in its own (first) turn's delta.
-	p1 := drv.requests[0].Prompt
-	anchor1 := strings.Index(p1, safety.CurrentMessageAnchor)
-	if anchor1 < 0 {
-		t.Fatalf("missing anchor:\n%s", p1)
-	}
-	if strings.Contains(p1[:anchor1], "first-question") {
-		t.Fatalf("current message echoed into its own delta:\n%s", p1)
-	}
-
-	if seq, _ := st.BotReplySeq("c1"); seq != 100 {
-		t.Fatalf("reply cursor not advanced: got %d, want 100", seq)
-	}
+	assertFirstReplyCursorTurn(t, st, drv.requests[0].Prompt)
 
 	// Between turns, two messages are observed (non-mention background). The
 	// injection cursor only advances on a turn, so both land in turn 2's delta.
 	// One carries a seq AT/BELOW the answered cutoff (a late-delivered earlier
 	// message) and one ABOVE it, so the delta straddles the cutoff and must split.
-	gw.Observe(router.InboundMessage{
-		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "dave", FromName: "dave",
-		Text: "already-handled", MessageSeq: 90, // <= cutoff 100 -> answered
-	})
-	gw.Observe(router.InboundMessage{
-		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "erin", FromName: "erin",
-		Text: "fresh-chatter", MessageSeq: 150, // > cutoff 100 -> new
-	})
+	observeReplyCursorMessages(gw)
 
 	// Turn 2: carol asks at a higher seq. The observed answered message (seq 90)
 	// renders under [Previously answered]; the seq-150 message under [New since
@@ -311,12 +307,43 @@ func TestReplyCursorAdvancesAndSegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2 := drv.requests[1].Prompt
-	anchor2 := strings.Index(p2, safety.CurrentMessageAnchor)
-	if anchor2 < 0 {
-		t.Fatalf("missing anchor (turn 2):\n%s", p2)
+	assertSecondReplyCursorTurn(t, drv.requests[1].Prompt)
+}
+
+func assertFirstReplyCursorTurn(t *testing.T, st *store.Store, prompt string) {
+	t.Helper()
+
+	anchor := strings.Index(prompt, safety.CurrentMessageAnchor)
+	if anchor < 0 {
+		t.Fatalf("missing anchor:\n%s", prompt)
 	}
-	delta2 := p2[:anchor2]
+	if strings.Contains(prompt[:anchor], "first-question") {
+		t.Fatalf("current message echoed into its own delta:\n%s", prompt)
+	}
+	if seq, _ := st.BotReplySeq("c1"); seq != 100 {
+		t.Fatalf("reply cursor not advanced: got %d, want 100", seq)
+	}
+}
+
+func observeReplyCursorMessages(gw *Gateway) {
+	gw.Observe(router.InboundMessage{
+		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "dave", FromName: "dave",
+		Text: "already-handled", MessageSeq: 90, // <= cutoff 100 -> answered
+	})
+	gw.Observe(router.InboundMessage{
+		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "erin", FromName: "erin",
+		Text: "fresh-chatter", MessageSeq: 150, // > cutoff 100 -> new
+	})
+}
+
+func assertSecondReplyCursorTurn(t *testing.T, prompt string) {
+	t.Helper()
+
+	anchor := strings.Index(prompt, safety.CurrentMessageAnchor)
+	if anchor < 0 {
+		t.Fatalf("missing anchor (turn 2):\n%s", prompt)
+	}
+	delta2 := prompt[:anchor]
 	if !strings.Contains(delta2, "[Previously answered]") {
 		t.Fatalf("answered segment missing in turn 2 delta:\n%s", delta2)
 	}

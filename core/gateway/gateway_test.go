@@ -90,16 +90,28 @@ func TestFullTurnPipeline(t *testing.T) {
 	if d != router.Accepted {
 		t.Fatalf("want accepted, got %s", d)
 	}
+	assertFullTurnDriverRequest(t, drv)
+	assertFullTurnReply(t, sink)
+	assertFullTurnHistory(t, st)
+	assertFullTurnResume(t, st)
+}
 
-	// 1. driver was invoked with the user's text, no resume id (first turn).
+func assertFullTurnDriverRequest(t *testing.T, drv *fakeDriver) {
+	t.Helper()
 	if len(drv.requests) != 1 || drv.requests[0].Prompt != "hi" || drv.requests[0].SessionID != "" {
 		t.Fatalf("first request wrong: %+v", drv.requests)
 	}
-	// 2. reply assembled from text deltas, delivered to sink.
+}
+
+func assertFullTurnReply(t *testing.T, sink *captureSink) {
+	t.Helper()
 	if sink.replies["u1"] != "hello back" {
 		t.Fatalf("reply not delivered: %q", sink.replies["u1"])
 	}
-	// 3. user + assistant persisted.
+}
+
+func assertFullTurnHistory(t *testing.T, st *store.Store) {
+	t.Helper()
 	msgs, _ := st.RecentMessages("u1", 10)
 	if len(msgs) != 2 || msgs[0].Role != store.RoleUser || msgs[1].Role != store.RoleAssistant {
 		t.Fatalf("history wrong: %+v", msgs)
@@ -107,7 +119,10 @@ func TestFullTurnPipeline(t *testing.T) {
 	if msgs[1].Content != "hello back" {
 		t.Fatalf("assistant content wrong: %q", msgs[1].Content)
 	}
-	// 4. resume id persisted.
+}
+
+func assertFullTurnResume(t *testing.T, st *store.Store) {
+	t.Helper()
 	if got, _ := st.Resume("u1", "fake"); got != "thr-1" {
 		t.Fatalf("resume not persisted: %q", got)
 	}
@@ -169,6 +184,20 @@ func TestSandboxInjectsCwdAndMemoryPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	dmReq := drv.requests[0]
+	assertDMSandboxRequest(t, cwdBase, memBase, dmReq)
+
+	// Group turn (mentioned) → different sandbox (kind prefix scopes the hash).
+	_, err = gw.Handle(context.Background(),
+		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", FromName: "alice", Text: "hi", Mentioned: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGroupSandboxRequest(t, drv.requests[1], dmReq)
+}
+
+func assertDMSandboxRequest(t *testing.T, cwdBase, memBase string, dmReq agent.Request) {
+	t.Helper()
+
 	if dmReq.Cwd == "" {
 		t.Fatal("DM turn missing Cwd")
 	}
@@ -185,14 +214,11 @@ func TestSandboxInjectsCwdAndMemoryPerSession(t *testing.T) {
 	if filepath.Base(dmReq.Cwd) != filepath.Base(dmReq.MemoryDir) {
 		t.Fatalf("cwd/memory hash mismatch: %q vs %q", dmReq.Cwd, dmReq.MemoryDir)
 	}
+}
 
-	// Group turn (mentioned) → different sandbox (kind prefix scopes the hash).
-	_, err = gw.Handle(context.Background(),
-		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", FromName: "alice", Text: "hi", Mentioned: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	grpReq := drv.requests[1]
+func assertGroupSandboxRequest(t *testing.T, grpReq, dmReq agent.Request) {
+	t.Helper()
+
 	if filepath.Base(grpReq.Cwd) == filepath.Base(dmReq.Cwd) {
 		t.Fatal("group and DM must resolve to distinct sandboxes")
 	}

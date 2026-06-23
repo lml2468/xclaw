@@ -416,18 +416,13 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	// the label/attribute so a downstream change can't reintroduce injection.
 	filename := safety.SanitizeDisplayName(att.Name, "未知文件")
 	ext := extractExtension(att.URL, filename)
-
 	if !textFileExtensions[ext] {
-		if att.Size > 0 {
-			return fmt.Sprintf("[文件: %s (%s)]", filename, formatBytes(att.Size))
-		}
-		return fmt.Sprintf("[文件: %s]", filename)
+		return renderFileDescription(filename, att.Size)
 	}
 	if att.Size > 0 && att.Size > maxFileDownloadBytes {
 		return fmt.Sprintf("[文件: %s (%s) - 超过下载上限 %s]",
 			filename, formatBytes(att.Size), formatBytes(maxFileDownloadBytes))
 	}
-
 	resp, err := g.fetchGuarded(ctx, att.URL)
 	if err != nil {
 		return fmt.Sprintf("[文件: %s - 拒绝下载: %v]", filename, err)
@@ -436,26 +431,33 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Sprintf("[文件: %s - 下载失败 HTTP %d]", filename, resp.StatusCode)
 	}
-
-	// Read up to the inline cap + 1 byte to detect overflow.
-	head := make([]byte, inlineProbeBytes)
-	n, err := io.ReadFull(resp.Body, head)
+	head, n, err := readInlineProbe(resp.Body)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Sprintf("[文件: %s - 网络错误: %v]", filename, err)
 	}
-	head = head[:n]
-
 	if n <= inlineFileMaxBytes {
-		// Inline: base64-wrap so the content can't break out of the tag.
 		return buildInlinedFileBody(filename, head)
 	}
-
-	// Exceeds inline cap — download to disk (capped at MAX_FILE_DOWNLOAD_BYTES).
 	if cwd == "" {
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
-	// dirfd-walk MkdirAll refuses an agent-planted
-	// `.octobuddy-media → ~/.ssh/` redirect; same fix as the image path above.
+	return g.materializeLargeFile(cwd, filename, head, resp.Body)
+}
+
+func renderFileDescription(filename string, size int64) string {
+	if size > 0 {
+		return fmt.Sprintf("[文件: %s (%s)]", filename, formatBytes(size))
+	}
+	return fmt.Sprintf("[文件: %s]", filename)
+}
+
+func readInlineProbe(r io.Reader) ([]byte, int, error) {
+	head := make([]byte, inlineProbeBytes)
+	n, err := io.ReadFull(r, head)
+	return head[:n], n, err
+}
+
+func (g *Gateway) materializeLargeFile(cwd, filename string, head []byte, body io.Reader) string {
 	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return fmt.Sprintf("[文件: %s - 下载错误: %v]", filename, err)
 	}
@@ -463,9 +465,8 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	safeName := sanitizeFileBaseName(filename)
 	leaf := fmt.Sprintf("%s-%s", uuid.NewString(), safeName)
 	localPath := filepath.Join(dir, leaf)
-	// Concatenate the already-read head with the remaining body, capped.
-	body := io.MultiReader(strings.NewReader(string(head)), resp.Body)
-	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, leaf), body, maxFileDownloadBytes); err != nil {
+	src := io.MultiReader(strings.NewReader(string(head)), body)
+	if err := writeCapped(cwd, filepath.Join(InboundMediaDir, leaf), src, maxFileDownloadBytes); err != nil {
 		_ = os.Remove(localPath)
 		return fmt.Sprintf("[文件: %s - %v]", filename, err)
 	}

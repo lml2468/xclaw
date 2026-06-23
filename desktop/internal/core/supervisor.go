@@ -5,6 +5,7 @@
 package core
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -18,22 +19,148 @@ import (
 	"time"
 )
 
-// envWithOctoBin returns the process environment with ~/.xclaw/bin prepended to
-// PATH, so the daemon's spawned agent can invoke the octo-cli companion binary.
+// envWithOctoBin returns the process environment with an augmented PATH so the
+// daemon (and the `claude` CLI it spawns) is findable regardless of how the app
+// was launched. A GUI launch — Finder/Dock on macOS, a .desktop entry on Linux —
+// inherits only a minimal PATH (launchd's /usr/bin:/bin:/usr/sbin:/sbin on
+// macOS), missing the Homebrew/npm/nvm/asdf dirs where `claude` typically lives,
+// which is the root cause of the selfcheck `claude=MISSING` / "turn failed at
+// driver.Query: exec: claude: executable file not found in $PATH" reports.
+//
+// Precedence (first wins after dedup): ~/.xclaw/bin (octo-cli companion) →
+// the user's interactive login-shell PATH (darwin/linux only — captures
+// whatever the user actually configured, including nvm/asdf/volta-managed
+// dirs) → a static list of well-known install dirs (belt-and-suspenders for
+// the common cases) → whatever PATH we inherited. Windows GUI apps already
+// inherit the full user+machine PATH from the registry, so there it just
+// prepends ~/.xclaw/bin (+ %APPDATA%\npm for npm-global installs).
+//
+// Note: Go's exec.Command resolves a bare binary name against the *parent*
+// process PATH (os.Getenv), not cmd.Env — so it is the daemon's own PATH, set
+// here, that makes `claude` resolvable, not the per-spawn agent env.
 func envWithOctoBin() []string {
 	env := os.Environ()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return env
 	}
-	bin := filepath.Join(home, ".xclaw", "bin")
+	sep := string(os.PathListSeparator)
+
+	var dirs []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		if d == "" || seen[d] {
+			return
+		}
+		seen[d] = true
+		dirs = append(dirs, d)
+	}
+
+	add(filepath.Join(home, ".xclaw", "bin"))
+	for _, d := range strings.Split(loginShellPath(), sep) {
+		add(d)
+	}
+	for _, d := range wellKnownBinDirs(home) {
+		add(d)
+	}
+
+	inherited := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			inherited = strings.TrimPrefix(kv, "PATH=")
+			break
+		}
+	}
+	for _, d := range strings.Split(inherited, sep) {
+		add(d)
+	}
+
+	pathKV := "PATH=" + strings.Join(dirs, sep)
 	for i, kv := range env {
 		if strings.HasPrefix(kv, "PATH=") {
-			env[i] = "PATH=" + bin + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			env[i] = pathKV
 			return env
 		}
 	}
-	return append(env, "PATH="+bin)
+	return append(env, pathKV)
+}
+
+// wellKnownBinDirs lists the conventional locations a coding-agent CLI lands in
+// per platform, used as a static fallback when the login-shell PATH probe comes
+// up empty or misses a dir. Returned paths need not exist — envWithOctoBin just
+// adds them to PATH; a non-existent dir is harmless.
+func wellKnownBinDirs(home string) []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{
+			"/opt/homebrew/bin", // Apple-silicon Homebrew
+			"/usr/local/bin",    // Intel Homebrew / manual installs
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".claude", "local"), // native installer
+			filepath.Join(home, "bin"),
+		}
+	case "windows":
+		var dirs []string
+		if ad := os.Getenv("APPDATA"); ad != "" {
+			dirs = append(dirs, filepath.Join(ad, "npm")) // npm-global .cmd shims
+		}
+		return dirs
+	default: // linux & other unix
+		return []string{
+			"/usr/local/bin",
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".claude", "local"),
+			filepath.Join(home, "bin"),
+			"/snap/bin",
+		}
+	}
+}
+
+// loginShellPath returns PATH as the user's interactive login shell sees it, or
+// "" on any failure or on Windows (no $SHELL there). A GUI-launched daemon gets
+// a truncated PATH; the user's shell sources their profile + rc, so its PATH
+// matches what a terminal would have (Homebrew, nvm, asdf, volta, npm-global, …).
+//
+// The shell runs as both interactive (-i) and login (-l) so it sources the login
+// profile (.zprofile/.bash_profile — Homebrew) AND the interactive rc
+// (.zshrc/.bashrc — where nvm/asdf/volta typically put the agent on PATH). The
+// value is fenced between markers so prompt/banner output printed around it by
+// an rc file is stripped. stdin is the null device (os/exec's default for a nil
+// Stdin) so the interactive shell can't block reading input, and a timeout bounds
+// a slow or hostile rc.
+//
+// An interactive shell frequently exits non-zero (job-control noise, a non-zero
+// last rc command) while still having printed the fenced PATH — so the marker is
+// extracted from stdout regardless of the exit status; only a missing marker is
+// treated as failure. Assumes a bash/zsh-family $SHELL (fish's list-valued $PATH
+// would not round-trip through the %s format); an unrecognized shell just yields
+// "" and the static well-known dirs carry the load.
+func loginShellPath() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		return ""
+	}
+	const marker = "__XCLAW_PATH__"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Interactive shells often exit non-zero yet still print the fenced value, so
+	// the error is intentionally ignored — marker presence is the success signal.
+	out, _ := exec.CommandContext(ctx, shell, "-i", "-l", "-c",
+		"printf '"+marker+"%s"+marker+"' \"$PATH\"").Output()
+	s := string(out)
+	i := strings.Index(s, marker)
+	if i < 0 {
+		return ""
+	}
+	s = s[i+len(marker):]
+	j := strings.Index(s, marker)
+	if j < 0 {
+		return ""
+	}
+	return s[:j]
 }
 
 // SocketPath returns the control-bus socket path for this user. Kept short to

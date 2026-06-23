@@ -51,7 +51,7 @@
   --avatar: 40px;
   --avatar-sm: 36px;
   --bubble-radius: 12px;
-  --content-max: 720px;
+  --content-max: none;
   --gutter: 28px;
   --radius: 12px;
   --radius-control: 10px;   /* inputs, small buttons, list rows — squircle-soft */

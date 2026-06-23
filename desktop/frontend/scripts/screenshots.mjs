@@ -37,7 +37,7 @@ async function shot(query, out, settle = 350) {
 }
 
 await shot("", `${docs}/screenshot-chat.png`);
-await shot("skills", `${docs}/screenshot-skills.png`);
+await shot("settings=skills", `${docs}/screenshot-skills.png`);
 
 await browser.close();
 console.log("done");

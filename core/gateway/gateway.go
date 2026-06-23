@@ -571,11 +571,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	turnCtx, idle := newIdleGuard(ctx, g.dispatchTimeout)
 	defer idle.stop()
 
-	var reply strings.Builder
-	var newResume string
-	var termErr string
-	var termTransient bool
-	var termHint string
+	var attemptResult agentAttemptResult
 	resume := req.SessionID
 	for attempt := 0; ; attempt++ {
 		req.SessionID = resume
@@ -587,12 +583,6 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 			return g.failTurn(sessionKey, "driver.Query", err)
 		}
 
-		reply.Reset()
-		newResume = ""
-		termErr = ""
-		termTransient = false
-		termHint = ""
-		resumeBad := false
 		// On a resume attempt the stream may turn out doomed (stale resume id). To
 		// avoid leaking a doomed attempt's events to the sink — the
 		// ResumeInvalid signal arrives on stderr while content arrives on stdout,
@@ -602,97 +592,10 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		// first, the buffer is dropped. A fresh attempt (no resume id) streams live
 		// immediately. Latency is bounded by the first event, so a healthy resume is
 		// unaffected.
-		gated := resume != ""
-		var gatedBuf []agent.AgentEvent
-		emitToSink := func(ev agent.AgentEvent) {
-			if gated {
-				gatedBuf = append(gatedBuf, ev)
-				return
-			}
-			g.sink.OnEvent(sessionKey, ev)
-		}
-		releaseGate := func() {
-			if !gated {
-				return
-			}
-			gated = false
-			for _, e := range gatedBuf {
-				g.sink.OnEvent(sessionKey, e)
-			}
-			gatedBuf = nil
-		}
-		for ev := range events {
-			// Reset the idle deadline on every event — a steady stream keeps the
-			// turn alive, only true silence kills it.
-			idle.reset()
-			// A stale resume id (session not found, e.g. after the agent's config
-			// dir changed) dooms this attempt — swallow its events so the failed
-			// run never reaches the sink, then retry fresh below.
-			if ev.ResumeInvalid {
-				resumeBad = true
-				gatedBuf = nil // drop anything buffered for the doomed attempt
-				continue
-			}
-			if resumeBad {
-				continue
-			}
-			emitToSink(ev)
-			switch ev.Kind {
-			case agent.KindSessionStarted:
-				if ev.SessionID != "" {
-					newResume = ev.SessionID
-				}
-				// The session is live — safe to flush buffered events and stream live.
-				releaseGate()
-			case agent.KindTextDelta:
-				reply.WriteString(ev.Text)
-			case agent.KindTurnDone:
-				// Accumulate this turn's token usage into the bot's persistent
-				// total (best-effort: a write failure must not fail the turn).
-				// skip when termErr was set earlier in this
-				// turn (the parser emits KindError before KindTurnDone for an
-				// is_error=true result, e.g. max_turns) — billing tokens +
-				// bumping the turns counter for a turn the user is told failed
-				// over-attributes both metrics.
-				//
-				// Also skip when resumeBad is set: the doomed attempt's Usage
-				// is from a stale-resume run we're about to retry, and the
-				// retry's KindTurnDone will commit a fresh Usage line. Without
-				// this gate the same logical turn double-billed tokens, cost,
-				// AND turn count on every self-heal.
-				if termErr == "" && !resumeBad && ev.Usage != nil {
-					if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
-						fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
-					}
-				}
-				// Mark the idle guard done so a concurrent AfterFunc firing
-				// in the same tick as this success event can't reroute the
-				// post-loop expired() check into the timeout-reply branch.
-				if termErr == "" && !resumeBad {
-					idle.markDone()
-				}
-			case agent.KindError:
-				// Terminal (non-recoverable) errors abort the turn: a result
-				// is_error (e.g. max_turns), or a process exit BEFORE any
-				// successful result. Recoverable errors (stderr warnings,
-				// api_retry, and a non-zero exit that follows a completed turn)
-				// are informational and don't gate the reply. (Stale-resume
-				// errors are swallowed above via resumeBad before reaching here.)
-				if !ev.Recoverable {
-					termErr = ev.Err
-					termTransient = ev.Transient
-					termHint = ev.RetryHint
-				}
-			}
-		}
-		// Stream ended while still gated but not doomed (e.g. a valid resume that
-		// produced no SessionStarted event): flush the buffer so nothing is lost.
-		if !resumeBad {
-			releaseGate()
-		}
+		attemptResult = g.consumeAgentAttempt(sessionKey, events, idle, resume != "")
 
 		// Self-heal a stale resume id: clear the mapping and retry once, fresh.
-		if resumeBad && resume != "" && attempt == 0 {
+		if shouldRetryFreshResume(attemptResult, resume, attempt) {
 			fmt.Fprintf(os.Stderr, "[gateway] stale resume id for %s; clearing and retrying fresh\n", sessionKey)
 			// Per-agent clear: self-heal only nukes THIS driver's
 			// row, not every agent's. the prior composite-PK promise was
@@ -709,14 +612,128 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return nil
 	}
 
-	if handled := g.handleTerminalAgentError(sessionKey, termErr, termTransient, termHint, &turnDelivered); handled {
+	if handled := g.handleTerminalAgentError(sessionKey, attemptResult.termErr, attemptResult.termTransient, attemptResult.termHint, &turnDelivered); handled {
 		return nil
 	}
 
-	text := reply.String()
-	g.completeSuccessfulTurn(sessionKey, msg, newResume, text)
+	g.completeSuccessfulTurn(sessionKey, msg, attemptResult.newResume, attemptResult.reply)
 	turnDelivered = true
 	return nil
+}
+
+func shouldRetryFreshResume(res agentAttemptResult, resume string, attempt int) bool {
+	return res.resumeBad && resume != "" && attempt == 0
+}
+
+type agentAttemptResult struct {
+	reply         string
+	newResume     string
+	termErr       string
+	termTransient bool
+	termHint      string
+	resumeBad     bool
+}
+
+func (g *Gateway) consumeAgentAttempt(sessionKey string, events <-chan agent.AgentEvent, idle *idleGuard, gated bool) agentAttemptResult {
+	var res agentAttemptResult
+	var reply strings.Builder
+	var gatedBuf []agent.AgentEvent
+	emitToSink := func(ev agent.AgentEvent) {
+		if gated {
+			gatedBuf = append(gatedBuf, ev)
+			return
+		}
+		g.sink.OnEvent(sessionKey, ev)
+	}
+	releaseGate := func() {
+		if !gated {
+			return
+		}
+		gated = false
+		for _, e := range gatedBuf {
+			g.sink.OnEvent(sessionKey, e)
+		}
+		gatedBuf = nil
+	}
+	for ev := range events {
+		// Reset the idle deadline on every event — a steady stream keeps the
+		// turn alive, only true silence kills it.
+		idle.reset()
+		// A stale resume id dooms this attempt. Swallow its events so the failed
+		// run never reaches the sink, then retry fresh in runTurn.
+		if ev.ResumeInvalid {
+			res.resumeBad = true
+			gatedBuf = nil
+			continue
+		}
+		if res.resumeBad {
+			continue
+		}
+		emitToSink(ev)
+		g.consumeAgentEvent(sessionKey, ev, idle, &reply, &res, releaseGate)
+	}
+	// Stream ended while still gated but not doomed (e.g. a valid resume that
+	// produced no SessionStarted event): flush the buffer so nothing is lost.
+	if !res.resumeBad {
+		releaseGate()
+	}
+	res.reply = reply.String()
+	return res
+}
+
+func (g *Gateway) consumeAgentEvent(sessionKey string, ev agent.AgentEvent, idle *idleGuard, reply *strings.Builder, res *agentAttemptResult, releaseGate func()) {
+	switch ev.Kind {
+	case agent.KindSessionStarted:
+		if ev.SessionID != "" {
+			res.newResume = ev.SessionID
+		}
+		// The session is live — safe to flush buffered events and stream live.
+		releaseGate()
+	case agent.KindTextDelta:
+		reply.WriteString(ev.Text)
+	case agent.KindTurnDone:
+		g.consumeTurnDone(sessionKey, ev, idle, res)
+	case agent.KindError:
+		g.consumeAgentError(ev, res)
+	}
+}
+
+func (g *Gateway) consumeTurnDone(sessionKey string, ev agent.AgentEvent, idle *idleGuard, res *agentAttemptResult) {
+	// Accumulate this turn's token usage into the bot's persistent total
+	// (best-effort: a write failure must not fail the turn). Skip when an earlier
+	// terminal error made this a failed turn, or when this is a stale-resume run
+	// that will be retried fresh.
+	if shouldCommitUsage(ev, res) {
+		if err := g.store.AddUsage(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens, ev.Usage.CacheCreationInputTokens, ev.Usage.CostUSD); err != nil {
+			fmt.Fprintf(os.Stderr, "[gateway] add usage %s: %v\n", sessionKey, err)
+		}
+	}
+	// Mark the idle guard done so a concurrent AfterFunc firing in the same tick
+	// as this success event can't reroute the post-loop expired() check into the
+	// timeout-reply branch.
+	if shouldMarkTurnDone(res) {
+		idle.markDone()
+	}
+}
+
+func shouldCommitUsage(ev agent.AgentEvent, res *agentAttemptResult) bool {
+	return res.termErr == "" && !res.resumeBad && ev.Usage != nil
+}
+
+func shouldMarkTurnDone(res *agentAttemptResult) bool {
+	return res.termErr == "" && !res.resumeBad
+}
+
+func (g *Gateway) consumeAgentError(ev agent.AgentEvent, res *agentAttemptResult) {
+	// Terminal (non-recoverable) errors abort the turn. Recoverable errors are
+	// informational and don't gate the reply. Stale-resume errors are swallowed
+	// by consumeAgentAttempt before reaching here.
+	if ev.Recoverable {
+		return
+	}
+	res.termErr = ev.Err
+	res.termTransient = ev.Transient
+	res.termHint = ev.RetryHint
 }
 
 func (g *Gateway) prepareAgentRequest(ctx context.Context, sessionKey string, msg router.InboundMessage) (agent.Request, error) {

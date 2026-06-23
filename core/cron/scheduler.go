@@ -196,6 +196,12 @@ type CreateParams struct {
 	RequestUID string
 }
 
+type cronCreatePlan struct {
+	recurring bool
+	now       time.Time
+	nextRun   int64
+}
+
 // Create validates and stores a new task, gated to the bot owner. Returns the
 // created task. Mirrors cron_create in cron-tool.ts (owner-gate, schedule
 // validation, prompt-byte cap, MAX_TASKS cap re-checked inside the mutator).
@@ -206,46 +212,11 @@ func (m *Manager) Create(p CreateParams) (Task, error) {
 	if p.Coords.ChannelID == "" && p.Coords.FromUID == "" {
 		return Task{}, fmt.Errorf("task has no session coords to bind to")
 	}
-	oneShot := isOneShotSchedule(p.Schedule)
-	if !ValidateSchedule(p.Schedule) {
-		if oneShot {
-			return Task{}, fmt.Errorf("one-shot time is invalid: %s", p.Schedule)
-		}
-		return Task{}, fmt.Errorf("invalid cron expression: %s", p.Schedule)
+	plan, err := prepareCronCreate(p, m.now())
+	if err != nil {
+		return Task{}, err
 	}
-	if len(p.Prompt) == 0 {
-		return Task{}, fmt.Errorf("prompt is required")
-	}
-	if len(p.Prompt) > MaxPromptBytes {
-		return Task{}, fmt.Errorf("prompt too long (max %d bytes)", MaxPromptBytes)
-	}
-	recurring := !oneShot
-	if p.Recurring != nil {
-		recurring = *p.Recurring
-	}
-	now := m.now()
-	next, ok := computeNextRun(p.Schedule, now)
-	if !ok {
-		if oneShot {
-			return Task{}, fmt.Errorf("one-shot time is in the past or invalid")
-		}
-		return Task{}, fmt.Errorf("schedule never matches (impossible cron): %s", p.Schedule)
-	}
-	task := Task{
-		ID:          uuid.NewString(),
-		Schedule:    p.Schedule,
-		Recurring:   recurring,
-		Prompt:      p.Prompt,
-		ChannelID:   p.Coords.ChannelID,
-		ChannelType: p.Coords.ChannelType,
-		FromUID:     p.Coords.FromUID,
-		FromName:    p.Coords.FromName,
-		CreatedBy:   p.RequestUID,
-		Enabled:     true,
-		CreatedAt:   unixMS(now),
-		LastRun:     0,
-		NextRun:     unixMS(next),
-	}
+	task := buildCronTask(p, plan)
 	capped := false
 	if _, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
 		// Re-check the cap inside the mutator so a concurrent create can't push us
@@ -262,6 +233,52 @@ func (m *Manager) Create(p CreateParams) (Task, error) {
 		return Task{}, fmt.Errorf("task limit reached (max %d); delete one first", MaxTasksPerBot)
 	}
 	return task, nil
+}
+
+func prepareCronCreate(p CreateParams, now time.Time) (cronCreatePlan, error) {
+	oneShot := isOneShotSchedule(p.Schedule)
+	if !ValidateSchedule(p.Schedule) {
+		if oneShot {
+			return cronCreatePlan{}, fmt.Errorf("one-shot time is invalid: %s", p.Schedule)
+		}
+		return cronCreatePlan{}, fmt.Errorf("invalid cron expression: %s", p.Schedule)
+	}
+	if len(p.Prompt) == 0 {
+		return cronCreatePlan{}, fmt.Errorf("prompt is required")
+	}
+	if len(p.Prompt) > MaxPromptBytes {
+		return cronCreatePlan{}, fmt.Errorf("prompt too long (max %d bytes)", MaxPromptBytes)
+	}
+	recurring := !oneShot
+	if p.Recurring != nil {
+		recurring = *p.Recurring
+	}
+	next, ok := computeNextRun(p.Schedule, now)
+	if !ok {
+		if oneShot {
+			return cronCreatePlan{}, fmt.Errorf("one-shot time is in the past or invalid")
+		}
+		return cronCreatePlan{}, fmt.Errorf("schedule never matches (impossible cron): %s", p.Schedule)
+	}
+	return cronCreatePlan{recurring: recurring, now: now, nextRun: unixMS(next)}, nil
+}
+
+func buildCronTask(p CreateParams, plan cronCreatePlan) Task {
+	return Task{
+		ID:          uuid.NewString(),
+		Schedule:    p.Schedule,
+		Recurring:   plan.recurring,
+		Prompt:      p.Prompt,
+		ChannelID:   p.Coords.ChannelID,
+		ChannelType: p.Coords.ChannelType,
+		FromUID:     p.Coords.FromUID,
+		FromName:    p.Coords.FromName,
+		CreatedBy:   p.RequestUID,
+		Enabled:     true,
+		CreatedAt:   unixMS(plan.now),
+		LastRun:     0,
+		NextRun:     plan.nextRun,
+	}
 }
 
 // List returns the bot's tasks (no gating — listing is read-only).

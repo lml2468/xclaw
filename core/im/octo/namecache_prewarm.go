@@ -118,13 +118,7 @@ func (c *nameCache) prewarm(
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			// Fetch ctx is INDEPENDENT of the caller's wait budget — the
-			// caller blocks on `done` for at most `timeout` and walks away,
-			// but the fetch keeps running on its own deadline and the
-			// result lands in the cache for the next caller.
-			ctx, cancel := context.WithTimeout(context.Background(), prewarmFetchTimeout)
-			defer cancel()
-			c.storeName(kind, k, bucket, prefix+k, fetch(ctx, k))
+			c.prewarmOne(kind, k, bucket, prefix+k, fetch)
 		}(nk)
 	}
 	go func() { wg.Wait(); close(done) }()
@@ -132,6 +126,14 @@ func (c *nameCache) prewarm(
 	case <-done:
 	case <-time.After(timeout):
 	}
+}
+
+func (c *nameCache) prewarmOne(kind NameKind, key string, bucket map[string]nameEntry, cacheKey string, fetch func(context.Context, string) string) {
+	// Fetch ctx is independent of the caller's wait budget; the caller may walk
+	// away, but the result still lands in cache for the next caller.
+	ctx, cancel := context.WithTimeout(context.Background(), prewarmFetchTimeout)
+	defer cancel()
+	c.storeName(kind, key, bucket, cacheKey, fetch(ctx, key))
 }
 
 func (c *nameCache) shouldPrewarmKey(cacheKey, key string, bucket map[string]nameEntry) bool {

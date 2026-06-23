@@ -74,11 +74,15 @@ export interface Session {
   key: string;        // sessionKey (the console session is keyed on CONSOLE_UID)
   channelType: number; // router channel type: 1=DM, 2=Group, 3=Console
   title: string;
- // channelName is the IM platform's display name for this conversation —
- // the DM peer's name for a DM, the group/topic name for a group/thread —
- // resolved by the daemon's nameCache (lazy REST + free-feed from inbound
- // messages). Empty when not yet known; the sidebar falls back to `title`.
+ // channelName is the IM platform's display name for THIS session — DM
+ // peer's name, thread's own name, or bare group's name. Sidebar renders
+ // it directly (`s.channelName || s.title`). For threads the parent
+ // group's name ships separately as `parentChannelName` so the chat header
+ // can render a `<group> > <thread>` breadcrumb.
   channelName?: string;
+ // parentChannelName is the parent group's name for a thread session,
+ // undefined otherwise. Only the chat header reads it (sidebar ignores).
+  parentChannelName?: string;
   messages: Message[];
   awaiting: boolean;  // a turn is in flight (show typing indicator)
  // awaitingSince is the Date.now of the most recent turnStart for this
@@ -471,6 +475,12 @@ class Store {
         if (!this.selectedBotId && this.bots.length) this.selectBot(this.bots[0].id);
       } else if (env.type === "sessions.list" && env.body && Array.isArray(env.body.sessions)) {
         this.applySessionsList(env.body.botId, env.body.sessions);
+      } else if (env.type === "session.upserted" && env.body && env.body.session) {
+ // Per-turn push from the daemon: a session row's projectable state just
+ // changed (new session, new preview/updatedAt, name now known). Reuse the
+ // same row-merge path as the sessions.list pull so first paint behavior
+ // matches incremental updates.
+        this.applySessionsList(env.body.botId, [env.body.session]);
       } else if (env.type === "cron.list" && env.body && env.body.botId && Array.isArray(env.body.tasks)) {
  // Wrapped response carries botId so a fast bot-switch mid-fetch routes
  // to the right per-bot bucket. cron.create/update/delete responses
@@ -701,27 +711,36 @@ class Store {
  // keeps the local copy.
     const persisted: Message[] = rows.map((r) => ({
       id: newId(), role: r.role as Role, text: r.content, ts: r.ts, cron: !!r.cron,
+      senderName: r.fromName || undefined,
     }));
     if (s.messages.length === 0) {
       s.messages = persisted;
       return;
     }
- // count by (role, text, floored-ts) tuple — a Set incorrectly dedupes
- // two distinct user messages with identical text that landed in the
- // same wall-clock second (e.g. an operator retry "ok"/"ok"), dropping
- // the second local copy in favor of the persisted row. Decrementing
- // the count means each persisted occurrence matches at most ONE local
- // copy; extra local duplicates stay visible.
-    const counts = new Map<string, number>();
+ // Match each persisted row against at most ONE local copy by
+ // (role, text, floored-ts) tuple — a Set would incorrectly dedupe two
+ // distinct user messages with identical text that landed in the same
+ // wall-clock second (e.g. an operator retry "ok"/"ok"). Stash a list per
+ // tuple so we can also MERGE fields: the live session.user_message
+ // carries `senderUid` AND `senderName`, but the persisted row carries
+ // only `senderName` (the store has no from_uid column). Without the
+ // merge, the dedup would drop the local copy and lose `senderUid` —
+ // a future render that wanted the uid fallback (cached name resolved
+ // later) would see only the now-empty field.
+    const slots = new Map<string, Message[]>();
     for (const m of persisted) {
       const k = `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`;
-      counts.set(k, (counts.get(k) ?? 0) + 1);
+      const list = slots.get(k);
+      if (list) list.push(m);
+      else slots.set(k, [m]);
     }
     const localOnly = s.messages.filter((m) => {
       const k = `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`;
-      const n = counts.get(k) ?? 0;
-      if (n > 0) {
-        counts.set(k, n - 1);
+      const list = slots.get(k);
+      if (list && list.length > 0) {
+        const target = list.shift()!;
+        if (!target.senderUid && m.senderUid) target.senderUid = m.senderUid;
+        if (!target.senderName && m.senderName) target.senderName = m.senderName;
         return false;
       }
       return true;
@@ -748,14 +767,11 @@ class Store {
       const persisted = (r.updatedAt ?? 0) * 1000;
       s.lastActivity = existed ? Math.max(s.lastActivity, persisted) : persisted;
       s.preview = r.preview ?? "";
- // channelName lands from the daemon's name cache (sidebar shows it as the
- // row title — see prettyTitle). First listing after start usually has it
- // empty (cache is cold); a subsequent listing once REST resolves the name
- // overwrites and the row re-renders with the real name.
-      if (r.channelName) {
-        s.channelName = r.channelName;
-        s.title = r.channelName;
-      }
+ // channelName: the IM platform's display name. Sidebar renders it via
+ // `s.channelName || s.title` so we don't dual-write title here. The
+ // parent name (for threads) feeds the chat header breadcrumb only.
+      s.channelName = r.channelName || s.channelName;
+      s.parentChannelName = r.parentChannelName || s.parentChannelName;
     }
     this.loadedSessionRosters[bid] = true;
  // First roster after connect: if nothing is selected yet, open the newest

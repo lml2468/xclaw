@@ -166,6 +166,14 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
+			// Prewarm the name cache before projecting summaries so the first
+			// sidebar paint shows names instead of bare ids. Channel names need
+			// a REST fetch; DM peer names usually free-feed from inbound, but
+			// a peer who hasn't spoken since restart needs an explicit lookup.
+			// Both prewarms run in parallel under a single 1.5s wall-clock cap.
+			if t.connector != nil {
+				prewarmNamesForSessions(t.connector, sums, 1500*time.Millisecond)
+			}
 			// Echo botId so the client never folds these rows into the wrong bot.
 			return control.SessionsListResponse{
 				BotID:    b.BotID,
@@ -409,10 +417,21 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 }
 
 // historyFromMessages projects store messages onto the wire history type.
+// FromName is forwarded only for user-role rows so a multi-author group
+// session can attribute persisted bubbles to the right speaker (assistant
+// rows also carry from_name in the store — that's the bot's own name and
+// has no UI use, plus assistant bubbles never read the field). Sanitized
+// at this wire boundary because IM-side FromName landed in the store
+// unprocessed; a name with BiDi overrides or control chars would otherwise
+// distort the rendered sender label.
 func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 	out := make([]control.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
-		out = append(out, control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp, Cron: m.Cron})
+		row := control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp, Cron: m.Cron}
+		if m.Role == store.RoleUser {
+			row.FromName = safety.SanitizeDisplayName(m.FromName, "")
+		}
+		out = append(out, row)
 	}
 	return out
 }
@@ -426,49 +445,109 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 func summariesFromSessions(sums []store.SessionSummary, conn *octo.Connector) []control.SessionSummary {
 	out := make([]control.SessionSummary, 0, len(sums))
 	for _, s := range sums {
-		out = append(out, control.SessionSummary{
-			Key:         s.Key,
-			ChannelType: s.ChannelType,
-			UpdatedAt:   s.UpdatedAt,
-			Preview:     s.Preview,
-			LastRole:    string(s.LastRole),
-			ChannelName: resolveSessionName(conn, s.ChannelType, s.Key),
-		})
+		out = append(out, summaryRow(s, conn))
 	}
 	return out
 }
 
-// resolveSessionName picks the right name resolver per channel type. DM keys
-// are "<spaceId>:<uid>" or bare "<uid>" — the trailing segment is the peer's
-// uid (UserName lookup). Group keys are the channel id verbatim (ChannelName
-// lookup, which itself reduces a thread compound to its parent group_no).
-// Returns "" for unknown types or a nil connector — the GUI handles fallback.
-func resolveSessionName(conn *octo.Connector, channelType int, key string) string {
-	if conn == nil || key == "" {
-		return ""
+// summaryRow projects one store SessionSummary onto the wire shape — shared
+// between sessions.list (the snapshot pull) and the session.upserted event
+// (the per-turn push) so both surfaces always speak the same projection.
+// For threads, ChannelName carries the thread's own name and
+// ParentChannelName carries the parent group's name; the GUI composes each
+// surface (sidebar uses ChannelName alone, chat header reads
+// "<ParentChannelName> > <ChannelName>").
+func summaryRow(s store.SessionSummary, conn *octo.Connector) control.SessionSummary {
+	row := control.SessionSummary{
+		Key:         s.Key,
+		ChannelType: s.ChannelType,
+		UpdatedAt:   s.UpdatedAt,
+		Preview:     s.Preview,
+		LastRole:    string(s.LastRole),
 	}
-	switch router.ChannelType(channelType) {
+	if conn == nil {
+		return row
+	}
+	switch router.ChannelType(s.ChannelType) {
 	case router.ChannelDM:
-		uid := key
-		if i := strings.LastIndexByte(key, ':'); i >= 0 {
-			uid = key[i+1:]
+		if uid := dmPeerUID(s.Key); uid != "" {
+			row.ChannelName = conn.UserName(uid)
 		}
-		return conn.UserName(uid)
 	case router.ChannelGroup:
-		return conn.ChannelName(key)
+		row.ChannelName = conn.ChannelName(s.Key)
+		if octo.IsThreadChannelID(s.Key) {
+			row.ParentChannelName = conn.ChannelName(octo.ExtractParentGroupNo(s.Key))
+		}
 	}
-	return ""
+	return row
 }
 
-// lastIndexByte is strings.LastIndexByte inlined to avoid the import cost (and
-// to keep the only strings.* dependency in this file local to the call site).
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
+// sessionTouchBroadcaster returns a notifier suitable for
+// gateway.WithSessionTouchNotifier: on every store-touch it looks up the
+// session's freshly-written row and broadcasts a session.upserted event so
+// GUI clients can incrementally refresh the sidebar without polling
+// sessions.list. Brand-new sessions (e.g. a just-started thread) appear on
+// first touch instead of staying invisible until the next pull.
+//
+// Reads the row via ListSessions (single SQL scan) and filters — adds one
+// query per turn, negligible at typical bot scale. A future store
+// optimization could expose a per-key getter; the projection logic in
+// summaryRow stays identical either way.
+func sessionTouchBroadcaster(srv *control.Server, botID string, st *store.Store, conn *octo.Connector) func(string, string, router.ChannelType) {
+	return func(sessionKey, channelID string, channelType router.ChannelType) {
+		sums, err := st.ListSessions()
+		if err != nil {
+			return
+		}
+		for _, s := range sums {
+			if s.Key != sessionKey {
+				continue
+			}
+			srv.Broadcast("session.upserted", control.SessionUpsertedBody{
+				BotID:   botID,
+				Session: summaryRow(s, conn),
+			})
+			return
 		}
 	}
-	return -1
+}
+
+// prewarmNamesForSessions populates the name cache for the given session list
+// in parallel — group channel names and DM peer names fetched concurrently
+// under a single wall-clock budget (otherwise the two prewarm calls would
+// serialize for 2× the budget). Console-keyed DM sessions are skipped: the
+// uid "gui-user" isn't a real IM peer and getUserInfo on it just earns a 500.
+func prewarmNamesForSessions(conn *octo.Connector, sums []store.SessionSummary, timeout time.Duration) {
+	var groupKeys, dmUids []string
+	for _, s := range sums {
+		switch router.ChannelType(s.ChannelType) {
+		case router.ChannelGroup:
+			groupKeys = append(groupKeys, s.Key)
+		case router.ChannelDM:
+			if uid := dmPeerUID(s.Key); uid != "" {
+				dmUids = append(dmUids, uid)
+			}
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); conn.PrewarmChannelNames(groupKeys, timeout) }()
+	go func() { defer wg.Done(); conn.PrewarmUserNames(dmUids, timeout) }()
+	wg.Wait()
+}
+
+// dmPeerUID extracts the peer's uid from a DM session key ("<spaceId>:<uid>"
+// or bare "<uid>") and filters out the synthetic Console key — the only
+// non-IM uid we'd otherwise try to resolve through the name service.
+func dmPeerUID(key string) string {
+	uid := key
+	if i := strings.LastIndexByte(key, ':'); i >= 0 {
+		uid = key[i+1:]
+	}
+	if uid == "" || uid == cron.ConsoleUID {
+		return ""
+	}
+	return uid
 }
 
 // channelTypeFor resolves the router/octo channel type for a cron task: an

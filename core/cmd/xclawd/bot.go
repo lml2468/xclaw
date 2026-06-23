@@ -324,6 +324,9 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithSandbox(cfg.CwdBase, cfg.MemoryBase).
 		WithDispatchTimeout(time.Duration(cfg.Agent.DispatchTimeoutSec) * time.Second).
 		WithMediaAuth(connector.MediaAuth())
+	if srv != nil {
+		gw = gw.WithSessionTouchNotifier(sessionTouchBroadcaster(srv, cfg.BotID, st, connector))
+	}
 	connector.SetGateway(gw)
 
 	// Eager-init the per-bot control-handler target so its embedded turnsWG is

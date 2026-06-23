@@ -3,6 +3,7 @@ package octo
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,25 +117,47 @@ func TestNameCacheResolveChannelLazyFetch(t *testing.T) {
 }
 
 // TestNameCacheResolveChannelThreadCompound proves a thread channel id
-// "<groupNo>____<shortId>" resolves via the parent group_no — we never call
-// the server with the compound id, since the documented endpoint is
-// /v1/bot/groups/{groupNo} and accepts no thread short-id.
+// "<groupNo>____<shortId>" fetches the THREAD's own name via the threads
+// endpoint, AND simultaneously warms the parent group so a downstream
+// composition (sidebar / chat-header) has both halves.
 func TestNameCacheResolveChannelThreadCompound(t *testing.T) {
-	var gotPath string
+	var mu sync.Mutex
+	hits := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.RequestURI()
-		_, _ = w.Write([]byte(`{"group_no":"g1","name":"Eng"}`))
+		mu.Lock()
+		hits[r.URL.Path]++
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/bot/groups/g1/threads/topic9":
+			_, _ = w.Write([]byte(`{"name":"Bug Triage"}`))
+		case "/v1/bot/groups/g1":
+			_, _ = w.Write([]byte(`{"name":"Engineering"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer srv.Close()
 	nc := newNameCache(NewRESTClient(srv.URL, func() string { return "tk" }))
 	nc.ResolveChannel("g1" + ThreadIDSeparator + "topic9")
 
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && gotPath == "" {
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		thread := hits["/v1/bot/groups/g1/threads/topic9"]
+		parent := hits["/v1/bot/groups/g1"]
+		mu.Unlock()
+		if thread > 0 && parent > 0 {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if want := "/v1/bot/groups/g1"; gotPath != want {
-		t.Fatalf("thread compound resolved to %q, want %q (parent group only)", gotPath, want)
+	mu.Lock()
+	defer mu.Unlock()
+	if hits["/v1/bot/groups/g1/threads/topic9"] != 1 {
+		t.Fatalf("thread endpoint hit count = %d, want 1", hits["/v1/bot/groups/g1/threads/topic9"])
+	}
+	if hits["/v1/bot/groups/g1"] != 1 {
+		t.Fatalf("parent group endpoint hit count = %d, want 1 (parent warmed in parallel)", hits["/v1/bot/groups/g1"])
 	}
 }
 

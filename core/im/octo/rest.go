@@ -291,6 +291,13 @@ func (c *RESTClient) SendReadReceipt(ctx context.Context, channelID string, chan
 	}, nil)
 }
 
+// nameResponse is the shared shape of GetUserInfo / GetGroupInfo replies —
+// both endpoints carry the display name under "name" (plus other ignored
+// fields). Declared once so a future schema tweak lands in one place.
+type nameResponse struct {
+	Name string `json:"name"`
+}
+
 // GetUserInfo resolves a user uid to its display name (api-fetch.ts
 // fetchUserInfo, GET /v1/bot/user/info?uid={uid}). Returns "" when the server
 // has no record of the uid (404) or any other transient failure — callers fall
@@ -300,11 +307,9 @@ func (c *RESTClient) GetUserInfo(ctx context.Context, uid string) string {
 	if uid == "" {
 		return ""
 	}
-	var raw struct {
-		Name string `json:"name"`
-	}
+	var raw nameResponse
 	if err := c.getJSON(ctx, "/v1/bot/user/info?uid="+url.QueryEscape(uid), &raw, true); err != nil {
-		fmt.Fprintf(os.Stderr, "[octo] getUserInfo error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[octo] getUserInfo(%q) error: %v\n", uid, err)
 		return ""
 	}
 	return raw.Name
@@ -318,11 +323,26 @@ func (c *RESTClient) GetGroupInfo(ctx context.Context, groupNo string) string {
 	if groupNo == "" {
 		return ""
 	}
-	var raw struct {
-		Name string `json:"name"`
-	}
+	var raw nameResponse
 	if err := c.getJSON(ctx, "/v1/bot/groups/"+url.PathEscape(groupNo), &raw, true); err != nil {
-		fmt.Fprintf(os.Stderr, "[octo] getGroupInfo error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[octo] getGroupInfo(%q) error: %v\n", groupNo, err)
+		return ""
+	}
+	return raw.Name
+}
+
+// GetThreadInfo resolves a thread (CommunityTopic / 子区) to its display name
+// (api-fetch.ts getThread, GET /v1/bot/groups/{groupNo}/threads/{shortId}).
+// Same soft-degrade contract as GetGroupInfo. The thread's parent group name
+// is a separate call (GetGroupInfo); compositing the two is the caller's job.
+func (c *RESTClient) GetThreadInfo(ctx context.Context, groupNo, shortID string) string {
+	if groupNo == "" || shortID == "" {
+		return ""
+	}
+	var raw nameResponse
+	path := "/v1/bot/groups/" + url.PathEscape(groupNo) + "/threads/" + url.PathEscape(shortID)
+	if err := c.getJSON(ctx, path, &raw, true); err != nil {
+		fmt.Fprintf(os.Stderr, "[octo] getThreadInfo(%q,%q) error: %v\n", groupNo, shortID, err)
 		return ""
 	}
 	return raw.Name

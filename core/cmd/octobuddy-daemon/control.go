@@ -606,6 +606,53 @@ func sessionTouchBroadcaster(srv *control.Server, botID string, st *store.Store,
 	}
 }
 
+// nameResolvedBroadcaster returns a hook for Connector.SetNameResolvedHook: when
+// a background name fetch lands a new display name, it finds every session that
+// references the resolved id and re-broadcasts session.upserted so the GUI's
+// sidebar row updates from the bare id to the name without waiting for the next
+// turn. summaryRow now reads a warm cache for that id, so the projected
+// ChannelName is populated. Reuses the same ListSessions scan + projection as
+// sessionTouchBroadcaster; resolves are far rarer than turns, so the extra
+// query is negligible. No fetch is re-kicked (the cache entry is fresh), so this
+// can't loop.
+func nameResolvedBroadcaster(srv *control.Server, botID string, st *store.Store, conn *octo.Connector) func(octo.NameKind, string, string) {
+	return func(kind octo.NameKind, key, _ string) {
+		sums, err := st.ListSessions()
+		if err != nil {
+			return
+		}
+		for _, s := range sums {
+			if !sessionRefersToName(s, kind, key) {
+				continue
+			}
+			srv.Broadcast("session.upserted", control.SessionUpsertedBody{
+				BotID:   botID,
+				Session: summaryRow(s, conn),
+			})
+		}
+	}
+}
+
+// sessionRefersToName reports whether session s would surface the just-resolved
+// name: a DM session whose peer uid matches (NameKindUser), or a group/thread
+// session whose own id — or, for a thread, its parent group id — matches
+// (NameKindChannel). Mirrors the id→name lookups summaryRow does per kind.
+func sessionRefersToName(s store.SessionSummary, kind octo.NameKind, key string) bool {
+	switch kind {
+	case octo.NameKindUser:
+		return router.ChannelType(s.ChannelType) == router.ChannelDM && dmPeerUID(s.Key) == key
+	case octo.NameKindChannel:
+		if router.ChannelType(s.ChannelType) != router.ChannelGroup {
+			return false
+		}
+		if s.Key == key {
+			return true
+		}
+		return octo.IsThreadChannelID(s.Key) && octo.ExtractParentGroupNo(s.Key) == key
+	}
+	return false
+}
+
 // prewarmNamesForSessions populates the name cache for the given session list
 // in parallel — group channel names and DM peer names fetched concurrently
 // under a single wall-clock budget (otherwise the two prewarm calls would

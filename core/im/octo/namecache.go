@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+// NameKind distinguishes the two id namespaces the name cache resolves: a DM
+// peer uid vs a group / thread channel id. It rides the resolved hook so the
+// daemon can map a freshly-resolved name back to the right kind of session.
+type NameKind int
+
+const (
+	NameKindUser    NameKind = iota // a DM peer uid
+	NameKindChannel                 // a group / thread channel id
+)
+
 // nameCache resolves uid→displayName and groupNo→channelName for the desktop
 // sidebar / chat-bubble UX. Sender names arrive on every inbound message
 // (BotMessage.FromName) and are seeded into the cache for free via LearnUser;
@@ -27,6 +37,11 @@ type nameCache struct {
 	users    map[string]nameEntry
 	channels map[string]nameEntry
 	inflight map[string]struct{} // dedup across goroutines; key = "u:"+uid or "c:"+groupNo
+	// onResolved, when set, fires after a background/prewarm fetch lands a
+	// non-empty name that newly differs from the cached value. Lets the daemon
+	// re-broadcast session.upserted so a sidebar row that first painted with the
+	// bare id picks up the resolved name without waiting for the next turn.
+	onResolved func(NameKind, string, string)
 }
 
 type nameEntry struct {
@@ -45,6 +60,34 @@ func newNameCache(rest *RESTClient) *nameCache {
 		users:    map[string]nameEntry{},
 		channels: map[string]nameEntry{},
 		inflight: map[string]struct{}{},
+	}
+}
+
+// SetResolvedHook registers the callback fired when a fetch resolves a name to
+// a new non-empty value. Set once during bot setup, before Connect, so reads on
+// the fetch goroutines never race a concurrent write.
+func (c *nameCache) SetResolvedHook(fn func(NameKind, string, string)) {
+	c.mu.Lock()
+	c.onResolved = fn
+	c.mu.Unlock()
+}
+
+// storeName records a freshly-fetched name under key, clears its inflight
+// marker, and — when the name is non-empty and newly differs from the prior
+// cached value — fires the resolved hook. Notifying only on a real change keeps
+// a session-list prewarm burst from re-broadcasting rows whose names were
+// already known (and a "" fetch result from clobbering a row back to its id).
+// Shared by every fetch path (fetchUser/fetchGroup/fetchThread + prewarm) so
+// the notify semantics live in exactly one place.
+func (c *nameCache) storeName(kind NameKind, key string, bucket map[string]nameEntry, inflightKey, name string) {
+	c.mu.Lock()
+	prev := bucket[key].name
+	bucket[key] = nameEntry{name: name, fetchedAt: time.Now()}
+	delete(c.inflight, inflightKey)
+	hook := c.onResolved
+	c.mu.Unlock()
+	if hook != nil && name != "" && name != prev {
+		hook(kind, key, name)
 	}
 }
 
@@ -148,31 +191,20 @@ func (c *nameCache) kickIfMissing(
 func (c *nameCache) fetchUser(uid string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	name := c.rest.GetUserInfo(ctx, uid)
-	c.mu.Lock()
-	c.users[uid] = nameEntry{name: name, fetchedAt: time.Now()}
-	delete(c.inflight, "u:"+uid)
-	c.mu.Unlock()
+	c.storeName(NameKindUser, uid, c.users, "u:"+uid, c.rest.GetUserInfo(ctx, uid))
 }
 
 func (c *nameCache) fetchGroup(groupNo string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	name := c.rest.GetGroupInfo(ctx, groupNo)
-	c.mu.Lock()
-	c.channels[groupNo] = nameEntry{name: name, fetchedAt: time.Now()}
-	delete(c.inflight, "c:"+groupNo)
-	c.mu.Unlock()
+	c.storeName(NameKindChannel, groupNo, c.channels, "c:"+groupNo, c.rest.GetGroupInfo(ctx, groupNo))
 }
 
 func (c *nameCache) fetchThread(channelID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	name := c.rest.GetThreadInfo(ctx, ExtractParentGroupNo(channelID), extractThreadShortID(channelID))
-	c.mu.Lock()
-	c.channels[channelID] = nameEntry{name: name, fetchedAt: time.Now()}
-	delete(c.inflight, "c:"+channelID)
-	c.mu.Unlock()
+	c.storeName(NameKindChannel, channelID, c.channels, "c:"+channelID, name)
 }
 
 // PrewarmChannels synchronously resolves channel names for the given channel
@@ -211,10 +243,13 @@ func (c *nameCache) PrewarmChannels(channelIDs []string, timeout time.Duration) 
 	// independent endpoints and share the prewarmConcurrency pool.
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); c.prewarm(groups, timeout, "c:", identity, c.channels, c.rest.GetGroupInfo) }()
 	go func() {
 		defer wg.Done()
-		c.prewarm(threads, timeout, "c:", identity, c.channels, func(ctx context.Context, id string) string {
+		c.prewarm(groups, timeout, "c:", NameKindChannel, identity, c.channels, c.rest.GetGroupInfo)
+	}()
+	go func() {
+		defer wg.Done()
+		c.prewarm(threads, timeout, "c:", NameKindChannel, identity, c.channels, func(ctx context.Context, id string) string {
 			return c.rest.GetThreadInfo(ctx, ExtractParentGroupNo(id), extractThreadShortID(id))
 		})
 	}()
@@ -228,7 +263,7 @@ func identity(s string) string { return s }
 // uses it so DM sidebar rows show the peer's name on first paint even when
 // the session has had no inbound this restart to free-feed the cache.
 func (c *nameCache) PrewarmUsers(uids []string, timeout time.Duration) {
-	c.prewarm(uids, timeout, "u:", identity, c.users, c.rest.GetUserInfo)
+	c.prewarm(uids, timeout, "u:", NameKindUser, identity, c.users, c.rest.GetUserInfo)
 }
 
 // prewarm is the shared body for PrewarmChannels/PrewarmUsers: dedup against
@@ -248,6 +283,7 @@ func (c *nameCache) prewarm(
 	keys []string,
 	timeout time.Duration,
 	prefix string,
+	kind NameKind,
 	normalize func(string) string,
 	bucket map[string]nameEntry,
 	fetch func(context.Context, string) string,
@@ -293,11 +329,7 @@ func (c *nameCache) prewarm(
 			// result lands in the cache for the next caller.
 			ctx, cancel := context.WithTimeout(context.Background(), prewarmFetchTimeout)
 			defer cancel()
-			name := fetch(ctx, k)
-			c.mu.Lock()
-			bucket[k] = nameEntry{name: name, fetchedAt: time.Now()}
-			delete(c.inflight, prefix+k)
-			c.mu.Unlock()
+			c.storeName(kind, k, bucket, prefix+k, fetch(ctx, k))
 		}(nk)
 	}
 	go func() { wg.Wait(); close(done) }()

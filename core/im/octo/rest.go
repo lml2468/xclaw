@@ -364,6 +364,30 @@ type HistoricalMessage struct {
 	Name       string
 }
 
+type channelMessagesResponse struct {
+	Messages []channelMessageWire `json:"messages"`
+}
+
+type channelMessageWire struct {
+	FromUID    string          `json:"from_uid"`
+	FromName   string          `json:"from_name"`
+	Content    string          `json:"content"`
+	Timestamp  int64           `json:"timestamp"`
+	MessageID  string          `json:"message_id"`
+	MessageSeq int64           `json:"message_seq"`
+	Type       int             `json:"type"`
+	URL        string          `json:"url"`
+	Name       string          `json:"name"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+type historicalPayload struct {
+	Content string `json:"content"`
+	Type    int    `json:"type"`
+	URL     string `json:"url"`
+	Name    string `json:"name"`
+}
+
 // GetChannelMessages pulls recent messages for a channel via the WuKongIM sync
 // endpoint (api.ts getChannelMessages, used by G4 cold-start backfill). limit
 // defaults to 20 and caps the returned slice client-side (the server may return
@@ -380,69 +404,67 @@ func (c *RESTClient) GetChannelMessages(ctx context.Context, channelID string, c
 		"end_message_seq":   0,
 		"pull_mode":         1, // 1 = pull newer messages
 	}
-	var raw struct {
-		Messages []struct {
-			FromUID    string          `json:"from_uid"`
-			FromName   string          `json:"from_name"`
-			Content    string          `json:"content"`
-			Timestamp  int64           `json:"timestamp"`
-			MessageID  string          `json:"message_id"`
-			MessageSeq int64           `json:"message_seq"`
-			Type       int             `json:"type"`
-			URL        string          `json:"url"`
-			Name       string          `json:"name"`
-			Payload    json.RawMessage `json:"payload"`
-		} `json:"messages"`
-	}
+	var raw channelMessagesResponse
 	if err := c.postJSON(ctx, "/v1/bot/messages/sync", body, &raw); err != nil {
 		fmt.Fprintf(os.Stderr, "[octo] getChannelMessages error: %v\n", err)
 		return nil
 	}
-	msgs := raw.Messages
-	if len(msgs) > limit {
-		msgs = msgs[:limit] // client-side cap (api.ts D1/S7)
-	}
+	msgs := capHistoricalMessages(raw.Messages, limit)
 	out := make([]HistoricalMessage, 0, len(msgs))
 	for _, m := range msgs {
-		// Decode the base64 JSON payload (string form); object form is passed as-is.
-		var pl struct {
-			Content string `json:"content"`
-			Type    int    `json:"type"`
-			URL     string `json:"url"`
-			Name    string `json:"name"`
-		}
-		if len(m.Payload) > 0 {
-			var s string
-			if json.Unmarshal(m.Payload, &s) == nil {
-				if len(s) <= maxHistoricalPayloadBase64Len {
-					if dec, derr := base64.StdEncoding.DecodeString(s); derr == nil {
-						if err := json.Unmarshal(dec, &pl); err != nil {
-							fmt.Fprintf(os.Stderr, "[octo] getChannelMessages base64-payload JSON decode: %v\n", err)
-						}
-					}
-				} else {
-					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages dropping oversized payload (%d base64 chars)\n", len(s))
-				}
-			} else {
-				if err := json.Unmarshal(m.Payload, &pl); err != nil {
-					fmt.Fprintf(os.Stderr, "[octo] getChannelMessages object-payload JSON decode: %v\n", err)
-				}
-			}
-		}
-		hm := HistoricalMessage{
-			FromUID:    m.FromUID,
-			FromName:   m.FromName,
-			Content:    firstNonEmpty(m.Content, pl.Content),
-			Timestamp:  m.Timestamp,
-			MessageID:  m.MessageID,
-			MessageSeq: m.MessageSeq,
-			Type:       firstNonZero(m.Type, pl.Type),
-			URL:        firstNonEmpty(m.URL, pl.URL),
-			Name:       firstNonEmpty(m.Name, pl.Name),
-		}
-		out = append(out, hm)
+		out = append(out, m.toHistoricalMessage())
 	}
 	return out
+}
+
+func capHistoricalMessages(msgs []channelMessageWire, limit int) []channelMessageWire {
+	if len(msgs) > limit {
+		return msgs[:limit] // client-side cap (api.ts D1/S7)
+	}
+	return msgs
+}
+
+func (m channelMessageWire) toHistoricalMessage() HistoricalMessage {
+	pl := decodeHistoricalPayload(m.Payload)
+	return HistoricalMessage{
+		FromUID:    m.FromUID,
+		FromName:   m.FromName,
+		Content:    firstNonEmpty(m.Content, pl.Content),
+		Timestamp:  m.Timestamp,
+		MessageID:  m.MessageID,
+		MessageSeq: m.MessageSeq,
+		Type:       firstNonZero(m.Type, pl.Type),
+		URL:        firstNonEmpty(m.URL, pl.URL),
+		Name:       firstNonEmpty(m.Name, pl.Name),
+	}
+}
+
+func decodeHistoricalPayload(payload json.RawMessage) historicalPayload {
+	var pl historicalPayload
+	if len(payload) == 0 {
+		return pl
+	}
+	var s string
+	if json.Unmarshal(payload, &s) == nil {
+		decodeBase64HistoricalPayload(s, &pl)
+		return pl
+	}
+	if err := json.Unmarshal(payload, &pl); err != nil {
+		fmt.Fprintf(os.Stderr, "[octo] getChannelMessages object-payload JSON decode: %v\n", err)
+	}
+	return pl
+}
+
+func decodeBase64HistoricalPayload(s string, pl *historicalPayload) {
+	if len(s) > maxHistoricalPayloadBase64Len {
+		fmt.Fprintf(os.Stderr, "[octo] getChannelMessages dropping oversized payload (%d base64 chars)\n", len(s))
+		return
+	}
+	if dec, derr := base64.StdEncoding.DecodeString(s); derr == nil {
+		if err := json.Unmarshal(dec, pl); err != nil {
+			fmt.Fprintf(os.Stderr, "[octo] getChannelMessages base64-payload JSON decode: %v\n", err)
+		}
+	}
 }
 
 func firstNonEmpty(a, b string) string {

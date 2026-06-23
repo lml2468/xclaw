@@ -613,30 +613,7 @@ func (c *Connector) onInbound(m BotMessage) {
 		return
 	}
 
-	// A CommunityTopic (thread / 子区) is group-like for routing: its channel id
-	// is the compound "<groupNo>____<shortId>", so it lands in its OWN session
-	// (distinct from the parent group and sibling threads) while membership and
-	// the mention gate are inherited from the parent group. See thread.go and
-	// openclaw inbound.ts thread routing.
-	chType := router.ChannelDM
-	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
-		chType = router.ChannelGroup
-	}
-
-	// Trigger gate: persona-aware for clones (an @grantor / @所有人 mention is a
-	// call to the clone); a plain @bot / @AI mention otherwise.
-	triggered := m.Triggers(uid, c.persona)
-
-	inbound := router.InboundMessage{
-		FromUID:     m.FromUID,
-		FromName:    m.FromName,
-		ChannelID:   m.ChannelID,
-		ChannelType: chType,
-		Text:        baseText,
-		Attachments: c.resolveAttachments(m.Payload),
-		MessageSeq:  int64(m.MessageSeq),
-		Mentioned:   triggered,
-	}
+	inbound := c.buildInboundMessage(m, uid, baseText)
 	key, err := inbound.SessionKey()
 	if err != nil {
 		return // unroutable
@@ -645,13 +622,7 @@ func (c *Connector) onInbound(m BotMessage) {
 	// Resolve where (and as whom) the reply goes (openclaw inbound.ts
 	// ~L2301-2337). OBO v2: reply to the origin channel as the grantor. Group
 	// persona trigger-as-grantor: reply in the same group as the grantor.
-	tgt := replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
-	if oboV2 {
-		tgt = oboReplyTarget(m.Payload, c.persona.UID)
-	} else if chType == router.ChannelGroup &&
-		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(uid)) {
-		tgt.onBehalfOf = c.persona.UID
-	}
+	tgt := c.inboundReplyTarget(m, uid, inbound.ChannelType, oboV2)
 	// Per-turn target travels with the queued turn so drainTurns can set
 	// c.targets[key] AT pop-time — the prior contract had onInbound write the
 	// global map directly here, which raced cron's RegisterReplyTarget. The
@@ -704,6 +675,43 @@ func (c *Connector) onInbound(m BotMessage) {
 	// when gateway is nil (tests), but the queue is still populated so the
 	// persona tests can assert via peekQueuedTarget.
 	c.enqueueTurn(key, inbound, tgt)
+}
+
+func (c *Connector) buildInboundMessage(m BotMessage, botUID, text string) router.InboundMessage {
+	// A CommunityTopic (thread / 子区) is group-like for routing: its channel id
+	// is the compound "<groupNo>____<shortId>", so it lands in its OWN session
+	// (distinct from the parent group and sibling threads) while membership and
+	// the mention gate are inherited from the parent group. See thread.go and
+	// openclaw inbound.ts thread routing.
+	chType := router.ChannelDM
+	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
+		chType = router.ChannelGroup
+	}
+
+	// Trigger gate: persona-aware for clones (an @grantor / @所有人 mention is a
+	// call to the clone); a plain @bot / @AI mention otherwise.
+	return router.InboundMessage{
+		FromUID:     m.FromUID,
+		FromName:    m.FromName,
+		ChannelID:   m.ChannelID,
+		ChannelType: chType,
+		Text:        text,
+		Attachments: c.resolveAttachments(m.Payload),
+		MessageSeq:  int64(m.MessageSeq),
+		Mentioned:   m.Triggers(botUID, c.persona),
+	}
+}
+
+func (c *Connector) inboundReplyTarget(m BotMessage, botUID string, chType router.ChannelType, oboV2 bool) replyTarget {
+	tgt := replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
+	if oboV2 {
+		return oboReplyTarget(m.Payload, c.persona.UID)
+	}
+	if chType == router.ChannelGroup &&
+		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(botUID)) {
+		tgt.onBehalfOf = c.persona.UID
+	}
+	return tgt
 }
 
 // enqueueTurn appends a turn to the per-session-key serial queue, starting a

@@ -97,16 +97,12 @@ func (c *nameCache) prewarm(
 			continue
 		}
 		nk := normalize(k)
-		if _, busy := c.inflight[prefix+nk]; busy {
+		cacheKey := prefix + nk
+		if !c.shouldPrewarmKey(cacheKey, nk, bucket) {
 			continue
 		}
-		if e, ok := bucket[nk]; ok {
-			if e.name != "" || time.Since(e.fetchedAt) < negativeTTL {
-				continue
-			}
-		}
 		want[nk] = struct{}{}
-		c.inflight[prefix+nk] = struct{}{}
+		c.inflight[cacheKey] = struct{}{}
 	}
 	c.mu.Unlock()
 	if len(want) == 0 {
@@ -136,6 +132,16 @@ func (c *nameCache) prewarm(
 	case <-done:
 	case <-time.After(timeout):
 	}
+}
+
+func (c *nameCache) shouldPrewarmKey(cacheKey, key string, bucket map[string]nameEntry) bool {
+	if _, busy := c.inflight[cacheKey]; busy {
+		return false
+	}
+	if e, ok := bucket[key]; ok {
+		return e.name == "" && time.Since(e.fetchedAt) >= negativeTTL
+	}
+	return true
 }
 
 // prewarmConcurrency caps the in-flight prewarm fetches per nameCache. Picked

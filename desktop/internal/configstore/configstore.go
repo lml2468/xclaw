@@ -1,8 +1,8 @@
 // Package configstore reads and writes the daemon's ~/.xclaw/config.json and the
 // per-bot SOUL.md / AGENTS.md files, presenting a flat editor view model. It
 // mirrors the legacy Swift ConfigStore: tokens are NEVER written to config.json
-// (they live in the OS credential store via the secrets package) and are
-// overlaid onto the view model on Load and stripped on Save.
+// (they live in the secret backend via the secrets package) and are overlaid
+// onto the view model on Load and stripped on Save.
 package configstore
 
 import (
@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +29,7 @@ import (
 var saveMu sync.Mutex
 
 // BotConfig is the flat view model the editor binds to. Tokens are populated
-// from the credential store on Load and routed back to it on Save.
+// from the secret backend on Load and routed back to it on Save.
 type BotConfig struct {
 	ID             string            `json:"id"`
 	APIURL         string            `json:"apiUrl"`
@@ -39,6 +38,7 @@ type BotConfig struct {
 	OctoToken      string            `json:"octoToken"`
 	GatewayToken   string            `json:"gatewayToken"`
 	Env            map[string]string `json:"env"`
+	SecretEnv      map[string]bool   `json:"secretEnv"`
 	Soul           string            `json:"soul"`
 	Agents         string            `json:"agents"`
 	// Cron mirrors agent.cron — surface-level toggle for the scheduled-task
@@ -112,9 +112,30 @@ func BotIDs() ([]string, error) {
 	return ids, nil
 }
 
-// Load returns the editor view of every configured bot: config.json fields
-// resolved against the top-level defaults, persona/behavior read from disk, and
-// tokens overlaid from the credential store.
+// BotSecretRefs returns every secretRef declared in config.json, grouped by bot.
+// The bridge uses this to seed xclawd's in-memory secret store after connect.
+func BotSecretRefs() (map[string][]string, error) {
+	f, err := readFile()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, b := range f.Bots {
+		if b.ID == "" || b.Agent == nil {
+			continue
+		}
+		for _, v := range b.Agent.Env {
+			if v.SecretRef != "" {
+				out[b.ID] = append(out[b.ID], v.SecretRef)
+			}
+		}
+	}
+	return out, nil
+}
+
+// Load returns the editor view of every configured bot: per-bot config.json
+// fields, persona/behavior read from disk, and tokens overlaid from the secret
+// backend.
 func Load() ([]BotConfig, error) {
 	f, err := readFile()
 	if err != nil {
@@ -122,14 +143,14 @@ func Load() ([]BotConfig, error) {
 	}
 	out := make([]BotConfig, 0, len(f.Bots))
 	for _, b := range f.Bots {
-		out = append(out, resolveBot(f, b))
+		out = append(out, resolveBot(b))
 	}
 	return out, nil
 }
 
 // LoadOne returns just one bot, doing exactly ONE config.json parse + ONE pair
-// of keychain reads + ONE pair of SOUL/AGENTS reads — vs Load, which fans
-// the keychain + file work over every bot just to satisfy a single-bot caller.
+// of secret reads + ONE pair of SOUL/AGENTS reads — vs Load, which fans
+// the secret + file work over every bot just to satisfy a single-bot caller.
 // Returns (BotConfig{}, false, nil) when the id isn't in config.json; non-nil
 // err is reserved for genuine I/O / parse failures.
 func LoadOne(botID string) (BotConfig, bool, error) {
@@ -139,7 +160,7 @@ func LoadOne(botID string) (BotConfig, bool, error) {
 	}
 	for _, b := range f.Bots {
 		if b.ID == botID {
-			return resolveBot(f, b), true, nil
+			return resolveBot(b), true, nil
 		}
 	}
 	return BotConfig{}, false, nil
@@ -147,38 +168,24 @@ func LoadOne(botID string) (BotConfig, bool, error) {
 
 // resolveBot builds a single BotConfig from a parsed File entry. Shared by
 // Load (fan-out) and LoadOne (single-bot fast path).
-func resolveBot(f config.File, b config.BotEntry) BotConfig {
-	bc := BotConfig{ID: b.ID, Env: map[string]string{}}
+func resolveBot(b config.BotEntry) BotConfig {
+	bc := BotConfig{ID: b.ID, Env: map[string]string{}, SecretEnv: map[string]bool{}}
 
-	bc.APIURL = firstNonEmpty(b.APIURL, f.APIURL)
-	// Agent fields: prefer per-bot, fall back to top-level defaults.
-	var topModel, topGW string
-	var topEnv map[string]string
-	if f.Agent != nil {
-		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
-	}
-	// Inherit top-level env only when the per-bot agent block is absent
-	// (b.Agent == nil) OR present but env is nil (field absent in JSON).
-	// An explicit empty-but-non-nil per-bot env (`agent: {env: {}}`) is
-	// an opt-out signal that the operator wants NO inherited env.
-	envInherit := b.Agent == nil || b.Agent.Env == nil
+	bc.APIURL = b.APIURL
 	if b.Agent != nil {
-		bc.Model = firstNonEmpty(b.Agent.Model, topModel)
-		bc.GatewayBaseURL = firstNonEmpty(b.Agent.GatewayBaseURL, topGW)
+		bc.Model = b.Agent.Model
+		bc.GatewayBaseURL = b.Agent.GatewayBaseURL
 		if b.Agent.Cron != nil {
 			bc.Cron = *b.Agent.Cron
-		} else if f.Agent != nil && f.Agent.Cron != nil {
-			bc.Cron = *f.Agent.Cron
 		}
-		maps.Copy(bc.Env, b.Agent.Env)
-	} else {
-		bc.Model, bc.GatewayBaseURL = topModel, topGW
-		if f.Agent != nil && f.Agent.Cron != nil {
-			bc.Cron = *f.Agent.Cron
+		for k, v := range b.Agent.Env {
+			if v.SecretRef != "" {
+				bc.SecretEnv[k] = true
+				bc.Env[k] = ""
+				continue
+			}
+			bc.Env[k] = v.Value
 		}
-	}
-	if envInherit {
-		maps.Copy(bc.Env, topEnv)
 	}
 
 	bc.Soul = readBotFile(b.ID, "SOUL.md")
@@ -193,11 +200,9 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 // overrides the editor doesn't model (rateLimit/context/groupConfigDir/
 // onBehalfOf and the mentionFreeGroups/knownBotUids/allowedBotUids/
 // botBlocklist gating lists, plus agent.cron/toolProgress) survive a Save;
-// editor-owned fields are persisted only when they DIFFER from the
-// top-level default (so the defaults keep propagating and aren't frozen
-// into N per-bot copies), and tokens are stripped (they live in the OS
-// keychain, never config.json);
-// - per-bot SOUL.md / AGENTS.md and tokens to the credential store;
+// editor-owned identity/agent fields are persisted per-bot, and tokens are
+// stripped (they live in the secret backend, never config.json);
+// - per-bot SOUL.md / AGENTS.md and tokens to the secret backend;
 // - pruning ONLY the bots named in removedIDs — an explicit deletion list
 // from the editor — and only when their on-disk data dir actually exists.
 // Pruning is NEVER inferred from a set-difference: a stale editor snapshot
@@ -205,7 +210,7 @@ func resolveBot(f config.File, b config.BotEntry) BotConfig {
 // like "every other bot was removed" and irreversibly wipe their data.
 //
 // config.json is written (atomically) BEFORE the per-bot side effects, so a
-// mid-way failure can't leave the index stale while bot files / keychain are
+// mid-way failure can't leave the index stale while bot files / secrets are
 // already mutated; the side effects are idempotent, so a failed Save converges
 // on retry.
 func Save(bots []BotConfig, removedIDs []string) error {
@@ -234,7 +239,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		return fmt.Errorf("OCTO_BOT_ID %q is used by more than one bot — each bot needs a distinct Octo robot id", dup)
 	}
 
-	// Start from the existing File so top-level defaults + unknown keys survive.
+	// Start from the existing File so top-level runtime policy survives.
 	f, err := readFile()
 	if err != nil {
 		return err
@@ -243,46 +248,63 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	for _, e := range f.Bots {
 		existing[e.ID] = e
 	}
-	var topModel, topGW string
-	var topEnv map[string]string
-	if f.Agent != nil {
-		topModel, topGW, topEnv = f.Agent.Model, f.Agent.GatewayBaseURL, f.Agent.Env
-	}
-
 	entries := make([]config.BotEntry, 0, len(bots))
 	for _, b := range bots {
 		// Merge onto the existing entry (zero value for a new bot) so per-bot
 		// overrides the editor doesn't model are preserved.
 		entry := existing[b.ID]
 		entry.ID = b.ID
-		entry.OctoToken = "" // tokens live in the OS keychain, never config.json
-		entry.APIURL = inheritStr(b.APIURL, f.APIURL)
+		entry.OctoToken = "" // tokens live in the secret backend, never config.json
+		entry.APIURL = b.APIURL
 
 		ag := config.AgentConfig{}
 		if entry.Agent != nil {
 			ag = *entry.Agent // preserve cron / toolProgress / any other agent fields
 		}
-		ag.GatewayToken = "" // keychain only
-		ag.Model = inheritStr(b.Model, topModel)
-		ag.GatewayBaseURL = inheritStr(b.GatewayBaseURL, topGW)
-		// Cron: only materialize per-bot override when it differs from the
-		// top-level default — keeps config.json uncluttered when the operator
-		// hasn't customized it, and a per-bot pointer (true OR false) properly
-		// overrides via mergeAgent.
-		var topCron bool
-		if f.Agent != nil && f.Agent.Cron != nil {
-			topCron = *f.Agent.Cron
-		}
-		if b.Cron != topCron {
+		ag.GatewayToken = "" // secret backend only
+		ag.Model = b.Model
+		ag.GatewayBaseURL = b.GatewayBaseURL
+		if b.Cron {
 			cron := b.Cron
 			ag.Cron = &cron
 		} else {
 			ag.Cron = nil
 		}
-		if envEqual(b.Env, topEnv) {
-			ag.Env = nil // inherited from the top-level default; don't materialize it
-		} else {
-			ag.Env = b.Env
+		ag.Env = nil
+		for k, v := range b.Env {
+			if strings.TrimSpace(k) == "" {
+				continue
+			}
+			if b.SecretEnv[k] {
+				ref := envSecretRef(k)
+				if ag.Env == nil {
+					ag.Env = map[string]config.EnvValue{}
+				}
+				ag.Env[k] = config.EnvValue{SecretRef: ref}
+				if v != "" {
+					if err := secrets.Set(b.ID, secrets.Kind(ref), v); err != nil {
+						return fmt.Errorf("store env secret %s/%s: %w", b.ID, k, err)
+					}
+				}
+				continue
+			}
+			if ag.Env == nil {
+				ag.Env = map[string]config.EnvValue{}
+			}
+			ag.Env[k] = config.EnvValue{Value: v}
+			_ = secrets.Delete(b.ID, secrets.Kind(envSecretRef(k)))
+		}
+		for k := range b.SecretEnv {
+			if !b.SecretEnv[k] {
+				continue
+			}
+			if _, ok := b.Env[k]; ok {
+				continue
+			}
+			if ag.Env == nil {
+				ag.Env = map[string]config.EnvValue{}
+			}
+			ag.Env[k] = config.EnvValue{SecretRef: envSecretRef(k)}
 		}
 		if agentEmpty(ag) {
 			entry.Agent = nil
@@ -390,12 +412,24 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		_ = safepath.SafeRemoveAll(home, ".xclaw/"+id)
 		_ = secrets.Delete(id, secrets.OctoToken)
 		_ = secrets.Delete(id, secrets.GatewayToken)
+		if prior, ok := existing[id]; ok && prior.Agent != nil {
+			for _, ev := range prior.Agent.Env {
+				if ev.SecretRef != "" {
+					_ = secrets.Delete(id, secrets.Kind(ev.SecretRef))
+				}
+			}
+		}
 		// Clear the matching octo-cli disk profile too, so a re-add of the same
 		// robot id doesn't pick up a stale token. existing[id] is the on-disk
 		// entry from before this save, so it still carries the bot's env (where
 		// OCTO_BOT_ID lives) even though the new bots[] no longer mentions it.
 		if prior, ok := existing[id]; ok && prior.Agent != nil {
-			if robotID := strings.TrimSpace(prior.Agent.Env["OCTO_BOT_ID"]); robotID != "" {
+			ev := prior.Agent.Env["OCTO_BOT_ID"]
+			robotID := ev.Value
+			if ev.SecretRef != "" {
+				robotID = secrets.Get(id, secrets.Kind(ev.SecretRef))
+			}
+			if robotID = strings.TrimSpace(robotID); robotID != "" {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				if err := octocli.Logout(ctx, robotID); err != nil {
 					log.Printf("xclaw: octo-cli profile for %s (robot=%s) not cleared: %v", id, robotID, err)
@@ -454,33 +488,15 @@ func validURL(s string) error {
 	return nil
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// inheritStr returns "" when v equals the top-level default def, so the per-bot
-// field stays inherited (the default keeps propagating); otherwise it returns v.
-// This is the inverse of Load's firstNonEmpty resolution.
-func inheritStr(v, def string) string {
-	if v == def {
-		return ""
-	}
-	return v
-}
-
-func envEqual(a, b map[string]string) bool {
-	return maps.Equal(a, b)
-}
-
 func agentEmpty(a config.AgentConfig) bool {
-	return a.Model == "" && a.GatewayBaseURL == "" && a.GatewayToken == "" &&
-		len(a.Env) == 0 && a.Cron == nil && !a.ToolProgress
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	return string(raw) == "{}"
 }
+
+func envSecretRef(key string) string { return "env/" + key }
 
 func firstDuplicate(bots []BotConfig) string {
 	seen := map[string]bool{}

@@ -21,6 +21,12 @@ func TestSecretStoreSetGet(t *testing.T) {
 	if s.OctoToken() != "bf_x" || s.GatewayToken() != "sk_y" {
 		t.Fatalf("got octo=%q gateway=%q", s.OctoToken(), s.GatewayToken())
 	}
+	if err := s.Set("env/GH_TOKEN", "ghp"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Secret("env/GH_TOKEN") != "ghp" {
+		t.Fatalf("env secret not stored: %q", s.Secret("env/GH_TOKEN"))
+	}
 }
 
 func TestSecretStoreEmptyValueDoesNotClobber(t *testing.T) {

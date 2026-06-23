@@ -106,7 +106,7 @@
         await XClawService.OctoCliRelogin(bot.id);
  // The relogin path knows it just wrote the profile — flip state locally
  // instead of round-tripping refreshCliStatus (which would re-parse
- // config.json + re-read keychain to confirm what we already know).
+ // config.json + re-read the secret backend to confirm what we already know).
         cliRegistered = true;
         cliRobotId = robotId;
         cliNotice = "已写入 octo-cli profile";
@@ -139,7 +139,7 @@
           {revealToken ? "隐藏" : "显示"}
         </button>
       </div>
-      <small>存于系统钥匙串，绝不写入 config.json。</small>
+      <small>存于 secret backend，绝不写入 config.json。</small>
     </label>
     <label>
       OCTO_BOT_ID（robot id）

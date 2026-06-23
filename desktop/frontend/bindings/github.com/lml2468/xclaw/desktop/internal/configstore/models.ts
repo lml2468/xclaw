@@ -7,7 +7,7 @@ import { Create as $Create } from "@wailsio/runtime";
 
 /**
  * BotConfig is the flat view model the editor binds to. Tokens are populated
- * from the credential store on Load and routed back to it on Save.
+ * from the secret backend on Load and routed back to it on Save.
  */
 export class BotConfig {
     "id": string;
@@ -17,6 +17,7 @@ export class BotConfig {
     "octoToken": string;
     "gatewayToken": string;
     "env": { [_ in string]?: string };
+    "secretEnv": { [_ in string]?: boolean };
     "soul": string;
     "agents": string;
 
@@ -52,6 +53,9 @@ export class BotConfig {
         if (!("env" in $$source)) {
             this["env"] = {};
         }
+        if (!("secretEnv" in $$source)) {
+            this["secretEnv"] = {};
+        }
         if (!("soul" in $$source)) {
             this["soul"] = "";
         }
@@ -70,9 +74,13 @@ export class BotConfig {
      */
     static createFrom($$source: any = {}): BotConfig {
         const $$createField6_0 = $$createType0;
+        const $$createField7_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("env" in $$parsedSource) {
             $$parsedSource["env"] = $$createField6_0($$parsedSource["env"]);
+        }
+        if ("secretEnv" in $$parsedSource) {
+            $$parsedSource["secretEnv"] = $$createField7_0($$parsedSource["secretEnv"]);
         }
         return new BotConfig($$parsedSource as Partial<BotConfig>);
     }
@@ -80,3 +88,4 @@ export class BotConfig {
 
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
+const $$createType1 = $Create.Map($Create.Any, $Create.Any);

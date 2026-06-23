@@ -275,7 +275,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	}()
 
 	// Per-bot secret store: seed from the config file (the headless fallback),
-	// then let secret.inject (from the GUI's Keychain) override at runtime.
+	// then let secret.inject (from the GUI's secret backend) override at runtime.
 	sec := &secretStore{}
 	_ = sec.Set(wire.SecretKindOcto, cfg.OctoToken)
 	_ = sec.Set(wire.SecretKindGateway, cfg.Agent.GatewayToken)
@@ -284,7 +284,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// another (Codex, …) additive to the gateway.
 	drv := agent.NewClaudeDriver("")
 	// Resolve the gateway token lazily per turn so an injected token takes effect.
-	drv.EnvFn = func() []string { return cfg.DriverEnv(sec.GatewayToken(), sec.OctoToken()) }
+	drv.EnvFn = func() []string { return cfg.DriverEnv(sec.GatewayToken(), sec.OctoToken(), sec.Secret) }
 
 	if cfg.APIURL == "" {
 		return fmt.Errorf("bot %s: config mode requires apiUrl", cfg.BotID)

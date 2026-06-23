@@ -20,7 +20,7 @@ func writeFile(t *testing.T, path, content string) {
 func TestSingleBotDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"default","octoToken":"bf_x"}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"default","apiUrl":"https://octo.example","octoToken":"bf_x"}]}`)
 
 	bots, err := Load(cfg)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestSingleBotDefaults(t *testing.T) {
 		t.Fatalf("apiUrl/token wrong: %+v", b)
 	}
 	// defaults applied
-	if b.RateLimit.MaxPerMinute != 5 || b.Context.MaxContextChars != 6000 {
+	if b.RateLimit.MaxPerMinute != 30 || b.Context.MaxContextChars != 6000 {
 		t.Fatalf("defaults wrong: %+v", b)
 	}
 	// derived data dir
@@ -52,18 +52,16 @@ func TestSingleBotDefaults(t *testing.T) {
 	}
 }
 
-func TestInlineBotOverridesGlobalDefaults(t *testing.T) {
+func TestBotConfigAndRuntimePolicyDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
-	  "apiUrl":"https://global.example",
 	  "context":{"maxContextChars":1000},
-	  "agent":{"model":"global-model","gatewayBaseUrl":"https://gw.example/v1"},
 	  "bots":[{
 	    "id":"alpha",
 	    "octoToken":"bf_alpha",
 	    "apiUrl":"https://bot.example",
-	    "agent":{"model":"bot-model"},
+	    "agent":{"model":"bot-model","gatewayBaseUrl":"https://gw.example/v1"},
 	    "context":{"maxContextChars":2000}
 	  }]
 	}`)
@@ -82,9 +80,8 @@ func TestInlineBotOverridesGlobalDefaults(t *testing.T) {
 	if b.Agent.Model != "bot-model" {
 		t.Fatalf("bot model should win: %q", b.Agent.Model)
 	}
-	// gateway not set on the bot → inherits the global default
 	if b.Agent.GatewayBaseURL != "https://gw.example/v1" {
-		t.Fatalf("global gateway default should carry through: %q", b.Agent.GatewayBaseURL)
+		t.Fatalf("bot gateway should parse: %q", b.Agent.GatewayBaseURL)
 	}
 	if b.Context.MaxContextChars != 2000 {
 		t.Fatalf("bot context should win: %d", b.Context.MaxContextChars)
@@ -161,11 +158,11 @@ func TestSSRFRejection(t *testing.T) {
 }
 
 // A bot with no octoToken now loads fine — the token is injected at runtime
-// (secret.inject) from the GUI's Keychain. apiUrl stays in the file.
+// (secret.inject) from the GUI's secret backend. apiUrl stays in the file.
 func TestMissingTokenAllowed(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"alpha"}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"alpha","apiUrl":"https://octo.example"}]}`)
 	bots, err := Load(cfg)
 	if err != nil {
 		t.Fatalf("tokenless bot should load (runtime injection): %v", err)
@@ -178,7 +175,7 @@ func TestMissingTokenAllowed(t *testing.T) {
 func TestDriverEnvInjectedTokens(t *testing.T) {
 	r := Resolved{Agent: AgentConfig{GatewayBaseURL: "https://gw.example/v1"}}
 	// Injected token is used, regardless of the (empty) config value.
-	env := r.DriverEnv("sk_injected", "")
+	env := r.DriverEnv("sk_injected", "", nil)
 	var sawToken, sawBase bool
 	for _, e := range env {
 		if e == "ANTHROPIC_AUTH_TOKEN=sk_injected" {
@@ -192,7 +189,7 @@ func TestDriverEnvInjectedTokens(t *testing.T) {
 		t.Fatalf("env missing entries: token=%v base=%v (%v)", sawToken, sawBase, env)
 	}
 	// Empty token omits the auth var.
-	for _, e := range r.DriverEnv("", "") {
+	for _, e := range r.DriverEnv("", "", nil) {
 		if e == "ANTHROPIC_AUTH_TOKEN=" {
 			t.Fatal("empty token must not emit ANTHROPIC_AUTH_TOKEN")
 		}
@@ -230,13 +227,10 @@ func TestMissingConfigAllowed(t *testing.T) {
 func TestGroupConfigDirResolution(t *testing.T) {
 	dir := t.TempDir()
 	gcd := filepath.Join(dir, "groupcfg") // outside any bot's workspace
-	topGCD := filepath.Join(dir, "topgroupcfg")
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
-		"apiUrl":"https://o",
-		"groupConfigDir":`+jsonStr(topGCD)+`,
 		"bots":[
-			{"id":"a","octoToken":"x"},
+			{"id":"a","apiUrl":"https://o","octoToken":"x"},
 			{"id":"b","octoToken":"y","groupConfigDir":`+jsonStr(gcd)+`}
 		]
 	}`)
@@ -244,8 +238,8 @@ func TestGroupConfigDirResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if bots[0].GroupConfigDir != topGCD {
-		t.Fatalf("bot a should inherit top-level groupConfigDir, got %q", bots[0].GroupConfigDir)
+	if bots[0].GroupConfigDir != "" {
+		t.Fatalf("bot a should not inherit groupConfigDir, got %q", bots[0].GroupConfigDir)
 	}
 	if bots[1].GroupConfigDir != gcd {
 		t.Fatalf("bot b should use its own groupConfigDir, got %q", bots[1].GroupConfigDir)
@@ -258,14 +252,14 @@ func TestGroupConfigDirInsideCwdRejected(t *testing.T) {
 	// is an injection sink (agent-writable) and must be rejected.
 	bad := filepath.Join(dir, "a", "workspace", "groupcfg")
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[{"id":"a","octoToken":"x","groupConfigDir":`+jsonStr(bad)+`}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"a","apiUrl":"https://o","octoToken":"x","groupConfigDir":`+jsonStr(bad)+`}]}`)
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("groupConfigDir nested under cwdBase must be rejected")
 	}
 
 	// Equal to cwdBase is also rejected.
 	bad2 := filepath.Join(dir, "a", "workspace")
-	writeFile(t, cfg, `{"apiUrl":"https://o","bots":[{"id":"a","octoToken":"x","groupConfigDir":`+jsonStr(bad2)+`}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"a","apiUrl":"https://o","octoToken":"x","groupConfigDir":`+jsonStr(bad2)+`}]}`)
 	if _, err := Load(cfg); err == nil {
 		t.Fatal("groupConfigDir equal to cwdBase must be rejected")
 	}
@@ -280,7 +274,7 @@ func jsonStr(s string) string {
 func TestOnBehalfOfParsedAsPersonaClone(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"clone","octoToken":"bf_x","onBehalfOf":{"uid":"u_admin","name":"Admin","personaPrompt":"reply in English"}}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"clone","apiUrl":"https://octo.example","octoToken":"bf_x","onBehalfOf":{"uid":"u_admin","name":"Admin","personaPrompt":"reply in English"}}]}`)
 
 	bots, err := Load(cfg)
 	if err != nil {
@@ -295,7 +289,7 @@ func TestOnBehalfOfParsedAsPersonaClone(t *testing.T) {
 func TestNoOnBehalfOfIsRegularBot(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"apiUrl":"https://octo.example","bots":[{"id":"plain","octoToken":"bf_x"}]}`)
+	writeFile(t, cfg, `{"bots":[{"id":"plain","apiUrl":"https://octo.example","octoToken":"bf_x"}]}`)
 
 	bots, _ := Load(cfg)
 	if bots[0].OnBehalfOf.UID != "" {
@@ -303,24 +297,18 @@ func TestNoOnBehalfOfIsRegularBot(t *testing.T) {
 	}
 }
 
-// TestGatingFieldsResolution verifies the G12/G14/blocklist gating lists resolve
-// with override-replaces-default precedence: a bot inheriting the top-level
-// default, and a bot whose per-bot value replaces it (including clearing it with
-// an empty array).
+// TestGatingFieldsResolution verifies the G12/G14/blocklist gating lists are
+// per-bot only; top-level gating fields are not part of the canonical schema.
 func TestGatingFieldsResolution(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
-	  "apiUrl":"https://octo.example",
-	  "mentionFreeGroups":["g-global"],
-	  "knownBotUids":["kb1"],
-	  "allowedBotUids":["ab1"],
-	  "botBlocklist":["bad1"],
 	  "bots":[
-	    {"id":"inherit","octoToken":"bf_a"},
-	    {"id":"override","octoToken":"bf_b",
+	    {"id":"plain","apiUrl":"https://octo.example","octoToken":"bf_a"},
+	    {"id":"custom","apiUrl":"https://octo.example","octoToken":"bf_b",
 	     "mentionFreeGroups":["g-bot"],
 	     "knownBotUids":[],
+	     "allowedBotUids":["ab-bot"],
 	     "botBlocklist":["bad2","bad3"]}
 	  ]
 	}`)
@@ -333,34 +321,31 @@ func TestGatingFieldsResolution(t *testing.T) {
 	for _, b := range bots {
 		byID[b.BotID] = b
 	}
-	in, ov := byID["inherit"], byID["override"]
+	plain, custom := byID["plain"], byID["custom"]
 
-	// inherit: every list comes from the top-level default.
-	if len(in.MentionFreeGroups) != 1 || in.MentionFreeGroups[0] != "g-global" {
-		t.Fatalf("inherit mentionFreeGroups = %v, want [g-global]", in.MentionFreeGroups)
+	if len(plain.MentionFreeGroups) != 0 {
+		t.Fatalf("plain mentionFreeGroups = %v, want []", plain.MentionFreeGroups)
 	}
-	if len(in.KnownBotUids) != 1 || in.KnownBotUids[0] != "kb1" {
-		t.Fatalf("inherit knownBotUids = %v, want [kb1]", in.KnownBotUids)
+	if len(plain.KnownBotUids) != 0 {
+		t.Fatalf("plain knownBotUids = %v, want []", plain.KnownBotUids)
 	}
-	if len(in.AllowedBotUids) != 1 || in.AllowedBotUids[0] != "ab1" {
-		t.Fatalf("inherit allowedBotUids = %v, want [ab1]", in.AllowedBotUids)
+	if len(plain.AllowedBotUids) != 0 {
+		t.Fatalf("plain allowedBotUids = %v, want []", plain.AllowedBotUids)
 	}
-	if len(in.BotBlocklist) != 1 || in.BotBlocklist[0] != "bad1" {
-		t.Fatalf("inherit botBlocklist = %v, want [bad1]", in.BotBlocklist)
+	if len(plain.BotBlocklist) != 0 {
+		t.Fatalf("plain botBlocklist = %v, want []", plain.BotBlocklist)
 	}
 
-	// override: per-bot value replaces default; an explicit [] clears it; an
-	// omitted field (allowedBotUids) still inherits the default.
-	if len(ov.MentionFreeGroups) != 1 || ov.MentionFreeGroups[0] != "g-bot" {
-		t.Fatalf("override mentionFreeGroups = %v, want [g-bot]", ov.MentionFreeGroups)
+	if len(custom.MentionFreeGroups) != 1 || custom.MentionFreeGroups[0] != "g-bot" {
+		t.Fatalf("custom mentionFreeGroups = %v, want [g-bot]", custom.MentionFreeGroups)
 	}
-	if len(ov.KnownBotUids) != 0 {
-		t.Fatalf("override knownBotUids = %v, want [] (explicit clear)", ov.KnownBotUids)
+	if len(custom.KnownBotUids) != 0 {
+		t.Fatalf("custom knownBotUids = %v, want []", custom.KnownBotUids)
 	}
-	if len(ov.AllowedBotUids) != 1 || ov.AllowedBotUids[0] != "ab1" {
-		t.Fatalf("override allowedBotUids = %v, want inherited [ab1]", ov.AllowedBotUids)
+	if len(custom.AllowedBotUids) != 1 || custom.AllowedBotUids[0] != "ab-bot" {
+		t.Fatalf("custom allowedBotUids = %v, want [ab-bot]", custom.AllowedBotUids)
 	}
-	if len(ov.BotBlocklist) != 2 {
-		t.Fatalf("override botBlocklist = %v, want [bad2 bad3]", ov.BotBlocklist)
+	if len(custom.BotBlocklist) != 2 {
+		t.Fatalf("custom botBlocklist = %v, want [bad2 bad3]", custom.BotBlocklist)
 	}
 }

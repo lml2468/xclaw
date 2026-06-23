@@ -137,6 +137,7 @@ class Store {
   schedules = $state<Record<string, any[]>>({});
   selectedBotId = $state<string | null>(null);
   selectedKey = $state<string | null>(null);
+  private loadedSessionRosters = $state<Record<string, boolean>>({});
   health = $state("");
   lastError = $state("");
  // Track the exact text the user dismissed via the ✕ button so the
@@ -310,7 +311,13 @@ class Store {
     this.selectedBotId = id;
  // Pull this bot's full persisted session list (newest first); the response
  // folds into sessions[] so history survives restarts.
-    if (!this.preview) XClawService.SessionsList(id);
+    if (!this.preview) {
+      XClawService.SessionsList(id);
+      if (!this.loadedSessionRosters[id]) {
+        this.selectedKey = null;
+        return;
+      }
+    }
     this.selectedKey = this.initialKey();
     if (this.selectedKey) this.loadHistory(this.selectedKey);
   }
@@ -725,12 +732,13 @@ class Store {
       s.lastActivity = existed ? Math.max(s.lastActivity, persisted) : persisted;
       s.preview = r.preview ?? "";
     }
+    this.loadedSessionRosters[bid] = true;
  // First roster after connect: if nothing is selected yet, open the newest
  // (or fall back to Console — see initialKey).
-    if (this.selectedKey == null) {
+    if (bid === this.selectedBotId && this.selectedKey == null) {
       this.selectedKey = this.initialKey();
     }
-    if (this.selectedKey) this.loadHistory(this.selectedKey);
+    if (bid === this.selectedBotId && this.selectedKey) this.loadHistory(this.selectedKey);
   }
 
  // sweepStuckTurns clears awaiting on any session whose turnStart is older

@@ -8,7 +8,6 @@
  // gymnastics, then commit back to bot.env on every change. RESERVED_ENV_KEYS
  // is the single source of truth — see lib/reservedEnv.ts.
   import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
   import { RESERVED_ENV_KEYS } from "../reservedEnv";
 
   let { bot = $bindable<BotConfig>(), ondirty, ondelete }:
@@ -18,18 +17,15 @@
  // user deletes a row — without it, every subsequent row's <input> remounts
  // and the user's caret jumps out.
  //
- // `secret` is the UI flag: should this row's value be sealed with
- // envenc.Encrypt before landing in config.json? Initial seed derives it
- // from whether the loaded value already carries the enc:v1:… envelope,
- // so a config round-tripped through the daemon stays masked instead of
- // suddenly showing as cleartext. Toggle is the lock button on each row.
-  type Row = { id: number; k: string; v: string; secret: boolean };
+ // `secret` is the UI flag: should this row's value be stored in the secret
+ // backend with only a secretRef in config.json? `locked` means the backend has
+ // an existing value that the GUI intentionally cannot read; unlocking clears
+ // the field so the user can type a replacement.
+  type Row = { id: number; k: string; v: string; secret: boolean; locked: boolean };
   let rowSeq = 0;
-  const CIPHER_PREFIX = "enc:v1:";
-  const isCiphertext = (v: string) => v.startsWith(CIPHER_PREFIX);
-  function newRow(k: string, v: string, secret?: boolean): Row {
+  function newRow(k: string, v: string, secret?: boolean, locked?: boolean): Row {
     rowSeq += 1;
-    return { id: rowSeq, k, v, secret: secret ?? isCiphertext(v) };
+    return { id: rowSeq, k, v, secret: secret ?? false, locked: locked ?? false };
   }
  // Seed once at mount. The parent (SettingsModal) wraps this pane in
  // `{#key sel}` so a bot switch remounts the whole component — no
@@ -40,58 +36,49 @@
   let rows = $state<Row[]>(
     Object.entries(bot.env ?? {})
       .filter(([k]) => !RESERVED_ENV_KEYS.has(k))
-      .map(([k, v]) => newRow(k, String(v ?? "")))
+      .map(([k, v]) => newRow(k, String(v ?? ""), !!bot.secretEnv?.[k], !!bot.secretEnv?.[k] && !v))
   );
   function commitEnv() {
  // Preserve reserved keys (owned by other panes) by passing them through
  // unchanged; rebuild the free-form half from `rows`. Values are written
- // verbatim — sealing is the row-level concern (see seal/unlock below) so
- // commitEnv stays synchronous and reentrant-safe.
+ // verbatim; secret rows are routed to the backend by SaveConfig and leave
+ // only a secretRef in config.json.
     const next: { [k: string]: string } = {};
+    const secretNext: { [k: string]: boolean } = {};
     for (const k of RESERVED_ENV_KEYS) {
       const v = bot.env?.[k];
       if (v !== undefined) next[k] = v;
+      if (bot.secretEnv?.[k]) secretNext[k] = true;
     }
-    for (const r of rows) if (r.k.trim()) next[r.k.trim()] = r.v;
+    for (const r of rows) {
+      const k = r.k.trim();
+      if (!k) continue;
+      next[k] = r.locked ? "" : r.v;
+      if (r.secret) secretNext[k] = true;
+    }
     bot.env = next;
+    bot.secretEnv = secretNext;
     ondirty();
-  }
- // seal encrypts the row's current plaintext via the backend (AES-256-GCM
- // with the per-machine master.key) and replaces v with the enc:v1:…
- // envelope. Idempotent: noop if v is empty or already a ciphertext.
- // Async because the Wails IPC round-trip is async; commit happens after
- // the await so the saved config carries the sealed value.
-  async function seal(i: number) {
-    const r = rows[i];
-    if (!r.v || isCiphertext(r.v)) return;
-    try {
-      const ct = await XClawService.EncryptSecret(r.v);
-      rows[i] = { ...r, v: ct, secret: true };
-      commitEnv();
-    } catch (e) {
-      console.error("envenc: encrypt failed", e);
-    }
   }
  // unlock starts an edit cycle on a sealed row: wipes the ciphertext (the
  // GUI deliberately cannot decrypt — the renderer's read access is
  // write-only by design) so the user can type a replacement. The next
- // seal() or onblur reseals.
+ // Save stores the replacement in the secret backend.
   function unlock(i: number) {
-    rows[i] = { ...rows[i], v: "", secret: true };
+    rows[i] = { ...rows[i], v: "", secret: true, locked: false };
     commitEnv();
   }
  // toggleSecret flips the row's secret flag. Plain → secret seals current
- // value immediately. Secret → plain on a ciphertext row is a no-op (we
- // can't decrypt in the GUI); user should delete the row and re-enter if
- // they want plaintext.
-  async function toggleSecret(i: number) {
+ // value on Save. Secret → plain on a locked row is a no-op (we can't read
+ // the backend value); user should replace or delete the row.
+  function toggleSecret(i: number) {
     const r = rows[i];
     if (!r.secret) {
-      rows[i] = { ...r, secret: true };
-      await seal(i);
+      rows[i] = { ...r, secret: true, locked: false };
+      commitEnv();
       return;
     }
-    if (!isCiphertext(r.v)) {
+    if (!r.locked) {
       rows[i] = { ...r, secret: false };
       commitEnv();
     }
@@ -119,11 +106,11 @@
       <div class="envrow">
         <input class="k" bind:value={row.k} oninput={commitEnv} placeholder="KEY" aria-label="环境变量名" />
         <span>=</span>
-        {#if row.secret && isCiphertext(row.v)}
+        {#if row.secret && row.locked}
           <input class="v locked" value="••••••••" readonly aria-label="加密的环境变量值" />
           <button class="iconbtn" onclick={() => unlock(i)} title="替换为新值（无法查看现有值）" aria-label="替换">✎</button>
         {:else if row.secret}
-          <input class="v" type="password" bind:value={row.v} oninput={commitEnv} onblur={() => seal(i)} placeholder="粘贴敏感值，离焦自动加密" aria-label="待加密的环境变量值" />
+          <input class="v" type="password" bind:value={row.v} oninput={commitEnv} placeholder="粘贴敏感值，保存后进入 secret backend" aria-label="待保存的敏感环境变量值" />
           <button class="iconbtn" onclick={() => toggleSecret(i)} title="改为明文" aria-label="改为明文">🔓</button>
         {:else}
           <input class="v" bind:value={row.v} oninput={commitEnv} placeholder="value" aria-label="环境变量值" />
@@ -133,7 +120,7 @@
       </div>
     {/each}
     <button class="add sm" onclick={() => { rows = [...rows, newRow("", "")]; }}>+ 添加变量</button>
-    <small class="hint">🔒 加密的值以 AES-256 落到 config.json；离开此机器（无 master.key）则无法解密。OCTO_BOT_ID 在「Octo 集成」中管理，不出现在这里。</small>
+    <small class="hint">🔒 敏感值进入 secret backend；config.json 只保存 secretRef。OCTO_BOT_ID 在「Octo 集成」中管理，不出现在这里。</small>
   </fieldset>
 
   <fieldset>

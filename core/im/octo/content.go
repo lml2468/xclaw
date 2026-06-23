@@ -89,60 +89,51 @@ func buildMediaURL(relURL, apiURL string) string {
 	}
 
 	if strings.HasPrefix(relURL, "http://") || strings.HasPrefix(relURL, "https://") {
-		if apiURL == "" {
-			return ""
-		}
-		target, err := url.Parse(relURL)
-		if err != nil {
-			return ""
-		}
-		base, err := url.Parse(apiURL)
-		if err != nil {
-			return ""
-		}
-		if !strings.EqualFold(target.Host, base.Host) {
-			return ""
-		}
-		// Same host: reject a protocol downgrade/upgrade mismatch.
-		if !strings.EqualFold(target.Scheme, base.Scheme) {
-			return ""
-		}
-		if target.Scheme != "http" && target.Scheme != "https" {
-			return ""
-		}
-		return relURL
+		return buildAbsoluteMediaURL(relURL, apiURL)
 	}
+	return buildRelativeMediaURL(relURL, apiURL)
+}
 
+func buildAbsoluteMediaURL(relURL, apiURL string) string {
+	if apiURL == "" {
+		return ""
+	}
+	target, err := url.Parse(relURL)
+	if err != nil {
+		return ""
+	}
+	base, err := url.Parse(apiURL)
+	if err != nil {
+		return ""
+	}
+	if !isAllowedMediaOrigin(target, base) {
+		return ""
+	}
+	return relURL
+}
+
+func isAllowedMediaOrigin(target, base *url.URL) bool {
+	if !strings.EqualFold(target.Host, base.Host) {
+		return false
+	}
+	// Same host: reject a protocol downgrade/upgrade mismatch.
+	if !strings.EqualFold(target.Scheme, base.Scheme) {
+		return false
+	}
+	return target.Scheme == "http" || target.Scheme == "https"
+}
+
+func buildRelativeMediaURL(relURL, apiURL string) string {
 	// Relative path — strip the /file/ or /file/preview/ prefix, then enforce
 	// no traversal. The percent-encoded-dot and %2F defenses mirror inbound.ts:
 	// some servers decode them server-side and resolve dot-segments, escaping
 	// the /file/ sandbox.
-	storagePath := relURL
-	switch {
-	case strings.HasPrefix(storagePath, "file/preview/"):
-		storagePath = storagePath[len("file/preview/"):]
-	case strings.HasPrefix(storagePath, "file/"):
-		storagePath = storagePath[len("file/"):]
-	}
-	for _, seg := range strings.Split(storagePath, "/") {
-		if seg == ".." || seg == "." {
-			return ""
-		}
-	}
-	if strings.HasPrefix(storagePath, "/") {
+	storagePath := trimMediaStoragePrefix(relURL)
+	if hasUnsafeMediaPath(storagePath) {
 		return ""
 	}
 	lower := strings.ToLower(storagePath)
-	if strings.Contains(lower, "%2f") {
-		return ""
-	}
-	if strings.Contains(lower, "%2e") {
-		return ""
-	}
-	// Reject an encoded percent (%25…) too: a downstream store that double-decodes
-	// could turn %252e back into %2e and then "." — a traversal the single-decode
-	// checks above would miss (L21).
-	if strings.Contains(lower, "%25") {
+	if hasUnsafeMediaEncoding(lower) {
 		return ""
 	}
 
@@ -159,6 +150,39 @@ func buildMediaURL(relURL, apiURL string) string {
 		return ""
 	}
 	return candidate
+}
+
+func trimMediaStoragePrefix(storagePath string) string {
+	switch {
+	case strings.HasPrefix(storagePath, "file/preview/"):
+		return storagePath[len("file/preview/"):]
+	case strings.HasPrefix(storagePath, "file/"):
+		return storagePath[len("file/"):]
+	default:
+		return storagePath
+	}
+}
+
+func hasUnsafeMediaPath(storagePath string) bool {
+	for _, seg := range strings.Split(storagePath, "/") {
+		if seg == ".." || seg == "." {
+			return true
+		}
+	}
+	return strings.HasPrefix(storagePath, "/")
+}
+
+func hasUnsafeMediaEncoding(lowerStoragePath string) bool {
+	if strings.Contains(lowerStoragePath, "%2f") {
+		return true
+	}
+	if strings.Contains(lowerStoragePath, "%2e") {
+		return true
+	}
+	// Reject an encoded percent (%25…) too: a downstream store that
+	// double-decodes could turn %252e back into %2e and then "." — a traversal
+	// the single-decode checks above would miss (L21).
+	return strings.Contains(lowerStoragePath, "%25")
 }
 
 // toFiniteCoord coerces a user-supplied coordinate to a finite number, or

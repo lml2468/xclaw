@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -109,37 +110,10 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 }
 
 func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEvent, error) {
-	cmd := exec.CommandContext(ctx, d.Bin, d.buildArgs(req)...)
-	if req.Cwd != "" {
-		cmd.Dir = req.Cwd
-	}
-	// Feed the prompt on stdin (matches `-p -`). This is a private in-memory
-	// reader holding ONLY the prompt — never os.Stdin, which on the daemon
-	// carries the control-bus capability token. os/exec copies it to the
-	// child in a goroutine and closes the pipe at EOF.
-	cmd.Stdin = strings.NewReader(req.Prompt)
-	extraEnv := d.Env
-	if d.EnvFn != nil {
-		extraEnv = d.EnvFn()
-	}
-	cmd.Env = mergedEnv(extraEnv)
-	d.selfcheckOnce.Do(func() { d.logSelfcheck(cmd.Env, req.Cwd) })
-	// On ctx cancellation, CommandContext kills the process; WaitDelay bounds how
-	// long Wait then blocks if a grandchild keeps the output pipe open, so the
-	// reader goroutines can't hang the turn indefinitely.
-	cmd.WaitDelay = 10 * time.Second
-
-	stdout, err := cmd.StdoutPipe()
+	cmd := d.buildCommand(ctx, req)
+	stdout, stderr, err := commandPipes(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	// Merge stderr into the same stream so transport errors surface as events
-	// rather than being silently dropped (stderr is not stream-json, so the
-	// parser will pass non-JSON lines through as system/error events).
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdout.Close()
-		return nil, fmt.Errorf("stderr pipe: %w", err)
+		return nil, err
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -260,6 +234,38 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}()
 
 	return out, nil
+}
+
+func (d *ClaudeDriver) buildCommand(ctx context.Context, req Request) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, d.Bin, d.buildArgs(req)...)
+	if req.Cwd != "" {
+		cmd.Dir = req.Cwd
+	}
+	cmd.Stdin = strings.NewReader(req.Prompt)
+	cmd.Env = mergedEnv(d.queryEnv())
+	d.selfcheckOnce.Do(func() { d.logSelfcheck(cmd.Env, req.Cwd) })
+	cmd.WaitDelay = 10 * time.Second
+	return cmd
+}
+
+func (d *ClaudeDriver) queryEnv() []string {
+	if d.EnvFn != nil {
+		return d.EnvFn()
+	}
+	return d.Env
+}
+
+func commandPipes(cmd *exec.Cmd) (stdout, stderr io.ReadCloser, err error) {
+	stdout, err = cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err = cmd.StderrPipe()
+	if err != nil {
+		_ = stdout.Close()
+		return nil, nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+	return stdout, stderr, nil
 }
 
 // --- stream-json line shapes (only the fields we consume) ---

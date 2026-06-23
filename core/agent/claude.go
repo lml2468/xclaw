@@ -145,75 +145,14 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	// from the stdout reader's stores to the cmd.Wait reader's load.
 	var sawTurnDone atomic.Bool
 
-	// emit sends an event unless the turn's context is cancelled. Selecting on
-	// ctx.Done means an abandoned/cancelled consumer can't wedge a reader on a
-	// full channel (which would leak the goroutine and the claude subprocess).
-	emit := func(ev AgentEvent) {
-		select {
-		case out <- ev:
-		case <-ctx.Done():
-		}
-	}
-
-	// Drain stderr; emit any non-empty lines as recoverable errors (e.g. node
-	// warnings) without blocking the child on a full pipe.
 	go func() {
 		defer wg.Done()
-		sc := bufio.NewScanner(stderr)
-		// Match the stdout cap (16 MiB): a verbose stack trace / overload message
-		// that classification depends on can exceed the default 64 KiB token, and a
-		// dropped line would silently downgrade a transient error to the generic one.
-		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" {
-				continue
-			}
-			// A stale --resume id makes claude abort at session init with
-			// "No conversation found with session ID: …". Tag it so the gateway
-			// can clear the resume mapping and retry the turn fresh.
-			if req.SessionID != "" && strings.Contains(line, "No conversation found with session ID") {
-				emit(AgentEvent{Kind: KindError, Err: line, Recoverable: true, ResumeInvalid: true, Raw: line})
-				continue
-			}
-			// Upstream rate-limit / overload printed on stderr: tag it transient so
-			// the gateway can reply "服务繁忙" instead of a generic error.
-			if isTransientUpstream(line) {
-				emit(AgentEvent{Kind: KindError, Err: line, Recoverable: true, Transient: true, RetryHint: retryHint(line), Raw: line})
-				continue
-			}
-			emit(AgentEvent{Kind: KindError, Err: line, Recoverable: true, Raw: line})
-		}
-		// A scan error (e.g. a line exceeding the buffer cap) would otherwise be
-		// swallowed; surface it as recoverable so it isn't silently lost.
-		if err := sc.Err(); err != nil {
-			emit(AgentEvent{Kind: KindError, Err: fmt.Sprintf("stderr scan: %v", err), Recoverable: true, Raw: err.Error()})
-		}
+		d.drainStderr(ctx, stderr, req.SessionID, out)
 	}()
 
 	go func() {
 		defer wg.Done()
-		sc := bufio.NewScanner(stdout)
-		// stream-json lines can be large (tool inputs with file contents).
-		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" {
-				continue
-			}
-			for _, ev := range parseClaudeLine(line) {
-				if ev.Kind == KindTurnDone {
-					sawTurnDone.Store(true)
-				}
-				emit(ev)
-			}
-		}
-		// Surface a scan error (e.g. an over-cap line) as terminal: a truncated
-		// stream-json line means we may have lost the result, so don't let it pass
-		// silently as a successful empty turn.
-		if err := sc.Err(); err != nil {
-			emit(AgentEvent{Kind: KindError, Err: fmt.Sprintf("stdout scan: %v", err), Raw: err.Error()})
-		}
+		d.drainStdout(ctx, stdout, out, &sawTurnDone)
 	}()
 
 	go func() {
@@ -224,7 +163,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 			// reply + result already streamed, so surface it as recoverable
 			// (informational) and let the assembled reply stand. Only an exit
 			// with NO prior result is terminal — claude died before answering.
-			emit(AgentEvent{
+			emitAgentEvent(ctx, out, AgentEvent{
 				Kind:        KindError,
 				Err:         fmt.Sprintf("claude exited: %v", err),
 				Recoverable: sawTurnDone.Load(),
@@ -234,6 +173,62 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}()
 
 	return out, nil
+}
+
+func (d *ClaudeDriver) drainStderr(ctx context.Context, stderr io.Reader, sessionID string, out chan<- AgentEvent) {
+	sc := newClaudeScanner(stderr)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		emitAgentEvent(ctx, out, stderrLineEvent(line, sessionID))
+	}
+	if err := sc.Err(); err != nil {
+		emitAgentEvent(ctx, out, AgentEvent{Kind: KindError, Err: fmt.Sprintf("stderr scan: %v", err), Recoverable: true, Raw: err.Error()})
+	}
+}
+
+func (d *ClaudeDriver) drainStdout(ctx context.Context, stdout io.Reader, out chan<- AgentEvent, sawTurnDone *atomic.Bool) {
+	sc := newClaudeScanner(stdout)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		for _, ev := range parseClaudeLine(line) {
+			if ev.Kind == KindTurnDone {
+				sawTurnDone.Store(true)
+			}
+			emitAgentEvent(ctx, out, ev)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		emitAgentEvent(ctx, out, AgentEvent{Kind: KindError, Err: fmt.Sprintf("stdout scan: %v", err), Raw: err.Error()})
+	}
+}
+
+func newClaudeScanner(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	return sc
+}
+
+func stderrLineEvent(line, sessionID string) AgentEvent {
+	if sessionID != "" && strings.Contains(line, "No conversation found with session ID") {
+		return AgentEvent{Kind: KindError, Err: line, Recoverable: true, ResumeInvalid: true, Raw: line}
+	}
+	if isTransientUpstream(line) {
+		return AgentEvent{Kind: KindError, Err: line, Recoverable: true, Transient: true, RetryHint: retryHint(line), Raw: line}
+	}
+	return AgentEvent{Kind: KindError, Err: line, Recoverable: true, Raw: line}
+}
+
+func emitAgentEvent(ctx context.Context, out chan<- AgentEvent, ev AgentEvent) {
+	select {
+	case out <- ev:
+	case <-ctx.Done():
+	}
 }
 
 func (d *ClaudeDriver) buildCommand(ctx context.Context, req Request) *exec.Cmd {

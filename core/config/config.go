@@ -366,6 +366,12 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src == nil {
 		return
 	}
+	mergeAgentScalars(dst, src)
+	mergeAgentCapabilities(dst, src)
+	mergeAgentEnv(dst, src.Env)
+}
+
+func mergeAgentScalars(dst *AgentConfig, src *AgentConfig) {
 	if src.Model != "" {
 		dst.Model = src.Model
 	}
@@ -375,6 +381,12 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src.GatewayToken != "" {
 		dst.GatewayToken = src.GatewayToken
 	}
+	if src.DispatchTimeoutSec > 0 {
+		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
+	}
+}
+
+func mergeAgentCapabilities(dst *AgentConfig, src *AgentConfig) {
 	// Capability switches: a true at either the global or per-bot layer enables
 	// it (consistent with the other fields' "non-zero overrides" merge).
 	if src.Cron != nil {
@@ -389,16 +401,16 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src.InheritUserConfig {
 		dst.InheritUserConfig = true
 	}
-	if src.DispatchTimeoutSec > 0 {
-		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
-	}
+}
+
+func mergeAgentEnv(dst *AgentConfig, env map[string]EnvValue) {
 	// Env is per-bot only in the canonical config. Merge per-key into dst so
 	// defaults() can still seed future built-in env entries if needed.
-	if len(src.Env) > 0 {
+	if len(env) > 0 {
 		if dst.Env == nil {
 			dst.Env = map[string]EnvValue{}
 		}
-		for k, v := range src.Env {
+		for k, v := range env {
 			dst.Env[k] = v
 		}
 	}

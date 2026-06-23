@@ -129,31 +129,35 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 
 	started := time.Now()
 
-	var srv *control.Server
 	reg := newBotRegistry(nil)
-	var stopControl func()
-	if controlSock != "" {
-		srv = control.NewServer(nil)
-		reg.srv = srv
-		srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
-		configureBusAuth(srv, authStdin) // arm the capability-token gate before serving
-		cleanup := serveControlBus(srv, controlSock)
-		var once sync.Once
-		stopControl = func() { once.Do(cleanup) }
-		defer stopControl() // belt-and-suspenders: if the ctx-watcher misses it
-		// Close the control listener as soon as shutdown begins so no late
-		// session.send can land and race a per-bot target.turnsWG.Add(1)
-		// AFTER that bot's turnsWG.Wait has already returned 0 — which both
-		// violates the WaitGroup contract and would dispatch to a bot whose
-		// store has already been closed by runBot's deferred st.Close.
-		go func() {
-			<-ctx.Done()
-			stopControl()
-		}()
+	srv, stopControl := startConfigControl(ctx, reg, started, controlSock, authStdin)
+	if stopControl != nil {
+		defer stopControl()
 	}
 
 	fmt.Printf("octobuddy-daemon — config mode: %d bot(s)\n", len(bots))
+	runConfiguredBots(ctx, bots, reg, srv)
+}
 
+func startConfigControl(ctx context.Context, reg *botRegistry, started time.Time, controlSock string, authStdin bool) (*control.Server, func()) {
+	if controlSock == "" {
+		return nil, nil
+	}
+	srv := control.NewServer(nil)
+	reg.srv = srv
+	srv.SetHandler(makeMultiBotHandler(ctx, reg, started))
+	configureBusAuth(srv, authStdin)
+	cleanup := serveControlBus(srv, controlSock)
+	var once sync.Once
+	stopControl := func() { once.Do(cleanup) }
+	go func() {
+		<-ctx.Done()
+		stopControl()
+	}()
+	return srv, stopControl
+}
+
+func runConfiguredBots(ctx context.Context, bots []config.Resolved, reg *botRegistry, srv *control.Server) {
 	var wg sync.WaitGroup
 	for _, cfg := range bots {
 		wg.Add(1)

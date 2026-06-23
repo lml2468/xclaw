@@ -187,43 +187,62 @@ func TestCapabilityTokenGate(t *testing.T) {
 	defer conn.Close()
 	sc := NewScanner(conn)
 
-	isErr := func(env Envelope) bool { return env.Type == "error" }
+	assertUnauthenticatedSecretRejected(t, conn, sc)
+	assertHealthAllowedWithoutAuth(t, conn, sc)
+	assertWrongTokenRejected(t, conn, sc)
+	resp := assertValidTokenAllowsSecret(t, conn, sc, token)
+	assertTokenNotReflected(t, resp, token)
+}
 
-	// (i) privileged command before any auth → rejected.
-	if env := sendCmd(t, conn, sc, "1", "secret.inject", SecretInjectBody{Kind: "octoToken", Value: "x"}); !isErr(env) {
+func isErrorEnvelope(env Envelope) bool {
+	return env.Type == "error"
+}
+
+func assertUnauthenticatedSecretRejected(t *testing.T, conn net.Conn, sc *bufio.Scanner) {
+	t.Helper()
+	if env := sendCmd(t, conn, sc, "1", "secret.inject", SecretInjectBody{Kind: "octoToken", Value: "x"}); !isErrorEnvelope(env) {
 		t.Fatalf("unauthenticated secret.inject should be rejected, got %+v", env)
 	}
+}
 
-	// (iii) read-only command works without auth.
-	if env := sendCmd(t, conn, sc, "2", "health", struct{}{}); isErr(env) {
+func assertHealthAllowedWithoutAuth(t *testing.T, conn net.Conn, sc *bufio.Scanner) {
+	t.Helper()
+	if env := sendCmd(t, conn, sc, "2", "health", struct{}{}); isErrorEnvelope(env) {
 		t.Fatalf("health should work without auth, got error %+v", env)
 	}
+}
 
-	// (i) auth with the WRONG token → rejected, and the wrong token must not be
-	// echoed back (no reflection into the response/logs).
+func assertWrongTokenRejected(t *testing.T, conn net.Conn, sc *bufio.Scanner) {
+	t.Helper()
+
 	const wrong = "wrong-token-zzz"
 	env := sendCmd(t, conn, sc, "3", CmdAuth, AuthBody{Token: wrong})
-	if !isErr(env) {
+	if !isErrorEnvelope(env) {
 		t.Fatalf("auth with wrong token should be rejected, got %+v", env)
 	}
 	if bytes.Contains(env.Body, []byte(wrong)) {
 		t.Fatalf("rejection echoed the presented token: %s", env.Body)
 	}
-	// still unauthenticated → privileged still rejected.
-	if env := sendCmd(t, conn, sc, "4", "secret.inject", SecretInjectBody{Kind: "octoToken", Value: "x"}); !isErr(env) {
+	if env := sendCmd(t, conn, sc, "4", "secret.inject", SecretInjectBody{Kind: "octoToken", Value: "x"}); !isErrorEnvelope(env) {
 		t.Fatalf("secret.inject after failed auth should be rejected, got %+v", env)
 	}
+}
 
-	// (ii) auth with the VALID token → accepted, then privileged succeeds.
-	if env := sendCmd(t, conn, sc, "5", CmdAuth, AuthBody{Token: token}); isErr(env) {
+func assertValidTokenAllowsSecret(t *testing.T, conn net.Conn, sc *bufio.Scanner, token string) Envelope {
+	t.Helper()
+
+	if env := sendCmd(t, conn, sc, "5", CmdAuth, AuthBody{Token: token}); isErrorEnvelope(env) {
 		t.Fatalf("auth with valid token should succeed, got error %+v", env)
 	}
 	resp := sendCmd(t, conn, sc, "6", "secret.inject", SecretInjectBody{Kind: "octoToken", Value: "x"})
-	if isErr(resp) {
+	if isErrorEnvelope(resp) {
 		t.Fatalf("secret.inject after valid auth should succeed, got error %+v", resp)
 	}
+	return resp
+}
 
-	// (iv) the valid token must never be reflected to the client across any frame.
+func assertTokenNotReflected(t *testing.T, resp Envelope, token string) {
+	t.Helper()
 	if bytes.Contains(resp.Body, []byte(token)) {
 		t.Fatalf("response leaked the capability token: %s", resp.Body)
 	}

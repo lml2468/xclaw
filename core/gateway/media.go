@@ -432,7 +432,7 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 		return fmt.Sprintf("[文件: %s - 下载失败 HTTP %d]", filename, resp.StatusCode)
 	}
 	head, n, err := readInlineProbe(resp.Body)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if isFileReadFailure(err) {
 		return fmt.Sprintf("[文件: %s - 网络错误: %v]", filename, err)
 	}
 	if n <= inlineFileMaxBytes {
@@ -442,6 +442,10 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
 	return g.materializeLargeFile(cwd, filename, head, resp.Body)
+}
+
+func isFileReadFailure(err error) bool {
+	return err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func renderFileDescription(filename string, size int64) string {

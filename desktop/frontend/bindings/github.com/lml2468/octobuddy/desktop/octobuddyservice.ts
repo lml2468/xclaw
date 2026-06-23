@@ -45,28 +45,28 @@ import * as $models from "./models.js";
  * BotSkillCreate scaffolds a new per-bot skill bundle.
  */
 export function BotSkillCreate(botID: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(6569680, botID, name);
+    return $Call.ByID(3160689074, botID, name);
 }
 
 /**
  * BotSkillDelete removes one of the bot's skill bundles.
  */
 export function BotSkillDelete(botID: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(1487718959, botID, name);
+    return $Call.ByID(2579072689, botID, name);
 }
 
 /**
  * BotSkillDeleteFile removes a file within one of the bot's skill bundles.
  */
 export function BotSkillDeleteFile(botID: string, name: string, rel: string): $CancellablePromise<void> {
-    return $Call.ByID(2790927073, botID, name, rel);
+    return $Call.ByID(1469125847, botID, name, rel);
 }
 
 /**
  * BotSkillFiles lists files in one of the bot's skill bundles.
  */
 export function BotSkillFiles(botID: string, name: string): $CancellablePromise<string[]> {
-    return $Call.ByID(2467324339, botID, name).then(($result: any) => {
+    return $Call.ByID(1837564793, botID, name).then(($result: any) => {
         return $$createType0($result);
     });
 }
@@ -75,21 +75,21 @@ export function BotSkillFiles(botID: string, name: string): $CancellablePromise<
  * BotSkillRead reads a file within one of the bot's skill bundles.
  */
 export function BotSkillRead(botID: string, name: string, rel: string): $CancellablePromise<string> {
-    return $Call.ByID(3756526264, botID, name, rel);
+    return $Call.ByID(1558085614, botID, name, rel);
 }
 
 /**
  * BotSkillWrite writes a file within one of the bot's skill bundles.
  */
 export function BotSkillWrite(botID: string, name: string, rel: string, content: string): $CancellablePromise<void> {
-    return $Call.ByID(188442547, botID, name, rel, content);
+    return $Call.ByID(2871276593, botID, name, rel, content);
 }
 
 /**
  * BotSkillsList returns a bot's skill bundles.
  */
 export function BotSkillsList(botID: string): $CancellablePromise<skills$0.SkillInfo[]> {
-    return $Call.ByID(6714641, botID).then(($result: any) => {
+    return $Call.ByID(3283931783, botID).then(($result: any) => {
         return $$createType2($result);
     });
 }
@@ -98,35 +98,35 @@ export function BotSkillsList(botID: string): $CancellablePromise<skills$0.Skill
  * BotWorkflowCreate scaffolds a new per-bot workflow script.
  */
 export function BotWorkflowCreate(botID: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(1139562354, botID, name);
+    return $Call.ByID(276343916, botID, name);
 }
 
 /**
  * BotWorkflowDelete removes one of the bot's workflow scripts.
  */
 export function BotWorkflowDelete(botID: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(2940089713, botID, name);
+    return $Call.ByID(167084499, botID, name);
 }
 
 /**
  * BotWorkflowRead reads one of the bot's workflow scripts.
  */
 export function BotWorkflowRead(botID: string, name: string): $CancellablePromise<string> {
-    return $Call.ByID(3704072622, botID, name);
+    return $Call.ByID(3711772092, botID, name);
 }
 
 /**
  * BotWorkflowWrite writes one of the bot's workflow scripts.
  */
 export function BotWorkflowWrite(botID: string, name: string, content: string): $CancellablePromise<void> {
-    return $Call.ByID(27652337, botID, name, content);
+    return $Call.ByID(780425239, botID, name, content);
 }
 
 /**
  * BotWorkflowsList returns a bot's workflow scripts.
  */
 export function BotWorkflowsList(botID: string): $CancellablePromise<workflows$0.Info[]> {
-    return $Call.ByID(864764999, botID).then(($result: any) => {
+    return $Call.ByID(2566002125, botID).then(($result: any) => {
         return $$createType4($result);
     });
 }
@@ -135,28 +135,28 @@ export function BotWorkflowsList(botID: string): $CancellablePromise<workflows$0
  * BotsList requests the bot roster.
  */
 export function BotsList(): $CancellablePromise<void> {
-    return $Call.ByID(2883740028);
+    return $Call.ByID(3274255358);
 }
 
 /**
  * CronCreate schedules a task (owner-gated by the daemon).
  */
 export function CronCreate(body: control$0.CronCreateBody): $CancellablePromise<void> {
-    return $Call.ByID(764055326, body);
+    return $Call.ByID(1589056800, body);
 }
 
 /**
  * CronDelete removes a scheduled task.
  */
 export function CronDelete(botID: string, uid: string, id: string): $CancellablePromise<void> {
-    return $Call.ByID(1594311957, botID, uid, id);
+    return $Call.ByID(1702502815, botID, uid, id);
 }
 
 /**
  * CronList lists a bot's scheduled tasks.
  */
 export function CronList(botID: string): $CancellablePromise<void> {
-    return $Call.ByID(2639987814, botID);
+    return $Call.ByID(4108379644, botID);
 }
 
 /**
@@ -166,7 +166,7 @@ export function CronList(botID: string): $CancellablePromise<void> {
  * daemon — see core/cron Update's enabled-only fast path.
  */
 export function CronUpdate(body: control$0.CronUpdateBody): $CancellablePromise<void> {
-    return $Call.ByID(963819619, body);
+    return $Call.ByID(144851893, body);
 }
 
 /**
@@ -182,7 +182,7 @@ export function CronUpdate(body: control$0.CronUpdateBody): $CancellablePromise<
  * silently showing "no groups available".
  */
 export function GroupsList(botID: string): $CancellablePromise<octocli$0.Group[]> {
-    return $Call.ByID(980157138, botID).then(($result: any) => {
+    return $Call.ByID(3721641824, botID).then(($result: any) => {
         return $$createType6($result);
     });
 }
@@ -191,21 +191,21 @@ export function GroupsList(botID: string): $CancellablePromise<octocli$0.Group[]
  * Health requests a daemon health snapshot.
  */
 export function Health(): $CancellablePromise<void> {
-    return $Call.ByID(2597603676);
+    return $Call.ByID(1573233454);
 }
 
 /**
  * History requests recent messages for a session (response arrives via EventStream).
  */
 export function History(botID: string, sessionKey: string, limit: number): $CancellablePromise<void> {
-    return $Call.ByID(4053444022, botID, sessionKey, limit);
+    return $Call.ByID(2491436192, botID, sessionKey, limit);
 }
 
 /**
  * LoadConfig returns the editor view of every configured bot.
  */
 export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
-    return $Call.ByID(317365000).then(($result: any) => {
+    return $Call.ByID(2972308434).then(($result: any) => {
         return $$createType8($result);
     });
 }
@@ -215,7 +215,7 @@ export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
  * bounded and traversal-safe.
  */
 export function MemoryFile(botID: string, channelType: number, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
-    return $Call.ByID(2248183679, botID, channelType, sessionKey, relPath).then(($result: any) => {
+    return $Call.ByID(1690105045, botID, channelType, sessionKey, relPath).then(($result: any) => {
         return $$createType9($result);
     });
 }
@@ -225,7 +225,7 @@ export function MemoryFile(botID: string, channelType: number, sessionKey: strin
  * (read-only). Returns an empty tree when no memory has been written yet.
  */
 export function MemoryTree(botID: string, channelType: number, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
-    return $Call.ByID(1997019889, botID, channelType, sessionKey).then(($result: any) => {
+    return $Call.ByID(1798474967, botID, channelType, sessionKey).then(($result: any) => {
         return $$createType11($result);
     });
 }
@@ -238,7 +238,7 @@ export function MemoryTree(botID: string, channelType: number, sessionKey: strin
  * for the manual BotFather /newbot flow.
  */
 export function OctoAddBot(apiURL: string, apiKey: string, name: string): $CancellablePromise<octoapi$0.BotResult> {
-    return $Call.ByID(1338554973, apiURL, apiKey, name).then(($result: any) => {
+    return $Call.ByID(3460653163, apiURL, apiKey, name).then(($result: any) => {
         return $$createType12($result);
     });
 }
@@ -248,7 +248,7 @@ export function OctoAddBot(apiURL: string, apiKey: string, name: string): $Cance
  * left alone — re-login can restore the profile from it.
  */
 export function OctoCliLogout(botID: string): $CancellablePromise<void> {
-    return $Call.ByID(1486321187, botID);
+    return $Call.ByID(653348285, botID);
 }
 
 /**
@@ -257,7 +257,7 @@ export function OctoCliLogout(botID: string): $CancellablePromise<void> {
  * pane without forcing the operator to re-save the whole config.
  */
 export function OctoCliRelogin(botID: string): $CancellablePromise<void> {
-    return $Call.ByID(756879125, botID);
+    return $Call.ByID(459017407, botID);
 }
 
 /**
@@ -265,7 +265,7 @@ export function OctoCliRelogin(botID: string): $CancellablePromise<void> {
  * Reads config.json directly; no octo-cli spawn needed (cheap for a UI poll).
  */
 export function OctoCliStatus(botID: string): $CancellablePromise<$models.OctoCliStatus> {
-    return $Call.ByID(3212560983, botID).then(($result: any) => {
+    return $Call.ByID(2151220461, botID).then(($result: any) => {
         return $$createType13($result);
     });
 }
@@ -274,7 +274,7 @@ export function OctoCliStatus(botID: string): $CancellablePromise<$models.OctoCl
  * Reset clears a session's resume mapping (start fresh).
  */
 export function Reset(botID: string, uid: string): $CancellablePromise<void> {
-    return $Call.ByID(1834369521, botID, uid);
+    return $Call.ByID(1136240551, botID, uid);
 }
 
 /**
@@ -283,7 +283,7 @@ export function Reset(botID: string, uid: string): $CancellablePromise<void> {
  * racing this restart.
  */
 export function RestartCore(): $CancellablePromise<void> {
-    return $Call.ByID(2417701434);
+    return $Call.ByID(89509176);
 }
 
 /**
@@ -293,14 +293,14 @@ export function RestartCore(): $CancellablePromise<void> {
  * follows with RestartCore to apply.
  */
 export function SaveConfig(bots: configstore$0.BotConfig[], removedIDs: string[]): $CancellablePromise<void> {
-    return $Call.ByID(2359737065, bots, removedIDs);
+    return $Call.ByID(1611319, bots, removedIDs);
 }
 
 /**
  * Send routes a DM message to a bot (botID may be empty for the default bot).
  */
 export function Send(botID: string, uid: string, text: string): $CancellablePromise<void> {
-    return $Call.ByID(519019940, botID, uid, text);
+    return $Call.ByID(34397910, botID, uid, text);
 }
 
 /**
@@ -308,7 +308,7 @@ export function Send(botID: string, uid: string, text: string): $CancellableProm
  * arrives via EventStream as a sessions.list envelope).
  */
 export function SessionsList(botID: string): $CancellablePromise<void> {
-    return $Call.ByID(253189275, botID);
+    return $Call.ByID(2557722801, botID);
 }
 
 /**
@@ -317,7 +317,7 @@ export function SessionsList(botID: string): $CancellablePromise<void> {
  * usage.stats envelope echoing `since`.
  */
 export function UsageStats(botID: string, since: number): $CancellablePromise<void> {
-    return $Call.ByID(440527224, botID, since);
+    return $Call.ByID(4052811906, botID, since);
 }
 
 /**
@@ -325,7 +325,7 @@ export function UsageStats(botID: string, since: number): $CancellablePromise<vo
  * (utf8 text or base64 for images/binaries), bounded and traversal-safe.
  */
 export function WorkspaceFile(botID: string, channelType: number, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
-    return $Call.ByID(2447146625, botID, channelType, sessionKey, relPath).then(($result: any) => {
+    return $Call.ByID(3898295363, botID, channelType, sessionKey, relPath).then(($result: any) => {
         return $$createType9($result);
     });
 }
@@ -335,7 +335,7 @@ export function WorkspaceFile(botID: string, channelType: number, sessionKey: st
  * (read-only). Returns an empty tree when no turn has created the sandbox yet.
  */
 export function WorkspaceTree(botID: string, channelType: number, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
-    return $Call.ByID(710539635, botID, channelType, sessionKey).then(($result: any) => {
+    return $Call.ByID(2868650453, botID, channelType, sessionKey).then(($result: any) => {
         return $$createType11($result);
     });
 }

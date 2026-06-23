@@ -118,7 +118,7 @@ func TestExtractTarGz(t *testing.T) {
 }
 
 // runUpgrade points the package's HTTP seams at an httptest server and HOME at a
-// temp dir (so Dir/BinPath never touch the real ~/.xclaw), then runs Upgrade.
+// temp dir (so Dir/BinPath never touch the real ~/.octobuddy), then runs Upgrade.
 func runUpgrade(t *testing.T, h http.HandlerFunc) (string, error) {
 	t.Helper()
 	srv := httptest.NewServer(h)

@@ -1,7 +1,7 @@
-# Releasing XClaw
+# Releasing OctoBuddy
 
 This is the operator-facing checklist for cutting a signed + notarized
-release. XClaw releases are built locally on your Mac (no CI involved) — the
+release. OctoBuddy releases are built locally on your Mac (no CI involved) — the
 operator already has the Developer ID cert + Apple notary credential on
 hand, and a single-operator product doesn't get much from offloading the
 build to GitHub runners.
@@ -27,7 +27,7 @@ You need a paid Apple Developer account (`developer.apple.com`).
    `Developer ID Application: Your Name (TEAMID)`.
 4. Export it for the release script:
    ```bash
-   echo 'export XCLAW_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"' >> ~/.zshrc
+   echo 'export OCTOBUDDY_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"' >> ~/.zshrc
    ```
 
 ### 2. App Store Connect API key for notarization
@@ -40,14 +40,14 @@ You need a paid Apple Developer account (`developer.apple.com`).
 3. Note the **Key ID** (e.g. `ABCD1234EF`) and the **Issuer UUID**.
 4. Register with `notarytool`:
    ```bash
-   xcrun notarytool store-credentials xclaw-notary \
+   xcrun notarytool store-credentials octobuddy-notary \
      --key /path/to/AuthKey_XXXX.p8 \
      --key-id ABCD1234EF \
      --issuer <issuer-uuid>
    ```
 5. Export the profile name for the release script:
    ```bash
-   echo 'export XCLAW_NOTARY_PROFILE=xclaw-notary' >> ~/.zshrc
+   echo 'export OCTOBUDDY_NOTARY_PROFILE=octobuddy-notary' >> ~/.zshrc
    ```
 
 ### 3. GitHub CLI
@@ -68,16 +68,16 @@ gh auth login
    ```
    The script will:
    - Tag HEAD (if not already tagged) and push the tag.
-   - Build the universal `.app`, embed `xclawd` + `octo-cli`, sign inside-out
+   - Build the universal `.app`, embed `octobuddy-daemon` + `octo-cli`, sign inside-out
      with your Developer ID, notarize via the API key, staple, re-zip.
-   - Cross-compile `xclawd` for darwin/linux/windows (5 binaries).
+   - Cross-compile `octobuddy-daemon` for darwin/linux/windows (5 binaries).
    - Stage everything under versioned filenames + a `checksums.txt`.
    - `gh release create` with auto-generated notes.
 5. End-to-end takes ~5–15 min (mostly notary queue wait).
 6. The release lands at
-   `https://github.com/lml2468/xclaw/releases/tag/v1.0.0` with:
-   - `XClaw-<ver>-macos-universal.zip` — signed + notarized .app (both archs)
-   - `xclawd-<ver>-{darwin-arm64,darwin-amd64,linux-amd64,linux-arm64,windows-amd64.exe}`
+   `https://github.com/lml2468/octobuddy/releases/tag/v1.0.0` with:
+   - `OctoBuddy-<ver>-macos-universal.zip` — signed + notarized .app (both archs)
+   - `octobuddy-daemon-<ver>-{darwin-arm64,darwin-amd64,linux-amd64,linux-arm64,windows-amd64.exe}`
      — headless daemon binaries for non-Mac platforms
    - `checksums.txt` — SHA256 of every asset above
 7. Hand-edit the release body if you want a human summary at the top
@@ -88,9 +88,9 @@ gh auth login
 If you want to sanity-check the .app without releasing it:
 
 ```bash
-XCLAW_UNIVERSAL=1 zsh scripts/package-desktop.sh
-spctl --assess --type execute -vv desktop/bin/xclaw.app
-codesign --verify --deep --strict --verbose=2 desktop/bin/xclaw.app
+OCTOBUDDY_UNIVERSAL=1 zsh scripts/package-desktop.sh
+spctl --assess --type execute -vv desktop/bin/octobuddy.app
+codesign --verify --deep --strict --verbose=2 desktop/bin/octobuddy.app
 ```
 
 ## Troubleshooting
@@ -99,7 +99,7 @@ codesign --verify --deep --strict --verbose=2 desktop/bin/xclaw.app
   is locked or the cert's partition list excludes `codesign`. Unlock the
   keychain and retry.
 - **`notarytool` returns `Invalid`** — download the log it points at and fix
-  whichever helper failed. Most common: a helper (xclawd, octo-cli) wasn't
+  whichever helper failed. Most common: a helper (octobuddy-daemon, octo-cli) wasn't
   signed with the hardened runtime; the script signs both inside-out so this
   usually means a stale build artifact crept in. Try
   `rm -rf desktop/bin && zsh scripts/release.sh …` again.

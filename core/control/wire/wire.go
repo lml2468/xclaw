@@ -1,4 +1,4 @@
-// Package wire defines the XClaw control-bus contract: the NDJSON envelope, its
+// Package wire defines the OctoBuddy control-bus contract: the NDJSON envelope, its
 // codec, and the typed command/response/event bodies (see proto/README.md).
 //
 // It is a dependency-free leaf so any client — the daemon's own control server,

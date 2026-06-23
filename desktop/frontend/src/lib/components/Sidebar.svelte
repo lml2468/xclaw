@@ -54,14 +54,14 @@
     const next = theme === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     theme = next;
-    try { localStorage.setItem("xclaw:theme", next); } catch (_) {}
+    try { localStorage.setItem("octobuddy:theme", next); } catch (_) {}
   }
 </script>
 
 <aside class="sidebar" class:collapsed>
   <div class="top" style="--wails-draggable: drag;">
     <span class="brand-mark" aria-hidden="true"><XMark size={17} /></span>
-    <span class="brand-name">XClaw</span>
+    <span class="brand-name">OctoBuddy</span>
     <span class="spacer"></span>
     <button class="iconbtn theme-btn" style="--wails-draggable: no-drag;" title="切换明暗" aria-label="切换明暗" onclick={toggleTheme}>
       {#if theme === "dark"}

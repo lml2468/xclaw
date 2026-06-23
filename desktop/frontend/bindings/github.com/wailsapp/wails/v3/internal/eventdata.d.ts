@@ -7,15 +7,15 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as wire$0 from "../../../../lml2468/xclaw/core/control/wire/models.js";
+import type * as wire$0 from "../../../../lml2468/octobuddy/core/control/wire/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as control$0 from "../../../../lml2468/xclaw/desktop/internal/control/models.js";
+import type * as control$0 from "../../../../lml2468/octobuddy/desktop/internal/control/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "xclaw:event": control$0.Envelope;
+            "octobuddy:event": control$0.Envelope;
         }
     }
 }

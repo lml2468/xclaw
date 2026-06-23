@@ -8,27 +8,27 @@
         AllowPromptForPassword="false">
     </Settings>
     <Installer
-        Path="xclaw"
+        Path="octobuddy"
         Arguments=""
-        InstallLocation="C:\Program Files\XClaw\XClaw">
+        InstallLocation="C:\Program Files\OctoBuddy\OctoBuddy">
     </Installer>
     <PackageInformation
-        PackageName="XClaw"
-        PackageDisplayName="XClaw"
-        PublisherName="CN=XClaw"
-        PublisherDisplayName="XClaw"
+        PackageName="OctoBuddy"
+        PackageDisplayName="OctoBuddy"
+        PublisherName="CN=OctoBuddy"
+        PublisherDisplayName="OctoBuddy"
         Version="0.1.0.0"
-        PackageDescription="XClaw — agent gateway desktop">
+        PackageDescription="OctoBuddy — agent gateway desktop">
         <Capabilities>
             <Capability Name="runFullTrust" />
             
         </Capabilities>
         <Applications>
             <Application
-                Id="app.xclaw.dev"
-                Description="XClaw — agent gateway desktop"
-                DisplayName="XClaw"
-                ExecutableName="xclaw"
+                Id="com.mlt.octobuddy.desktop"
+                Description="OctoBuddy — agent gateway desktop"
+                DisplayName="OctoBuddy"
+                ExecutableName="octobuddy"
                 EntryPoint="Windows.FullTrustApplication">
                 
             </Application>
@@ -41,13 +41,13 @@
         </Dependencies>
         <Properties>
             <Framework>false</Framework>
-            <DisplayName>XClaw</DisplayName>
-            <PublisherDisplayName>XClaw</PublisherDisplayName>
-            <Description>XClaw — agent gateway desktop</Description>
+            <DisplayName>OctoBuddy</DisplayName>
+            <PublisherDisplayName>OctoBuddy</PublisherDisplayName>
+            <Description>OctoBuddy — agent gateway desktop</Description>
             <Logo>Assets\AppIcon.png</Logo>
         </Properties>
     </PackageInformation>
-    <SaveLocation PackagePath="xclaw.msix" />
+    <SaveLocation PackagePath="octobuddy.msix" />
     <PackageIntegrity>
         <CertificatePath></CertificatePath>
     </PackageIntegrity>

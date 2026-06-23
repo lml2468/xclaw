@@ -1,13 +1,13 @@
-# XClaw control-bus protocol
+# OctoBuddy control-bus protocol
 
-The contract between the Go core (`xclawd`) and any client shell (the Wails v3
+The contract between the Go core (`octobuddy-daemon`) and any client shell (the Wails v3
 desktop app, a web console, a CLI). It is intentionally language-neutral so each
 side can implement it independently.
 
 ## Transport
 
 - **v1:** newline-delimited JSON (NDJSON) over a Unix domain socket.
-  - `xclawd` listens; clients connect.
+  - `octobuddy-daemon` listens; clients connect.
   - Each line is one envelope. UTF-8. Max frame size enforced by the server.
   - Rationale: trivial to implement in Go (`bufio`) and TypeScript, easy to
     debug (`socat`/`nc`), and battle-tested in Open Island's
@@ -110,7 +110,7 @@ returns immediately and the turn streams back.
 Per-bot scheduled tasks, enabled by `agent.cron` in the config. Faithful port of
 cc-channel-octo's cron feature (`cron-evaluator.ts`, `cron-store.ts`,
 `cron-scheduler.ts`, `cron-tool.ts`). In cc-channel these surfaced as an
-in-process MCP server the agent called; xclaw exposes the same create/list/delete
+in-process MCP server the agent called; octobuddy exposes the same create/list/delete
 over the control bus instead.
 
 - `schedule` is a **5-field cron expression** (`0 9 * * 1-5` = weekdays 9am, with

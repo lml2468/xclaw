@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
-  import type { Node } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/workspace/models";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
+  import type { Node } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/workspace/models";
   import { errMsg } from "../errors";
 
   type FileSource = "workspace" | "memory";
@@ -65,8 +65,8 @@
       const t = isPreview
         ? mockTree
         : src === "memory"
-          ? await XClawService.MemoryTree(b, ct, k)
-          : await XClawService.WorkspaceTree(b, ct, k);
+          ? await OctoBuddyService.MemoryTree(b, ct, k)
+          : await OctoBuddyService.WorkspaceTree(b, ct, k);
       if (gen === loadGen) tree = t;
     } catch (e) {
       if (gen === loadGen) { error = errMsg(e); tree = null; }

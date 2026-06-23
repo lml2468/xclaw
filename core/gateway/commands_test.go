@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // recordSink records every OnReply call (in order), so tests can assert both the

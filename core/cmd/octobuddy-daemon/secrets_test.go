@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/control/wire"
+	"github.com/lml2468/octobuddy/core/control/wire"
 )
 
 func TestSecretStoreSetGet(t *testing.T) {

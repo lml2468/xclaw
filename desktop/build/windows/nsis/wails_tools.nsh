@@ -5,13 +5,13 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "XClaw"
+    !define INFO_PROJECTNAME "OctoBuddy"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "XClaw"
+    !define INFO_COMPANYNAME "OctoBuddy"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "XClaw"
+    !define INFO_PRODUCTNAME "OctoBuddy"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"

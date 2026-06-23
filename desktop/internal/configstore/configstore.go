@@ -1,4 +1,4 @@
-// Package configstore reads and writes the daemon's ~/.xclaw/config.json and the
+// Package configstore reads and writes the daemon's ~/.octobuddy/config.json and the
 // per-bot SOUL.md / AGENTS.md files, presenting a flat editor view model. It
 // mirrors the legacy Swift ConfigStore: tokens are NEVER written to config.json
 // (they live in the secret backend via the secrets package) and are overlaid
@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/core/safepath"
-	"github.com/lml2468/xclaw/desktop/internal/octocli"
-	"github.com/lml2468/xclaw/desktop/internal/secrets"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/safepath"
+	"github.com/lml2468/octobuddy/desktop/internal/octocli"
+	"github.com/lml2468/octobuddy/desktop/internal/secrets"
 )
 
 // saveMu serializes Save so two concurrent saves (e.g. tray + window) can't
@@ -49,13 +49,13 @@ type BotConfig struct {
 	Cron bool `json:"cron"`
 }
 
-// Dir is ~/.xclaw.
+// Dir is ~/.octobuddy.
 func Dir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw")
+	return filepath.Join(home, ".octobuddy")
 }
 
-// Path is ~/.xclaw/config.json.
+// Path is ~/.octobuddy/config.json.
 func Path() string { return filepath.Join(Dir(), "config.json") }
 
 func botDir(id string) string { return filepath.Join(Dir(), id) }
@@ -79,12 +79,12 @@ Be concise. Cite sources when asserting facts.>
 
 // readFile parses config.json into the daemon's File shape (empty File if absent).
 // routes through safepath.SafeRead so an agent (Bash + bypass)
-// that plants `~/.xclaw/config.json → /attacker.json` cannot redirect the
+// that plants `~/.octobuddy/config.json → /attacker.json` cannot redirect the
 // operator-trusted bot roster on the next GUI load.
 func readFile() (config.File, error) {
 	var f config.File
 	home, _ := os.UserHomeDir()
-	raw, err := safepath.SafeRead(home, ".xclaw/config.json", 4<<20) // 4 MiB cap
+	raw, err := safepath.SafeRead(home, ".octobuddy/config.json", 4<<20) // 4 MiB cap
 	if err != nil {
 		if os.IsNotExist(err) {
 			return f, nil
@@ -113,7 +113,7 @@ func BotIDs() ([]string, error) {
 }
 
 // BotSecretRefs returns every secretRef declared in config.json, grouped by bot.
-// The bridge uses this to seed xclawd's in-memory secret store after connect.
+// The bridge uses this to seed octobuddy-daemon's in-memory secret store after connect.
 func BotSecretRefs() (map[string][]string, error) {
 	f, err := readFile()
 	if err != nil {
@@ -333,13 +333,13 @@ func Save(bots []BotConfig, removedIDs []string) error {
 	for _, b := range bots {
 		// was `os.MkdirAll(botDir(b.ID), 0o755)` which
 		// follows symlinks at every intermediate component. An agent that
-		// plants `~/.xclaw/<newbotID>` as a symlink to `~/.ssh/` BEFORE
+		// plants `~/.octobuddy/<newbotID>` as a symlink to `~/.ssh/` BEFORE
 		// the first SaveConfig would silently get future SOUL.md writes
 		// landing under.ssh — and worse, the operator-trusted prompt
 		// source would thereafter be agent-controlled. SafeMkdirAll
 		// walks via dirfd, refusing symlinks at every component.
 		home, _ := os.UserHomeDir()
-		if err := safepath.SafeMkdirAll(home, ".xclaw/"+b.ID, 0o755); err != nil {
+		if err := safepath.SafeMkdirAll(home, ".octobuddy/"+b.ID, 0o755); err != nil {
 			return err
 		}
 		// SOUL.md / AGENTS.md handling:
@@ -376,7 +376,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		if robotID := strings.TrimSpace(b.Env["OCTO_BOT_ID"]); robotID != "" && b.OctoToken != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			if err := octocli.Login(ctx, robotID, b.OctoToken, b.APIURL); err != nil {
-				log.Printf("xclaw: octo-cli profile for %s (robot=%s) not synced: %v", b.ID, robotID, err)
+				log.Printf("octobuddy: octo-cli profile for %s (robot=%s) not synced: %v", b.ID, robotID, err)
 			}
 			cancel()
 		}
@@ -395,7 +395,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		// Gate on the bot dir itself, not on its data/ subdir — data/ is
 		// only created at daemon startup, so a bot the operator added via
 		// the wizard and immediately deleted (before any daemon restart)
-		// would otherwise leave ~/.xclaw/<id>/ (with SOUL/AGENTS/secrets/
+		// would otherwise leave ~/.octobuddy/<id>/ (with SOUL/AGENTS/secrets/
 		// octo profile) orphaned forever. SafeLstat refuses a symlinked
 		// bot dir, so the agent-planting concern that motivated this gate
 		// still holds.
@@ -404,12 +404,12 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		}
 		// was `os.RemoveAll(botDir(id))` which descends
 		// into symlinked subdirectories — an agent that planted
-		// `~/.xclaw/<id>/data/x → ~/Documents` would have Documents
+		// `~/.octobuddy/<id>/data/x → ~/Documents` would have Documents
 		// contents unlinked when the operator deleted the bot. SafeRemoveAll
 		// (via removeAllAt) opens each subdir with O_NOFOLLOW|O_DIRECTORY
 		// so a symlinked entry is unlinked rather than followed.
 		home, _ := os.UserHomeDir()
-		_ = safepath.SafeRemoveAll(home, ".xclaw/"+id)
+		_ = safepath.SafeRemoveAll(home, ".octobuddy/"+id)
 		_ = secrets.Delete(id, secrets.OctoToken)
 		_ = secrets.Delete(id, secrets.GatewayToken)
 		if prior, ok := existing[id]; ok && prior.Agent != nil {
@@ -432,7 +432,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 			if robotID = strings.TrimSpace(robotID); robotID != "" {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				if err := octocli.Logout(ctx, robotID); err != nil {
-					log.Printf("xclaw: octo-cli profile for %s (robot=%s) not cleared: %v", id, robotID, err)
+					log.Printf("octobuddy: octo-cli profile for %s (robot=%s) not cleared: %v", id, robotID, err)
 				}
 				cancel()
 			}
@@ -443,7 +443,7 @@ func Save(bots []BotConfig, removedIDs []string) error {
 
 // readBotFile reads SOUL.md / AGENTS.md from a bot's dir. Routed through
 // safepath.SafeRead so a symlinked file (e.g. an agent-planted
-// `~/.xclaw/<id>/SOUL.md → ~/.aws/credentials`) is refused at open time
+// `~/.octobuddy/<id>/SOUL.md → ~/.aws/credentials`) is refused at open time
 // instead of having its target read back to the GUI editor.
 func readBotFile(id, name string) string {
 	if !safepath.ValidSlug(id) {

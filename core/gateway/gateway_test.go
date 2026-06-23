@@ -8,11 +8,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // fakeDriver returns a scripted event stream and records the requests it saw,

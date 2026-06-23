@@ -7,7 +7,7 @@
  // array so the user can add/rename keys without weird proxy-mutation
  // gymnastics, then commit back to bot.env on every change. RESERVED_ENV_KEYS
  // is the single source of truth — see lib/reservedEnv.ts.
-  import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
+  import type { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
   import { RESERVED_ENV_KEYS } from "../reservedEnv";
 
   let { bot = $bindable<BotConfig>(), ondirty, ondelete }:

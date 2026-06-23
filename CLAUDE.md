@@ -4,23 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-XClaw is a cross-platform **agent gateway**: it drives coding-agent CLIs (Claude
+OctoBuddy is a cross-platform **agent gateway**: it drives coding-agent CLIs (Claude
 first) by spawning them and normalizing their output into one unified event
 stream — replacing the Node-only `claude-agent-sdk`. Monorepo of three pieces
 that version together against one contract:
 
-- `core/` — Go daemon `xclawd` (the gateway). Single static binary, **zero cgo**,
+- `core/` — Go daemon `octobuddy-daemon` (the gateway). Single static binary, **zero cgo**,
   cross-compiles to mac/linux/windows.
 - `desktop/` — **Go + Wails v3** desktop app (Svelte + TS frontend, macOS/Win/Linux).
   A control-bus client; never talks to Claude directly — it spawns + drives
-  `xclawd`. The UI is a clean **WeChat/iMessage-grade** chat UI (CSS/SVG), not
+  `octobuddy-daemon`. The UI is a clean **WeChat/iMessage-grade** chat UI (CSS/SVG), not
   native chrome. Its Go backend reuses the wire contract directly.
 - `proto/` — the language-neutral control-bus contract (NDJSON envelopes over a
   Unix socket) shared by core and the app. Spec lives in `proto/README.md`; the
   Go types live in `core/control/wire` (a dependency-free leaf both sides import).
 
 The repo is a **Go workspace** (`go.work`) tying `./core` and `./desktop`. The
-desktop module is `github.com/lml2468/xclaw/desktop` and pulls `core` in via a
+desktop module is `github.com/lml2468/octobuddy/desktop` and pulls `core` in via a
 local `replace`.
 
 ## Commands
@@ -29,30 +29,30 @@ local `replace`.
 # Go core (run from core/)
 cd core && go build ./... && go test ./...
 go test ./gateway/ -run TestName        # single package / single test
-go run ./cmd/xclawd                       # REPL on stdin (type a msg; /reset; Ctrl-D)
-go run ./cmd/xclawd -control /tmp/xclaw.sock   # serve control bus for GUI clients
-go run ./cmd/xclawd -config               # multi-bot from ~/.xclaw/config.json
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/xclawd ./cmd/xclawd  # cross-compile
+go run ./cmd/octobuddy-daemon                       # REPL on stdin (type a msg; /reset; Ctrl-D)
+go run ./cmd/octobuddy-daemon -control /tmp/octobuddy.sock   # serve control bus for GUI clients
+go run ./cmd/octobuddy-daemon -config               # multi-bot from ~/.octobuddy/config.json
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/octobuddy-daemon ./cmd/octobuddy-daemon  # cross-compile
 
 # Desktop app (Wails v3 — needs the wails3 CLI:
 #   go install github.com/wailsapp/wails/v3/cmd/wails3@latest)
 cd desktop && go build ./... && go vet ./...
 cd desktop/frontend && npm run build && npm run check   # frontend build + typecheck (svelte-check)
-zsh scripts/run-dev.sh                     # build core + `wails3 dev` (needs ~/.xclaw/config.json)
+zsh scripts/run-dev.sh                     # build core + `wails3 dev` (needs ~/.octobuddy/config.json)
 zsh scripts/run-dev.sh --seed-config       # write a starter config first
-zsh scripts/run-dev.sh --preview           # UI preview: mock data, no daemon (XCLAW_PREVIEW)
+zsh scripts/run-dev.sh --preview           # UI preview: mock data, no daemon (OCTOBUDDY_PREVIEW)
 
-# Package a distributable XClaw.app (+ .zip); embeds xclawd, signs inside-out.
+# Package a distributable OctoBuddy.app (+ .zip); embeds octobuddy-daemon, signs inside-out.
 # ad-hoc by default; pass the identity to Developer-sign, a profile to notarize.
-XCLAW_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
+OCTOBUDDY_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
 ```
 
 The desktop GUI's own visual-iteration loop is **preview mode**: launch the built
-binary with `XCLAW_PREVIEW=1` (optional `XCLAW_PREVIEW_THEME=dark|light`,
-`XCLAW_PREVIEW_EDITOR=1`) — it seeds a mock roster + transcript and skips the
+binary with `OCTOBUDDY_PREVIEW=1` (optional `OCTOBUDDY_PREVIEW_THEME=dark|light`,
+`OCTOBUDDY_PREVIEW_EDITOR=1`) — it seeds a mock roster + transcript and skips the
 daemon, so the watercolor UI can be screenshotted without a live bot.
 
-Go module path is `github.com/lml2468/xclaw/core` (Go 1.26). Tests need **no API
+Go module path is `github.com/lml2468/octobuddy/core` (Go 1.26). Tests need **no API
 key** — they run against recorded fixtures (`core/fixtures/`) and live CLI spawns
 that only assert parsing/wiring.
 
@@ -96,15 +96,15 @@ Key invariants to preserve:
   config-dir change), the gateway swallows the doomed attempt, clears the
   mapping, and retries the turn fresh.
 - **Skills & workflows — per-bot only, auto-discovered by the CLI**: each bot
-  owns its skills (SKILL.md bundles) under `~/.xclaw/<id>/.claude/skills/` and
-  its workflows (`*.js`) under `~/.xclaw/<id>/.claude/workflows/`. Because
+  owns its skills (SKILL.md bundles) under `~/.octobuddy/<id>/.claude/skills/` and
+  its workflows (`*.js`) under `~/.octobuddy/<id>/.claude/workflows/`. Because
   `CLAUDE_CONFIG_DIR` (next bullet) points there, the claude CLI auto-loads
   them as user-scope assets every spawn — no per-turn sandbox symlinking, no
   shared marketplace, no install/uninstall concept. The gateway has no
   knowledge of skills/workflows; CRUD is the desktop's job
   (`desktop/internal/skills` + `desktop/internal/workflows`). All local-file
   I/O for skills, workflows, the workspace previewer, SOUL/AGENTS reads,
-  and the daemon's own state files (config.json, cron.json, xclaw.db
+  and the daemon's own state files (config.json, cron.json, octobuddy.db
   parent dirs, IM media downloads, sandbox cwds) routes through
   `core/safepath`, which owns slug validation + lexical containment +
   structural symlink refusal (dirfd-walk on unix, Lstat-chain on windows).
@@ -113,7 +113,7 @@ Key invariants to preserve:
   Managed from the desktop per-bot Skills /
   Workflows windows.
 - **Agent config isolation** (`config.DriverEnvWith`): each bot's `claude` runs
-  with `CLAUDE_CONFIG_DIR=~/.xclaw/<id>/.claude` so it does NOT inherit the
+  with `CLAUDE_CONFIG_DIR=~/.octobuddy/<id>/.claude` so it does NOT inherit the
   operator's `~/.claude` (user-scope skills + installed plugins would otherwise
   leak into every bot). Auth is env-based (`ANTHROPIC_*`), so this is safe; CLI
   built-in skills still load, and the per-bot skills/workflows live under this
@@ -162,9 +162,9 @@ their ordering when touching the gateway:
 
 ## Config & multi-bot
 
-`-config` loads a single `~/.xclaw/config.json` (see `core/config.example.json`)
+`-config` loads a single `~/.octobuddy/config.json` (see `core/config.example.json`)
 and runs **every bot in `bots[]` in its own fully isolated stack** — separate
-store, gateway, driver, group-context, Octo connector, each under `~/.xclaw/<id>/`.
+store, gateway, driver, group-context, Octo connector, each under `~/.octobuddy/<id>/`.
 
 - System prompt is **file-based, not a config field**: `<id>/SOUL.md` (identity)
   concatenated with `<id>/AGENTS.md` (behavior norms), passed as the
@@ -175,7 +175,7 @@ store, gateway, driver, group-context, Octo connector, each under `~/.xclaw/<id>
   (`mentionFreeGroups`, `knownBotUids`, `allowedBotUids`, `botBlocklist`) plus
   `groupConfigDir` and `onBehalfOf` are top-level defaults a bot may override — a
   per-bot value REPLACES the default. (Skills/workflows are **not** config fields;
-  each bot owns its own under `~/.xclaw/<id>/.claude/{skills,workflows}/` — see
+  each bot owns its own under `~/.octobuddy/<id>/.claude/{skills,workflows}/` — see
   the skills/workflows bullet above.)
   `core/config.example.json` is the canonical field list.
 - `core/config/` does slug + SSRF validation on URLs — keep that on any new
@@ -200,19 +200,19 @@ A thin control-bus client (Wails v3 alpha + Svelte 5/TS); the daemon holds all
 logic, so swapping the GUI never touches `core/`.
 
 - **Go backend**: `main.go` (app + window + system tray + single-instance);
-  `xclawservice.go` is the Wails-bound bridge — spawns `xclawd`, dials the control
-  socket, forwards every envelope to the frontend as the `xclaw:event` Wails event,
+  `octobuddyservice.go` is the Wails-bound bridge — spawns `octobuddy-daemon`, dials the control
+  socket, forwards every envelope to the frontend as the `octobuddy:event` Wails event,
   exposes command/config methods, and auto-reconnects on daemon crash.
   `internal/`: `control` (UDS/NDJSON client over `core/control/wire`), `core`
   (supervisor: resolve binary → spawn `-control … -exit-with-parent` → stop/restart),
-  `configstore` (read/write `~/.xclaw/config.json` + per-bot SOUL/AGENTS),
-  `skills` (per-bot CRUD over `~/.xclaw/<id>/.claude/skills/` bundles) and
+  `configstore` (read/write `~/.octobuddy/config.json` + per-bot SOUL/AGENTS),
+  `skills` (per-bot CRUD over `~/.octobuddy/<id>/.claude/skills/` bundles) and
   `workflows` (same, for `*.js`), all with slug + path-traversal validation,
   `octocli` (bundle/install/upgrade the octo-cli
   companion), `secrets` (tokens in the OS credential store via go-keyring,
   zero cgo; injected at runtime, **never** written to config.json).
 - **Frontend** (`frontend/src`): `lib/store.svelte.ts` is the single reducer —
-  it folds `xclaw:event` envelopes into bots/sessions/messages and owns the
+  it folds `octobuddy:event` envelopes into bots/sessions/messages and owns the
   rAF typewriter/coalescing. Components in `lib/components/` (Sidebar · Transcript ·
   Bubble · Composer · SettingsModal + 4 panes (BasicInfo · OctoIntegration · Skills ·
   Workflows) · TokenUsage · WorkspacePanel · FilePreview · Confirm · ErrorFooter ·
@@ -234,18 +234,18 @@ logic, so swapping the GUI never touches `core/`.
   never follows symlinks, skips `.claude/`, caps depth/entries/file-size (1 MiB for
   text, 8 MiB for base64 images/PDFs).
 - **Top-level modals** (the only two): **SettingsModal** (per-bot settings —
-  opens via the sidebar gear or the tray's `Settings…`, emits `xclaw:open-settings`
+  opens via the sidebar gear or the tray's `Settings…`, emits `octobuddy:open-settings`
   with a `{tab}` payload) and **TokenUsage** (read-only usage table — opens via
   the sidebar's chart-bar button or the tray's `Token Usage…`, emits
-  `xclaw:open-usage`). They are mutually exclusive (`App.svelte` enforces).
+  `octobuddy:open-usage`). They are mutually exclusive (`App.svelte` enforces).
 - **SettingsModal**: left rail = bot list + `+ 新增 Bot` (opens the Add-bot wizard
   inline — `OctoAddBot` provisions on octo-server from a uk_ key, falls back to a
   manual blank shell). Right pane = 4 segmented tabs: **基础信息**
   (`BasicInfoPane`: Bot ID, model, gateway URL/Token, env vars, SOUL.md, AGENTS.md,
   delete-bot), **Octo 集成** (`OctoIntegrationPane`: API URL, bf_ token, OCTO_BOT_ID,
   connection status, octo-cli profile status + 重新登录/登出 actions),
-  **技能** (`SkillsPane`: per-bot bundles under `~/.xclaw/<id>/.claude/skills/`),
-  **工作流** (`WorkflowsPane`: per-bot `*.js` under `~/.xclaw/<id>/.claude/workflows/`).
+  **技能** (`SkillsPane`: per-bot bundles under `~/.octobuddy/<id>/.claude/skills/`),
+  **工作流** (`WorkflowsPane`: per-bot `*.js` under `~/.octobuddy/<id>/.claude/workflows/`).
   Basic + Octo edits flip a single `dirty` flag surfaced in the footer's
   保存/保存并重启; Skills + Workflows write through to disk immediately. Reserved
   env keys (currently `OCTO_BOT_ID`) live in `lib/reservedEnv.ts` so BasicInfo
@@ -260,8 +260,8 @@ logic, so swapping the GUI never touches `core/`.
   green selected rows + outgoing bubbles, square-rounded avatars, **Geist** (Sans
   for UI, Mono for code + metadata), restrained 4–8px radii, content edge-to-edge.
   Watercolor and Liquid-Glass were both tried and rejected.
-- **Verify UI by measurement, not eyeballing**: `XCLAW_PREVIEW=1` (with
-  `XCLAW_PREVIEW_THEME=dark|light`, `XCLAW_PREVIEW_EMPTY=1`, `XCLAW_PREVIEW_EDITOR=1`)
+- **Verify UI by measurement, not eyeballing**: `OCTOBUDDY_PREVIEW=1` (with
+  `OCTOBUDDY_PREVIEW_THEME=dark|light`, `OCTOBUDDY_PREVIEW_EMPTY=1`, `OCTOBUDDY_PREVIEW_EDITOR=1`)
   seeds mock data and skips the daemon. Run `wails3 dev`, then drive
   `http://127.0.0.1:9245/?preview=1&theme=dark` in headless Chrome via Playwright
   (`playwright-core` + `channel:"chrome"`) to screenshot and assert geometry

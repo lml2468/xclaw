@@ -1,7 +1,7 @@
 // Cron task management + the resident scheduler (port of cron-scheduler.ts and
 // cron-tool.ts). The cc-channel cron tool surfaced as an in-process MCP server
-// the agent called; in xclaw the same create/list/delete operations are exposed
-// over the control bus instead (see core/cmd/xclawd/control.go). The owner-gate
+// the agent called; in octobuddy the same create/list/delete operations are exposed
+// over the control bus instead (see core/cmd/octobuddy-daemon/control.go). The owner-gate
 // and caps are preserved here as the server-side source of truth — not LLM
 // judgment — so a prompt-injected agent or untrusted IM user cannot register a
 // malicious recurring task.
@@ -183,7 +183,7 @@ func (m *Manager) owner() string {
 // control-bus handler uses this as the *verified* requester identity for
 // create/delete instead of a client-supplied uid, which is forgeable (the agent
 // reaches cron over the bus via an agent-controlled CLI, so a prompt injection
-// could otherwise assert the owner's uid). See core/cmd/xclawd/control.go.
+// could otherwise assert the owner's uid). See core/cmd/octobuddy-daemon/control.go.
 func (m *Manager) OwnerUID() string { return m.owner() }
 
 // CreateParams are the inputs to Create.

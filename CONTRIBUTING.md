@@ -1,16 +1,16 @@
-# Contributing to XClaw
+# Contributing to OctoBuddy
 
-Thanks for your interest in improving XClaw! This guide covers how to build,
+Thanks for your interest in improving OctoBuddy! This guide covers how to build,
 test, and submit changes. By contributing you agree your work is licensed under
 the project's [MIT License](LICENSE).
 
 ## Repository shape
 
-XClaw is a monorepo of three pieces that version together against one contract
+OctoBuddy is a monorepo of three pieces that version together against one contract
 (see the root [`README.md`](README.md) and [`CLAUDE.md`](CLAUDE.md) for the full
 architecture):
 
-- `core/` — Go daemon `xclawd` (the agent gateway). Single static binary, zero cgo.
+- `core/` — Go daemon `octobuddy-daemon` (the agent gateway). Single static binary, zero cgo.
 - `desktop/` — Go + Wails v3 desktop app (Svelte 5 + TypeScript frontend), a
   control-bus client.
 - `proto/` — the language-neutral control-bus contract shared by core and desktop.

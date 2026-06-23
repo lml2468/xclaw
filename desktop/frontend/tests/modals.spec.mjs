@@ -18,7 +18,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const BASELINE = join(__dir, "baseline");
 await mkdir(BASELINE, { recursive: true });
 
-const BASE = process.env.XCLAW_TEST_URL ?? "http://127.0.0.1:9245";
+const BASE = process.env.OCTOBUDDY_TEST_URL ?? "http://127.0.0.1:9245";
 
 let failed = 0;
 const issues = [];

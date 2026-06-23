@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/desktop/internal/secrets"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/desktop/internal/secrets"
 	"github.com/zalando/go-keyring"
 )
 
 // setup points the store at a temp HOME and an in-memory keyring so tests
-// never touch the real ~/.xclaw or OS credential store.
+// never touch the real ~/.octobuddy or OS credential store.
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
@@ -165,7 +165,7 @@ func TestSavePrunesOnlyExplicitRemovals(t *testing.T) {
 
 	// A removed id whose dir exists (even without daemon-created data/) MUST
 	// be pruned — the wizard scaffolds SOUL/AGENTS before any daemon restart,
-	// so an Add-then-immediately-delete used to orphan ~/.xclaw/<id>/ forever.
+	// so an Add-then-immediately-delete used to orphan ~/.octobuddy/<id>/ forever.
 	if err := os.MkdirAll(botDir("d"), 0o755); err != nil { // no data/ child
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestSaveBlankFieldsAreNoOpOnExistingBot(t *testing.T) {
 // hazard: BotConfig still carries `json:"octoToken"` / `json:"gatewayToken"`
 // tags (the headless daemon also reads from these fields), so a future refactor
 // that forgets to strip them before MarshalIndent would silently leak both
-// tokens into ~/.xclaw/config.json. This test asserts the on-disk JSON contains
+// tokens into ~/.octobuddy/config.json. This test asserts the on-disk JSON contains
 // neither the raw token values nor the field names after Save.
 func TestSaveNeverWritesTokensToDisk(t *testing.T) {
 	setup(t)

@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/octobuddy/core/config"
 )
 
 // Options controls the dial guard's policy.

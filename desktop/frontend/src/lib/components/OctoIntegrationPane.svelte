@@ -4,15 +4,15 @@
  // "重新登录" action to repair it without re-saving the whole config).
  //
  // Why disk-profile management lives here: when the agent calls octo-cli
- // with OCTO_BOT_ID env set (always set for XClaw bots), octo-cli does a
+ // with OCTO_BOT_ID env set (always set for OctoBuddy bots), octo-cli does a
  // disk-profile lookup keyed by robot id and IGNORES OCTO_BOT_TOKEN entirely.
  // A missing profile fails the very first octo-cli call from the agent —
  // see configstore.Save's auto-Login + this pane's manual "重新登录" button
  // for the recovery path.
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { errMsg } from "../errors";
   import { untrack } from "svelte";
-  import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
+  import type { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
 
   let { bot = $bindable<BotConfig>(), botStatus, ondirty, isPreview = false }:
     { bot: BotConfig; botStatus: { connected: boolean; lastError?: string } | null; ondirty: () => void; isPreview?: boolean } = $props();
@@ -92,7 +92,7 @@
     const gen = ++cliStatusGen;
     const capturedId = bot.id;
     try {
-      const s = await XClawService.OctoCliStatus(capturedId);
+      const s = await OctoBuddyService.OctoCliStatus(capturedId);
       if (gen !== cliStatusGen || capturedId !== bot.id) return;
       cliRegistered = !!s?.registered;
       cliRobotId = s?.robotId ?? "";
@@ -103,7 +103,7 @@
     try {
       if (isPreview) { cliRegistered = true; cliNotice = "已写入（preview mock）"; }
       else {
-        await XClawService.OctoCliRelogin(bot.id);
+        await OctoBuddyService.OctoCliRelogin(bot.id);
  // The relogin path knows it just wrote the profile — flip state locally
  // instead of round-tripping refreshCliStatus (which would re-parse
  // config.json + re-read the secret backend to confirm what we already know).
@@ -119,7 +119,7 @@
     try {
       if (isPreview) { cliRegistered = false; cliNotice = "已删除（preview mock）"; }
       else {
-        await XClawService.OctoCliLogout(bot.id);
+        await OctoBuddyService.OctoCliLogout(bot.id);
         cliRegistered = false;
         cliNotice = "已删除 octo-cli profile";
       }

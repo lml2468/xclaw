@@ -13,10 +13,10 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/lml2468/xclaw/desktop/internal/autostart"
-	"github.com/lml2468/xclaw/desktop/internal/control"
-	"github.com/lml2468/xclaw/desktop/internal/logfile"
-	"github.com/lml2468/xclaw/desktop/internal/octocli"
+	"github.com/lml2468/octobuddy/desktop/internal/autostart"
+	"github.com/lml2468/octobuddy/desktop/internal/control"
+	"github.com/lml2468/octobuddy/desktop/internal/logfile"
+	"github.com/lml2468/octobuddy/desktop/internal/octocli"
 )
 
 //go:embed all:frontend/dist
@@ -31,42 +31,42 @@ const consoleWindow = "console"
 
 var (
 	app     *application.App
-	bridge  *XClawService
+	bridge  *OctoBuddyService
 	preview bool
 	baseURL = "/"
 	// logPath is where the combined desktop+daemon log lives — set during
 	// main() once the home dir is verified and consumed by the tray menu's
 	// "查看日志" action so it shows the user the same file we're writing to.
-	// Empty when XCLAW_PREVIEW is on (preview mode skips persistent logging
+	// Empty when OCTOBUDDY_PREVIEW is on (preview mode skips persistent logging
 	// since there's no daemon to surface and the dev console is right there).
 	logPath string
 )
 
 func main() {
-	preview = os.Getenv("XCLAW_PREVIEW") != ""
+	preview = os.Getenv("OCTOBUDDY_PREVIEW") != ""
 
-	// All the desktop's per-bot data lives under ~/.xclaw/<id>/. If HOME is
+	// All the desktop's per-bot data lives under ~/.octobuddy/<id>/. If HOME is
 	// unset (rare but real on misconfigured launchd / systemd units) every
-	// `home, _ := os.UserHomeDir` site below silently lands at "/.xclaw"
-	// or even ".xclaw" relative to CWD — config writes, octo-cli installs,
+	// `home, _ := os.UserHomeDir` site below silently lands at "/.octobuddy"
+	// or even ".octobuddy" relative to CWD — config writes, octo-cli installs,
 	// secret reads all scatter to the wrong place. Fail loudly at startup
 	// rather than corrupting on first use.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatalf("xclaw: cannot resolve user home directory: %v", err)
+		log.Fatalf("octobuddy: cannot resolve user home directory: %v", err)
 	}
 
 	// Persistent logging: tee log.Print (our own log lines) and the daemon's
-	// stdout+stderr to ~/.xclaw/logs/xclaw.log, rotated at 5 MiB. Without
+	// stdout+stderr to ~/.octobuddy.logs/octobuddy.log, rotated at 5 MiB. Without
 	// this, the only way an end user (or you, helping them remotely) can see
 	// "[gateway] terminal agent error: ..." or "[selfcheck] auth=UNSET" is
 	// to relaunch from a terminal — which they will not. log file path is
 	// also exposed via the tray menu's "查看日志" action.
 	var logSink io.Writer = os.Stderr
 	if !preview {
-		w, err := logfile.New(filepath.Join(home, ".xclaw", "logs"), "xclaw.log", 5<<20)
+		w, err := logfile.New(filepath.Join(home, ".octobuddy", "logs"), "octobuddy.log", 5<<20)
 		if err != nil {
-			log.Printf("xclaw: persistent log unavailable (%v) — logging to stderr only", err)
+			log.Printf("octobuddy: persistent log unavailable (%v) — logging to stderr only", err)
 		} else {
 			logPath = w.Path()
 			logSink = w.Tee(os.Stderr)
@@ -76,23 +76,23 @@ func main() {
 
 	services := []application.Service{}
 	if !preview {
-		bridge = NewXClawService(logSink)
+		bridge = NewOctoBuddyService(logSink)
 		services = append(services, application.NewService(bridge))
-		// Install the bundled octo-cli baseline into ~/.xclaw/bin before the
+		// Install the bundled octo-cli baseline into ~/.octobuddy/bin before the
 		// daemon (and its agent) spawn, so it's on the agent's PATH from turn one.
 		if err := octocli.EnsureInstalled(); err != nil {
-			log.Printf("xclaw: octo-cli install skipped: %v", err)
+			log.Printf("octobuddy: octo-cli install skipped: %v", err)
 		}
 	}
 
 	app = application.New(application.Options{
-		Name:        "XClaw",
-		Description: "XClaw — agent gateway desktop",
+		Name:        "OctoBuddy",
+		Description: "OctoBuddy — agent gateway desktop",
 		Services:    services,
 		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
 		// One running copy; a second launch focuses the existing console.
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "app.xclaw.dev",
+			UniqueID: "com.mlt.octobuddy.desktop",
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
 				openConsole()
 			},
@@ -106,13 +106,13 @@ func main() {
 
 	if preview {
 		baseURL = "/?preview=1"
-		if os.Getenv("XCLAW_PREVIEW_EDITOR") != "" {
+		if os.Getenv("OCTOBUDDY_PREVIEW_EDITOR") != "" {
 			baseURL += "&editor=1"
 		}
-		if os.Getenv("XCLAW_PREVIEW_EMPTY") != "" {
+		if os.Getenv("OCTOBUDDY_PREVIEW_EMPTY") != "" {
 			baseURL += "&empty=1"
 		}
-		if t := os.Getenv("XCLAW_PREVIEW_THEME"); t != "" {
+		if t := os.Getenv("OCTOBUDDY_PREVIEW_THEME"); t != "" {
 			baseURL += "&theme=" + t
 		}
 	}
@@ -137,7 +137,7 @@ func openConsole() {
 	}
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      consoleWindow,
-		Title:     "XClaw",
+		Title:     "OctoBuddy",
 		Width:     1040,
 		Height:    720,
 		MinWidth:  820,
@@ -162,17 +162,17 @@ func openConsole() {
 func setupSystemTray() {
 	tray := app.SystemTray.New()
 	tray.SetTemplateIcon(xMarkTemplatePNG())
-	tray.SetTooltip("XClaw")
+	tray.SetTooltip("OctoBuddy")
 
 	menu := app.NewMenu()
 	menu.Add("Open Console").OnClick(func(*application.Context) { openConsole() })
 	menu.Add("Settings…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-settings", map[string]string{"tab": "basic"})
+		app.Event.Emit("octobuddy:open-settings", map[string]string{"tab": "basic"})
 	})
 	menu.Add("Token Usage…").OnClick(func(*application.Context) {
 		openConsole()
-		app.Event.Emit("xclaw:open-usage")
+		app.Event.Emit("octobuddy:open-usage")
 	})
 	menu.AddSeparator()
 	menu.Add("Restart Core").OnClick(func(*application.Context) {
@@ -197,7 +197,7 @@ func setupSystemTray() {
 				err = autostart.Disable()
 			}
 			if err != nil {
-				log.Printf("xclaw: launch-at-login %v failed: %v", want, err)
+				log.Printf("octobuddy: launch-at-login %v failed: %v", want, err)
 				// Re-read the on-disk truth — the click may have flipped the
 				// checkbox optimistically before the operation failed.
 				if real, rerr := autostart.Enabled(); rerr == nil {
@@ -220,11 +220,11 @@ func setupSystemTray() {
 			defer cancel()
 			ver, err := octocli.Upgrade(ctx)
 			if err != nil {
-				log.Printf("xclaw: octo-cli update failed: %v", err)
+				log.Printf("octobuddy: octo-cli update failed: %v", err)
 				octoInfo.SetLabel("octo-cli — update failed")
 				return
 			}
-			log.Printf("xclaw: octo-cli updated to %s", ver)
+			log.Printf("octobuddy: octo-cli updated to %s", ver)
 			octoInfo.SetLabel("octo-cli " + ver)
 		}()
 	})
@@ -244,7 +244,7 @@ func setupSystemTray() {
 	}
 
 	menu.AddSeparator()
-	menu.Add("Quit XClaw").OnClick(func(*application.Context) { app.Quit() })
+	menu.Add("Quit OctoBuddy").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
 }
 
@@ -264,7 +264,7 @@ func openLogInConsole(path string) {
 		cmd = exec.Command("xdg-open", path)
 	}
 	if err := cmd.Start(); err != nil {
-		log.Printf("xclaw: open log %q failed: %v", path, err)
+		log.Printf("octobuddy: open log %q failed: %v", path, err)
 	}
 }
 

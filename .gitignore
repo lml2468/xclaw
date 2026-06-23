@@ -1,10 +1,10 @@
 # Build output
-/xclawd
+/octobuddy-daemon
 /ccd
 *.exe
 /dist/
-core/xclawd
-core/.xclawd-dev
+core/octobuddy-daemon
+core/.octobuddy-daemon-dev
 
 # Swift (legacy app/, removed — kept ignores harmless if it returns)
 *.xcodeproj/xcuserdata/

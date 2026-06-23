@@ -19,9 +19,9 @@ Unicode true
 ####
 ## The following information is taken from the wails_tools.nsh file, but they can be overwritten here.
 ####
-## !define INFO_PROJECTNAME    "my-project" # Default "XClaw"
-## !define INFO_COMPANYNAME    "My Company" # Default "XClaw"
-## !define INFO_PRODUCTNAME    "My Product Name" # Default "XClaw"
+## !define INFO_PROJECTNAME    "my-project" # Default "OctoBuddy"
+## !define INFO_COMPANYNAME    "My Company" # Default "OctoBuddy"
+## !define INFO_PRODUCTNAME    "My Product Name" # Default "OctoBuddy"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, My Company"
 ###

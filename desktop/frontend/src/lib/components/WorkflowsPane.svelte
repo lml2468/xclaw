@@ -2,7 +2,7 @@
  // Per-bot Workflows pane: lifted from the old WorkflowsPanel body. Like
  // SkillsPane, the Settings modal owns bot selection + scaffolding; this is
  // just the script list + editor for one bot. Writes through to disk.
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
   import { isImeComposing } from "../keys";
@@ -49,7 +49,7 @@
       if (isPreview) {
         next = Object.entries(mockBot[capturedBot] ?? {}).map(([name, src]) => ({ name, description: descOf(src) }));
       } else {
-        next = ((await XClawService.BotWorkflowsList(capturedBot)) ?? []) as WfInfo[];
+        next = ((await OctoBuddyService.BotWorkflowsList(capturedBot)) ?? []) as WfInfo[];
       }
       if (gen !== loadGen || capturedBot !== botId) return;
       wfs = next;
@@ -69,7 +69,7 @@
     const gen = ++selectGen;
     const capturedBot = botId;
     try {
-      const text = isPreview ? (mockBot[capturedBot]?.[name] ?? "") : await XClawService.BotWorkflowRead(capturedBot, name);
+      const text = isPreview ? (mockBot[capturedBot]?.[name] ?? "") : await OctoBuddyService.BotWorkflowRead(capturedBot, name);
       if (gen !== selectGen || capturedBot !== botId || sel !== name) return;
       content = text;
       dirty = false;
@@ -80,7 +80,7 @@
     if (!sel) return;
     try {
       if (isPreview) { mockBot[botId][sel] = content; }
-      else await XClawService.BotWorkflowWrite(botId, sel, content);
+      else await OctoBuddyService.BotWorkflowWrite(botId, sel, content);
       dirty = false;
     } catch (e) { error = errMsg(e); }
   }
@@ -91,7 +91,7 @@
     const capturedBot = botId;
     try {
       if (isPreview) { (mockBot[capturedBot] ??= {})[name] = `export const meta = {\n  name: '${name}',\n  description: 'One line on what this workflow does.',\n}\nreturn { ok: true }\n`; load(); }
-      else { await XClawService.BotWorkflowCreate(capturedBot, name); await load(); }
+      else { await OctoBuddyService.BotWorkflowCreate(capturedBot, name); await load(); }
       if (capturedBot !== botId) return; // bot switched mid-await
       newName = "";
       select(name);
@@ -102,7 +102,7 @@
     if (!(await confirm({ message: `删除「${w.name}」?`, confirmLabel: "删除", danger: true }))) return;
     try {
       if (isPreview) { delete mockBot[botId][w.name]; load(); }
-      else { await XClawService.BotWorkflowDelete(botId, w.name); await load(); }
+      else { await OctoBuddyService.BotWorkflowDelete(botId, w.name); await load(); }
       if (sel === w.name) { sel = null; content = ""; dirty = false; }
     } catch (e) { error = errMsg(e); }
   }

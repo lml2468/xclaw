@@ -3,7 +3,7 @@ package octo
 import (
 	"testing"
 
-	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/octobuddy/core/router"
 )
 
 const testAPI = "https://api.example.com"

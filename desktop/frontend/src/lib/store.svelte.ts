@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { XClawService } from "../../bindings/github.com/lml2468/xclaw/desktop";
+import { OctoBuddyService } from "../../bindings/github.com/lml2468/octobuddy/desktop";
 
 // The uid the desktop console talks to its bot under (a DM peer). Control-bus
 // sends carry no space, so the daemon derives the session key as exactly this
@@ -148,7 +148,7 @@ class Store {
   bots = $state<Bot[]>([]);
   sessions = $state<Session[]>([]);
  // Per-bot list of scheduled tasks, refreshed on demand by SchedulesPane via
- // XClawService.CronList. Folded in by the `cron.list` envelope handler;
+ // OctoBuddyService.CronList. Folded in by the `cron.list` envelope handler;
  // create/update/delete responses re-issue CronList rather than splicing the
  // single mutated row (round-trip cost is trivial, list ops are infrequent).
   schedules = $state<Record<string, any[]>>({});
@@ -181,7 +181,7 @@ class Store {
     this.lastError = text;
   }
   connected = $state(false);
- // True in preview mode (XCLAW_PREVIEW / ?preview): seeded mock data, no daemon,
+ // True in preview mode (OCTOBUDDY_PREVIEW / ?preview): seeded mock data, no daemon,
  // so we skip the control-bus fetches (SessionsList/History).
   readonly preview = new URLSearchParams(location.search).has("preview");
 
@@ -196,11 +196,11 @@ class Store {
     }
  // Wails Events.On returns an unsubscribe handle — capture it so HMR
  // dispose can actually unsubscribe (: the prior
- // dispose only cleared the setInterval, leaving xclaw:event listeners
+ // dispose only cleared the setInterval, leaving octobuddy:event listeners
  // to stack on every save and fold to fire N times per envelope).
  // Wrap fold in try/catch so a single malformed envelope can't kill
  // the bridge listener — bad data appears in lastError instead.
-    this.unsubFold = Events.On("xclaw:event", (e: any) => {
+    this.unsubFold = Events.On("octobuddy:event", (e: any) => {
       try {
         this.fold(e.data as Envelope);
       } catch (err) {
@@ -210,8 +210,8 @@ class Store {
       }
     });
  // Prime.
-    XClawService.Health();
-    XClawService.BotsList();
+    OctoBuddyService.Health();
+    OctoBuddyService.BotsList();
  // Stuck-turn sweeper: if no terminal event (turnDone / session.reply /
  // error) arrives within TURN_MAX_MS of a turnStart, clear `awaiting`
  // and surface a synthetic error. Without this, a daemon crash /
@@ -222,7 +222,7 @@ class Store {
   }
 
  // dispose runs from Vite's import.meta.hot.dispose so a dev save (HMR)
- // doesn't stack a fresh setInterval and a fresh xclaw:event subscription
+ // doesn't stack a fresh setInterval and a fresh octobuddy:event subscription
  // on top of the prior module's still-armed ones. Production never calls
  // this — the singleton survives for the app's lifetime (F3,
  // unsub wired in).
@@ -240,7 +240,7 @@ class Store {
   private unsubFold: (() => void) | undefined;
 
  // seedPreview populates a mock roster + transcript for visual iteration and
- // screenshots without spawning the daemon (launch with XCLAW_PREVIEW=1).
+ // screenshots without spawning the daemon (launch with OCTOBUDDY_PREVIEW=1).
   private seedPreview() {
  // Preview usage: keyed by `since` (0 = all). Smaller numbers for shorter
  // ranges so the selector visibly changes. Keys filled in below after we know
@@ -275,7 +275,7 @@ class Store {
       },
       inputTokens: 1450, outputTokens: 92, cachedInputTokens: 1200, costUsd: 0.0123, lastActivity: Date.now(), messages: [
         { id: newId(), role: "user", text: "List the files in the project root and summarize what this repo does.", ts: 0 },
-        { id: newId(), role: "assistant", text: "It's a **Go + Svelte** monorepo:\n\n- `core/` — the `xclawd` gateway daemon\n- `desktop/` — this Wails app\n- `proto/` — the control-bus contract\n\n```go\nfunc main() {\n    app.Run()\n}\n```\n\nWant me to open the README?", ts: 0 },
+        { id: newId(), role: "assistant", text: "It's a **Go + Svelte** monorepo:\n\n- `core/` — the `octobuddy-daemon` gateway daemon\n- `desktop/` — this Wails app\n- `proto/` — the control-bus contract\n\n```go\nfunc main() {\n    app.Run()\n}\n```\n\nWant me to open the README?", ts: 0 },
         { id: newId(), role: "user", text: "yes, and the proto contract too", ts: 0 },
       ],
     };
@@ -329,7 +329,7 @@ class Store {
  // Pull this bot's full persisted session list (newest first); the response
  // folds into sessions[] so history survives restarts.
     if (!this.preview) {
-      XClawService.SessionsList(id);
+      OctoBuddyService.SessionsList(id);
       if (!this.loadedSessionRosters[id]) {
         this.selectedKey = null;
         return;
@@ -358,7 +358,7 @@ class Store {
       this.seedUsageRange(since);
       return Promise.resolve([]);
     }
-    return Promise.allSettled(this.bots.map((b) => XClawService.UsageStats(b.id, since)));
+    return Promise.allSettled(this.bots.map((b) => OctoBuddyService.UsageStats(b.id, since)));
   }
 
  // Preview-only: synthesize a range's usage by scaling the all-time (since=0)
@@ -410,7 +410,7 @@ class Store {
     }
     if (s.loaded) return;
     s.expectedHistoryEpoch = s.historyEpoch ?? 0;
-    XClawService.History(botId, key, 0);
+    OctoBuddyService.History(botId, key, 0);
   }
 
   send(text: string) {
@@ -427,7 +427,7 @@ class Store {
     s.awaitingSince = Date.now();
     s.lastActivity = Date.now();
     this.selectedKey = key;
-    XClawService.Send(botId, CONSOLE_UID, text);
+    OctoBuddyService.Send(botId, CONSOLE_UID, text);
   }
 
  // Reset clears the resume id for the active session and wipes its visible
@@ -439,7 +439,7 @@ class Store {
     const botId = this.selectedBotId;
     const key = this.selectedKey;
     if (!botId || !key) return;
-    XClawService.Reset(botId, key);
+    OctoBuddyService.Reset(botId, key);
     const s = this.currentSession;
     if (s) {
       s.messages = [];
@@ -460,7 +460,7 @@ class Store {
   }
 
   restartCore() {
-    XClawService.RestartCore();
+    OctoBuddyService.RestartCore();
   }
 
  // --- event folding ---

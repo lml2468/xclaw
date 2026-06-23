@@ -1,27 +1,27 @@
 <div align="center">
 
-# 🐙 XClaw
+# 🐙 OctoBuddy
 
-**A cross-platform agent gateway.** XClaw drives coding-agent CLIs — Claude
+**A cross-platform agent gateway.** OctoBuddy drives coding-agent CLIs — Claude
 first — by spawning them and normalizing their output into one unified event
 stream, with a clean, native-feeling desktop app on top. It replaces the
 Node-only `claude-agent-sdk` with a single static Go binary that runs anywhere.
 
-[![CI](https://github.com/lml2468/xclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/lml2468/xclaw/actions/workflows/ci.yml)
+[![CI](https://github.com/lml2468/octobuddy/actions/workflows/ci.yml/badge.svg)](https://github.com/lml2468/octobuddy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Linux%20·%20Windows-555)
 ![Built with Wails + Svelte](https://img.shields.io/badge/desktop-Wails%20v3%20%2B%20Svelte%205-d33847)
 
-<img src="docs/screenshot-chat.png" alt="XClaw desktop app — chat with a bot" width="820">
+<img src="docs/screenshot-chat.png" alt="OctoBuddy desktop app — chat with a bot" width="820">
 
 </div>
 
 ---
 
-## What is XClaw?
+## What is OctoBuddy?
 
-A coding agent like Claude ships as a CLI. XClaw turns that CLI into a **service**:
+A coding agent like Claude ships as a CLI. OctoBuddy turns that CLI into a **service**:
 it spawns the agent, feeds it inbound messages from a chat platform, streams the
 agent's tokens/tool-calls back out as a normalized event stream, and persists the
 conversation so the agent resumes where it left off.
@@ -35,7 +35,7 @@ one contract:
 
 | | | |
 |---|---|---|
-| **`core/`** | the `xclawd` daemon (the gateway) | Go, **single static binary, zero cgo**, cross-compiles to mac/linux/windows |
+| **`core/`** | the `octobuddy-daemon` daemon (the gateway) | Go, **single static binary, zero cgo**, cross-compiles to mac/linux/windows |
 | **`desktop/`** | the desktop app | Go + **Wails v3** backend, **Svelte 5 + TS** frontend — a thin control-bus client |
 | **`proto/`** | the control-bus contract | language-neutral NDJSON envelopes over a Unix socket, shared by both |
 
@@ -43,8 +43,8 @@ one contract:
 
 - **Agent-agnostic core** — the `agent.Driver` seam keeps the gateway, router,
   store, and control bus free of any per-agent details.
-- **Multi-bot** — run many bots from one `~/.xclaw/config.json`, each in a fully
-  isolated stack (own store, gateway, sandbox, IM connector) under `~/.xclaw/<id>/`.
+- **Multi-bot** — run many bots from one `~/.octobuddy/config.json`, each in a fully
+  isolated stack (own store, gateway, sandbox, IM connector) under `~/.octobuddy/<id>/`.
 - **Per-session sandboxing & resume** — every session gets a deterministic cwd +
   auto-memory dir; the gateway maps `sessionKey → resume_id` so turns continue
   across restarts (sessions persist).
@@ -52,7 +52,7 @@ one contract:
   current-message anchor, and a sanitized rolling group-context window guard every
   group turn.
 - **Per-bot skills + workflows** — each bot owns its own [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills)
-  (SKILL.md bundles) and `Workflow` scripts under `~/.xclaw/<id>/.claude/`; the
+  (SKILL.md bundles) and `Workflow` scripts under `~/.octobuddy/<id>/.claude/`; the
   CLI auto-loads them as user-scope assets every spawn. Author and edit them
   in-app — no shared marketplace, no install step.
 - **Batteries** — per-bot scheduled tasks (cron), operator group instructions,
@@ -73,10 +73,10 @@ one contract:
 ## Architecture
 
 ```
-┌─ desktop/ (Wails v3 + Svelte) ─┐        ┌─ core/ — xclawd daemon ─────────────┐
-│  spawns + supervises xclawd    │  UDS   │  router → gateway turn pipeline      │
+┌─ desktop/ (Wails v3 + Svelte) ─┐        ┌─ core/ — octobuddy-daemon daemon ─────────────┐
+│  spawns + supervises octobuddy-daemon    │  UDS   │  router → gateway turn pipeline      │
 │  dials the control socket      │◀──────▶│  agent.Driver (Claude) → AgentEvents │
-│  folds xclaw:event → UI        │ NDJSON │  store (SQLite) · sandbox · safety    │
+│  folds octobuddy:event → UI        │ NDJSON │  store (SQLite) · sandbox · safety    │
 └────────────────────────────────┘        │  im/octo connector (WuKongIM + REST) │
             proto/ — one contract ─────────┘                                      
 ```
@@ -99,23 +99,23 @@ See [`CLAUDE.md`](CLAUDE.md) for the full pipeline, invariants, and security mod
 cd core && go build ./... && go test ./...
 
 # 2) Try the daemon directly — a REPL on stdin (type a message; /reset; Ctrl-D)
-go run ./cmd/xclawd
+go run ./cmd/octobuddy-daemon
 
 # 3) Run the desktop app in dev (builds core + `wails3 dev`)
-zsh scripts/run-dev.sh --seed-config     # writes a starter ~/.xclaw/config.json
+zsh scripts/run-dev.sh --seed-config     # writes a starter ~/.octobuddy/config.json
 zsh scripts/run-dev.sh --preview         # UI preview: mock data, no daemon
 
 # 4) Cross-compile the daemon anywhere (zero cgo)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/xclawd ./cmd/xclawd
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/octobuddy-daemon ./cmd/octobuddy-daemon
 ```
 
 ### Package the desktop app (macOS)
 
 ```bash
-# Builds XClaw.app (+ .zip), embeds the signed xclawd + octo-cli inside-out.
+# Builds OctoBuddy.app (+ .zip), embeds the signed octobuddy-daemon + octo-cli inside-out.
 # Ad-hoc by default; pass an identity to Developer-sign, a profile (or an App
 # Store Connect API key trio) to notarize.
-XCLAW_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
+OCTOBUDDY_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
 ```
 
 Windows/Linux GUIs build on their own OS (`cd desktop && wails3 task package`);
@@ -125,27 +125,27 @@ the daemon already cross-compiles for all three.
 
 Cut from a single mac with `zsh scripts/release.sh vX.Y.Z` — the script
 codesigns with your Developer ID, notarizes via App Store Connect API key,
-and publishes a [GitHub Release](https://github.com/lml2468/xclaw/releases)
-with a universal macOS `.app.zip` + headless `xclawd` binaries for
+and publishes a [GitHub Release](https://github.com/lml2468/octobuddy/releases)
+with a universal macOS `.app.zip` + headless `octobuddy-daemon` binaries for
 linux-amd64, linux-arm64, and windows-amd64. See
 [`docs/RELEASE.md`](docs/RELEASE.md) for one-time setup.
 
 ## Configuration
 
-A single `~/.xclaw/config.json` configures every bot — see the fully-commented
+A single `~/.octobuddy/config.json` configures every bot — see the fully-commented
 [`core/config.example.json`](core/config.example.json). Shared top-level
 `apiUrl`/`agent`/`rateLimit`/`context` defaults, a `bots[]` array where each entry
 overrides them, optional group-gating lists, and `onBehalfOf` persona clones. A
-bot's persona/behavior lives in `SOUL.md` + `AGENTS.md` under `~/.xclaw/<id>/`,
+bot's persona/behavior lives in `SOUL.md` + `AGENTS.md` under `~/.octobuddy/<id>/`,
 not in config. Tokens are **never** stored here — the desktop app keeps them in
 the OS keychain. Skills + workflows live on the filesystem under each bot's
-`~/.xclaw/<id>/.claude/`, not in config. Everything is editable in-app (gear →
+`~/.octobuddy/<id>/.claude/`, not in config. Everything is editable in-app (gear →
 Edit Bots / Manage Skills / Workflows).
 
 ## Project layout
 
 ```
-core/      Go gateway daemon (xclawd): agent driver, router, gateway pipeline,
+core/      Go gateway daemon (octobuddy-daemon): agent driver, router, gateway pipeline,
            SQLite store, sandbox, safety, config, cron, im/octo connector.
 desktop/   Wails v3 app: Go bridge (supervisor · control client · configstore ·
            skills · workflows · octocli · secrets) + Svelte 5 frontend
@@ -162,9 +162,9 @@ test suite (no API key needed — tests run against recorded fixtures).
 
 ## Security
 
-XClaw handles untrusted group-chat text and prompt-injection surfaces. Please
+OctoBuddy handles untrusted group-chat text and prompt-injection surfaces. Please
 report vulnerabilities privately per [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE) © XClaw contributors.
+[MIT](LICENSE) © OctoBuddy contributors.

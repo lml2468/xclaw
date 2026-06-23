@@ -1,6 +1,6 @@
 // Package logfile is a tiny rotating file writer for the desktop's combined
 // log stream (its own log.Print output + the daemon's stdout/stderr forwarded
-// by Supervisor). It exists so end users can `cat ~/.xclaw/logs/xclaw.log` or
+// by Supervisor). It exists so end users can `cat ~/.octobuddy.logs/octobuddy.log` or
 // share it with support after a "出错了" — without it, the daemon's gateway
 // error lines vanish into /dev/null whenever the app is launched normally
 // (instead of from a terminal that holds stderr open).

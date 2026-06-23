@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/core/control"
-	"github.com/lml2468/xclaw/core/control/wire"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/control"
+	"github.com/lml2468/octobuddy/core/control/wire"
 )
 
 // TestSecretInjectHandler verifies the multi-bot secret.inject command routes a

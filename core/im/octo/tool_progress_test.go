@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/agent"
+	"github.com/lml2468/octobuddy/core/agent"
 )
 
 // fakeSendServer captures the `content` of every /v1/bot/sendMessage call (the

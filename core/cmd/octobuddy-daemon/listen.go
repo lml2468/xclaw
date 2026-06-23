@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/octobuddy/core/control"
 )
 
 // mustListenUnix creates the control-bus Unix socket with owner-only access.

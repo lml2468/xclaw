@@ -1,15 +1,15 @@
 #!/usr/bin/env zsh
-# Package the XClaw desktop app (Wails v3) into a distributable bundle with the
-# xclawd daemon embedded and signed inside-out.
+# Package the OctoBuddy desktop app (Wails v3) into a distributable bundle with the
+# octobuddy-daemon daemon embedded and signed inside-out.
 #
 #   zsh scripts/package-desktop.sh                 # current macOS arch, ad-hoc signed
-#   XCLAW_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
-#   XCLAW_UNIVERSAL=1 …                            # mac universal (arm64+amd64)
-#   XCLAW_VERSION=1.0.0 …                          # stamp CFBundleVersion + CFBundleShortVersionString in the bundle's Info.plist (release.sh sets this)
-#   XCLAW_NOTARY_PROFILE=my-profile …              # notarize via keychain profile (local dev)
-#   XCLAW_NOTARY_KEY_PATH=/path/AuthKey.p8 …       # notarize via App Store Connect API key (CI)
-#     XCLAW_NOTARY_KEY_ID=ABCD1234EF                  + key id
-#     XCLAW_NOTARY_ISSUER=12345678-...                + issuer uuid
+#   OCTOBUDDY_SIGN_IDENTITY="Apple Development: …" zsh scripts/package-desktop.sh
+#   OCTOBUDDY_UNIVERSAL=1 …                            # mac universal (arm64+amd64)
+#   OCTOBUDDY_VERSION=1.0.0 …                          # stamp CFBundleVersion + CFBundleShortVersionString in the bundle's Info.plist (release.sh sets this)
+#   OCTOBUDDY_NOTARY_PROFILE=my-profile …              # notarize via keychain profile (local dev)
+#   OCTOBUDDY_NOTARY_KEY_PATH=/path/AuthKey.p8 …       # notarize via App Store Connect API key (CI)
+#     OCTOBUDDY_NOTARY_KEY_ID=ABCD1234EF                  + key id
+#     OCTOBUDDY_NOTARY_ISSUER=12345678-...                + issuer uuid
 #
 # macOS is the fully-supported target here. The Go daemon is zero-cgo and
 # cross-compiles to win/linux too (built below for CI), but the Wails GUI binary
@@ -21,43 +21,43 @@ repo_root="${0:A:h}/.."
 desktop="$repo_root/desktop"
 core="$repo_root/core"
 out="$repo_root/output"
-app_name="xclaw"
+app_name="octobuddy"
 bundle="$desktop/bin/${app_name}.app"
-sign_identity="${XCLAW_SIGN_IDENTITY:-}"
-notary_profile="${XCLAW_NOTARY_PROFILE:-}"
-notary_key_path="${XCLAW_NOTARY_KEY_PATH:-}"
-notary_key_id="${XCLAW_NOTARY_KEY_ID:-}"
-notary_issuer="${XCLAW_NOTARY_ISSUER:-}"
-universal="${XCLAW_UNIVERSAL:-}"
-version="${XCLAW_VERSION:-}"
+sign_identity="${OCTOBUDDY_SIGN_IDENTITY:-}"
+notary_profile="${OCTOBUDDY_NOTARY_PROFILE:-}"
+notary_key_path="${OCTOBUDDY_NOTARY_KEY_PATH:-}"
+notary_key_id="${OCTOBUDDY_NOTARY_KEY_ID:-}"
+notary_issuer="${OCTOBUDDY_NOTARY_ISSUER:-}"
+universal="${OCTOBUDDY_UNIVERSAL:-}"
+version="${OCTOBUDDY_VERSION:-}"
 entitlements="$desktop/build/darwin/entitlements.plist"
 
 export PATH="$(go env GOPATH)/bin:$PATH"
 mkdir -p "$out"
 
-echo "▸ cross-compiling xclawd (zero-cgo)…"
-build_xclawd() { # $1=GOOS $2=GOARCH $3=out
+echo "▸ cross-compiling octobuddy-daemon (zero-cgo)…"
+build_octobuddy-daemon() { # $1=GOOS $2=GOARCH $3=out
   # -trimpath strips the operator's $HOME / module-cache from binary paths,
   # -buildvcs=false omits the local git-dirty flag — both required for any
   # third party trying to reproduce a release artifact byte-for-byte.
-  ( cd "$core" && CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$3" ./cmd/xclawd )
+  ( cd "$core" && CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$3" ./cmd/octobuddy-daemon )
 }
 # Daemon binaries for all four platforms (CI picks these up for win/linux).
-build_xclawd darwin  arm64 "$out/xclawd-darwin-arm64"
-build_xclawd darwin  amd64 "$out/xclawd-darwin-amd64"
-build_xclawd windows amd64 "$out/xclawd-windows-amd64.exe"
-build_xclawd linux   amd64 "$out/xclawd-linux-amd64"
-build_xclawd linux   arm64 "$out/xclawd-linux-arm64"
-lipo -create -output "$out/xclawd" "$out/xclawd-darwin-arm64" "$out/xclawd-darwin-amd64"
-echo "  ✓ xclawd (mac universal + win/linux in $out)"
+build_octobuddy-daemon darwin  arm64 "$out/octobuddy-daemon-darwin-arm64"
+build_octobuddy-daemon darwin  amd64 "$out/octobuddy-daemon-darwin-amd64"
+build_octobuddy-daemon windows amd64 "$out/octobuddy-daemon-windows-amd64.exe"
+build_octobuddy-daemon linux   amd64 "$out/octobuddy-daemon-linux-amd64"
+build_octobuddy-daemon linux   arm64 "$out/octobuddy-daemon-linux-arm64"
+lipo -create -output "$out/octobuddy-daemon" "$out/octobuddy-daemon-darwin-arm64" "$out/octobuddy-daemon-darwin-amd64"
+echo "  ✓ octobuddy-daemon (mac universal + win/linux in $out)"
 
 # Bundle the latest octo-cli release (companion CLI the agent calls). Universal
 # mac binary, sha256-verified against the release checksums.txt. Set
-# XCLAW_SKIP_OCTO=1 to skip (e.g. offline). Needs the `gh` CLI.
+# OCTOBUDDY_SKIP_OCTO=1 to skip (e.g. offline). Needs the `gh` CLI.
 octo_repo="Mininglamp-OSS/octo-cli"
 octo_tag=""
-if [[ -z "${XCLAW_SKIP_OCTO:-}" ]]; then
-  command -v gh >/dev/null || { echo "✗ gh CLI required to bundle octo-cli (or set XCLAW_SKIP_OCTO=1)"; exit 1; }
+if [[ -z "${OCTOBUDDY_SKIP_OCTO:-}" ]]; then
+  command -v gh >/dev/null || { echo "✗ gh CLI required to bundle octo-cli (or set OCTOBUDDY_SKIP_OCTO=1)"; exit 1; }
   echo "▸ fetching latest octo-cli release…"
   octo_tag="$(gh api repos/$octo_repo/releases/latest --jq .tag_name)"
   octo_ver="${octo_tag#v}"
@@ -95,10 +95,10 @@ if [[ -n "$version" ]]; then
   plutil -replace CFBundleVersion            -string "$version" "$bundle/Contents/Info.plist"
 fi
 
-echo "▸ embedding xclawd at Contents/Helpers/xclawd…"
+echo "▸ embedding octobuddy-daemon at Contents/Helpers/octobuddy-daemon…"
 mkdir -p "$bundle/Contents/Helpers"
-cp "$out/xclawd" "$bundle/Contents/Helpers/xclawd"
-chmod +x "$bundle/Contents/Helpers/xclawd"
+cp "$out/octobuddy-daemon" "$bundle/Contents/Helpers/octobuddy-daemon"
+chmod +x "$bundle/Contents/Helpers/octobuddy-daemon"
 if [[ -n "$octo_tag" ]]; then
   echo "▸ embedding octo-cli $octo_tag at Contents/Helpers/octo-cli…"
   cp "$out/octo-cli" "$bundle/Contents/Helpers/octo-cli"
@@ -117,11 +117,11 @@ if [[ -n "$sign_identity" ]]; then
   echo "▸ signing inside-out with: $sign_identity"
   # Helpers first (hardened runtime), then the app (hardened runtime + entitlements).
   codesign --force --options runtime --timestamp --sign "$sign_identity" \
-    "$bundle/Contents/Helpers/xclawd"
+    "$bundle/Contents/Helpers/octobuddy-daemon"
   [[ -n "$octo_tag" ]] && codesign --force --options runtime --timestamp --sign "$sign_identity" \
     "$bundle/Contents/Helpers/octo-cli"
   # SHA-256 sidecar (round 11 Sec) — EnsureInstalled verifies the helper
-  # against this before copying it to ~/.xclaw/bin. Without it, anyone with
+  # against this before copying it to ~/.octobuddy/bin. Without it, anyone with
   # write access to Helpers/ (admin, tampered .zip, post-install attacker)
   # could swap the binary and have it silently executed as the user on
   # next launch. Sits in Resources so it's sealed as data, not signed code.
@@ -134,8 +134,8 @@ if [[ -n "$sign_identity" ]]; then
     --entitlements "$entitlements" --sign "$sign_identity" "$bundle"
   codesign --verify --deep --strict --verbose=2 "$bundle"
 else
-  echo "▸ ad-hoc signing (no XCLAW_SIGN_IDENTITY)…"
-  codesign --force --sign - "$bundle/Contents/Helpers/xclawd" 2>/dev/null || true
+  echo "▸ ad-hoc signing (no OCTOBUDDY_SIGN_IDENTITY)…"
+  codesign --force --sign - "$bundle/Contents/Helpers/octobuddy-daemon" 2>/dev/null || true
   [[ -n "$octo_tag" ]] && codesign --force --sign - "$bundle/Contents/Helpers/octo-cli" 2>/dev/null || true
   # Sidecar after ad-hoc signing, same reason as the Developer-ID branch.
   [[ -n "$octo_tag" ]] && \
@@ -143,9 +143,9 @@ else
   codesign --force --sign - "$bundle" 2>/dev/null || true
 fi
 
-echo "▸ zipping → $out/XClaw.zip"
-rm -f "$out/XClaw.zip"
-ditto -c -k --keepParent "$bundle" "$out/XClaw.zip"
+echo "▸ zipping → $out/OctoBuddy.zip"
+rm -f "$out/OctoBuddy.zip"
+ditto -c -k --keepParent "$bundle" "$out/OctoBuddy.zip"
 
 # Notarize via either a stored keychain profile (local dev, set up with
 # `xcrun notarytool store-credentials`) or an App Store Connect API key trio
@@ -162,18 +162,18 @@ if [[ -n "$sign_identity" ]]; then
 fi
 if (( ${#notarize_args[@]} > 0 )); then
   echo "▸ notarizing…"
-  xcrun notarytool submit "$out/XClaw.zip" "${notarize_args[@]}" --wait
+  xcrun notarytool submit "$out/OctoBuddy.zip" "${notarize_args[@]}" --wait
   xcrun stapler staple -v "$bundle"
-  rm -f "$out/XClaw.zip"
-  ditto -c -k --keepParent "$bundle" "$out/XClaw.zip"
+  rm -f "$out/OctoBuddy.zip"
+  ditto -c -k --keepParent "$bundle" "$out/OctoBuddy.zip"
 fi
 
 echo
 echo "✓ packaged:"
 echo "  app:    $bundle"
-echo "  zip:    $out/XClaw.zip"
-echo "  daemon: $out/xclawd-{darwin-*,windows-amd64.exe,linux-amd64}"
+echo "  zip:    $out/OctoBuddy.zip"
+echo "  daemon: $out/octobuddy-daemon-{darwin-*,windows-amd64.exe,linux-amd64}"
 echo
 echo "Windows/Linux GUI: run 'cd desktop && wails3 task package' on the target OS,"
-echo "then place the matching xclawd binary beside the app (Contents/Helpers on mac,"
+echo "then place the matching octobuddy-daemon binary beside the app (Contents/Helpers on mac,"
 echo "alongside the .exe on Windows, in the AppImage resources on Linux)."

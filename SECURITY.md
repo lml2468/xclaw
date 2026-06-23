@@ -1,6 +1,6 @@
 # Security Policy
 
-XClaw drives coding agents with broad tool access and connects to IM networks,
+OctoBuddy drives coding agents with broad tool access and connects to IM networks,
 so it sits in a security-sensitive position. We take reports seriously.
 
 ## Reporting a vulnerability
@@ -22,12 +22,12 @@ disclosure.
 
 ## Supported versions
 
-XClaw is pre-1.0 and under active development. Only the latest `main` receives
+OctoBuddy is pre-1.0 and under active development. Only the latest `main` receives
 security fixes until a tagged release line exists.
 
 ## Threat model & known limitations
 
-XClaw's design defends against prompt injection from untrusted group chat
+OctoBuddy's design defends against prompt injection from untrusted group chat
 (`core/safety/`, `core/groupctx/`). However, the project is **pre-1.0 and not yet
 hardened for hostile multi-tenant deployment.** Be aware of these *known,
 documented* limitations before exposing a bot to untrusted users:
@@ -43,7 +43,7 @@ documented* limitations before exposing a bot to untrusted users:
 - **Token storage.** The macOS app stores bot tokens in the **Keychain** and
   injects them into the daemon at runtime over the control bus (`secret.inject`);
   the core holds them in memory only and never writes them to disk. Tokens may
-  still be placed **in plaintext** in `~/.xclaw/config.json` for headless/no-GUI
+  still be placed **in plaintext** in `~/.octobuddy/config.json` for headless/no-GUI
   deployments — protect that file accordingly. Tokens are also passed into the
   agent subprocess environment at turn time.
 - **IM wire crypto is constrained by protocol compatibility.** The Octo/WuKongIM
@@ -102,7 +102,7 @@ choosing what version to deploy:
 - **Slug validation in the secrets package**
   (`desktop/internal/secrets/secrets.go`). `Set`/`Get`/`Delete` now reject any
   `botID` that fails `safepath.ValidSlug`. The slug rule also rejects leading
-  `.` so a bot id can't collide with dotfiles under `~/.xclaw/`. Without this
+  `.` so a bot id can't collide with dotfiles under `~/.octobuddy/`. Without this
   fence, a future caller passing an attacker-supplied id like `"../other"`
   would have written/read another bot's credential namespace.
 - **OCTO_BOT_ID uniqueness enforced**
@@ -120,12 +120,12 @@ choosing what version to deploy:
   loss between rename and the next dirent flush could in principle resurrect
   the old file. SOUL.md / AGENTS.md *scaffolding* uses `O_CREATE|O_EXCL` so an
   agent-planted file is never overwritten on first save.
-- **Cron task prompts are stored in plaintext** at `~/.xclaw/<id>/cron.json`
+- **Cron task prompts are stored in plaintext** at `~/.octobuddy/<id>/cron.json`
   (`0o600`, parent dir `0o755`). Operator-trusted content tier; same caveat as
   tokens-in-config above. If you grant `cron.create` to an authenticated peer,
   treat the resulting prompts as plaintext-at-rest.
 - **In-flight turn shutdown barrier** (`core/im/octo/connector.go` +
-  `core/cmd/xclawd/*.go`). The daemon now waits for every `drainTurns` and
+  `core/cmd/octobuddy-daemon/*.go`). The daemon now waits for every `drainTurns` and
   `session.send` goroutine to finish before closing the store on SIGTERM.
   Previously the deferred `st.Close()` could fire while a turn was still
   mid-flush, producing `"database is closed"` errors that broke resume
@@ -134,7 +134,7 @@ choosing what version to deploy:
   (they are executable code the agent CLI loads on next spawn); octo-cli
   download `.tmp` + `.prev` rollback are `0o700` (the prior `0o755` was
   world-executable during the brief window between write and rename).
-- **Reproducible builds**. `xclawd` is cross-compiled with `-trimpath
+- **Reproducible builds**. `octobuddy-daemon` is cross-compiled with `-trimpath
   -buildvcs=false` so binaries don't embed the operator's `$HOME` /
   module-cache absolute paths or the local VCS-dirty flag.
 - **CI coverage**. `govulncheck` runs on both the `core` and `desktop`
@@ -160,7 +160,7 @@ documented here so a future contributor doesn't accidentally weaken any of them.
   Without this, an operator-handoff or attacker-rotation would silently
   inherit every prior owner's scheduled prompts.
 - Cron prompts are operator-trusted content (only the bot owner can author
-  them). Stored in plaintext at `~/.xclaw/<id>/cron.json` (mode `0o600`).
+  them). Stored in plaintext at `~/.octobuddy/<id>/cron.json` (mode `0o600`).
 
 ### Persona / OBO clones
 

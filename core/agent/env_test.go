@@ -33,7 +33,7 @@ func TestMergedEnvAllowlistsAndOverrides(t *testing.T) {
 	t.Setenv("LC_TIME", "en_US.UTF-8")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "AKIA-leak-canary")
 
-	env := mergedEnv([]string{"XCLAW_TEST_EXTRA=added", "LANG=override-via-extra"})
+	env := mergedEnv([]string{"OCTOBUDDY_TEST_EXTRA=added", "LANG=override-via-extra"})
 
 	var sawLang, sawLCTime, sawAWS, sawExtra bool
 	lastLang := ""
@@ -48,7 +48,7 @@ func TestMergedEnvAllowlistsAndOverrides(t *testing.T) {
 			sawLCTime = true
 		case e == "AWS_SECRET_ACCESS_KEY=AKIA-leak-canary":
 			sawAWS = true
-		case e == "XCLAW_TEST_EXTRA=added":
+		case e == "OCTOBUDDY_TEST_EXTRA=added":
 			sawExtra = true
 		}
 	}
@@ -73,9 +73,9 @@ func TestMergedEnvAllowlistsAndOverrides(t *testing.T) {
 // driver should have set it. The echoed line is not stream-json, so it surfaces
 // as a KindSystem event — we just assert the value made it into the subprocess.
 func TestClaudeDriverInjectsEnv(t *testing.T) {
-	bin := writeFakeBin(t, `echo "GOT:$XCLAW_INJECTED"`)
+	bin := writeFakeBin(t, `echo "GOT:$OCTOBUDDY_INJECTED"`)
 	d := NewClaudeDriver(bin)
-	d.Env = []string{"XCLAW_INJECTED=hello-env"}
+	d.Env = []string{"OCTOBUDDY_INJECTED=hello-env"}
 
 	ch, err := d.Query(context.Background(), Request{Prompt: "x"})
 	if err != nil {
@@ -198,7 +198,7 @@ printf 'STDIN:[%s]\n' "$data" 1>&2
 // os.Stdin, then spawn the driver with a distinct prompt and assert the fake
 // agent reads back the PROMPT (not the token) from its fd 0.
 func TestAgentStdinIsPromptNotTokenPipe(t *testing.T) {
-	const token = "XCLAW-CAP-TOKEN-sentinel-do-not-leak-7f3a9c"
+	const token = "OCTOBUDDY-CAP-TOKEN-sentinel-do-not-leak-7f3a9c"
 	const prompt = "the-real-prompt-payload"
 
 	r, w, err := os.Pipe()

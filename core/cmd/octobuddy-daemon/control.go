@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lml2468/xclaw/core/control"
-	"github.com/lml2468/xclaw/core/cron"
-	"github.com/lml2468/xclaw/core/gateway"
-	"github.com/lml2468/xclaw/core/im/octo"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/control"
+	"github.com/lml2468/octobuddy/core/cron"
+	"github.com/lml2468/octobuddy/core/gateway"
+	"github.com/lml2468/octobuddy/core/im/octo"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // botTarget is the per-bot state a control command operates on. It abstracts

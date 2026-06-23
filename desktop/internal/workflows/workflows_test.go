@@ -16,7 +16,7 @@ func setHome(t *testing.T) {
 func botPath(t *testing.T, id string) string {
 	t.Helper()
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", id, ".claude", "workflows")
+	return filepath.Join(home, ".octobuddy", id, ".claude", "workflows")
 }
 
 func TestBotCRUDAndValidation(t *testing.T) {

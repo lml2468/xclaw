@@ -7,11 +7,11 @@
 #
 # Prerequisites (one-time):
 #   1. Apple Developer ID Application cert in your login Keychain. The script
-#      auto-detects it; set XCLAW_SIGN_IDENTITY only when multiple "Developer
+#      auto-detects it; set OCTOBUDDY_SIGN_IDENTITY only when multiple "Developer
 #      ID Application" certs are present and you want to pick one explicitly.
 #   2. App Store Connect API key registered with notarytool under the profile
-#      name "xclaw-notary" (override with XCLAW_NOTARY_PROFILE):
-#        xcrun notarytool store-credentials xclaw-notary \
+#      name "octobuddy-notary" (override with OCTOBUDDY_NOTARY_PROFILE):
+#        xcrun notarytool store-credentials octobuddy-notary \
 #          --key /path/AuthKey_XXXX.p8 --key-id ABCD1234EF --issuer <uuid>
 #   3. `gh auth status` shows you logged in.
 #
@@ -19,12 +19,12 @@
 # both up automatically.
 #
 # What it builds + uploads (universal macOS .app + all daemon binaries):
-#   - XClaw-<ver>-macos-universal.zip   (signed + notarized + stapled)
-#   - xclawd-<ver>-darwin-arm64
-#   - xclawd-<ver>-darwin-amd64
-#   - xclawd-<ver>-linux-amd64
-#   - xclawd-<ver>-linux-arm64
-#   - xclawd-<ver>-windows-amd64.exe
+#   - OctoBuddy-<ver>-macos-universal.zip   (signed + notarized + stapled)
+#   - octobuddy-daemon-<ver>-darwin-arm64
+#   - octobuddy-daemon-<ver>-darwin-amd64
+#   - octobuddy-daemon-<ver>-linux-amd64
+#   - octobuddy-daemon-<ver>-linux-arm64
+#   - octobuddy-daemon-<ver>-windows-amd64.exe
 #   - checksums.txt   (sha256 of every asset above)
 #
 # Re-runnable: the underlying tag must be unique (Apple's notary remembers
@@ -49,9 +49,9 @@ stage="$out/release-$ver"
 
 # --- resolve signing identity ---
 # Auto-detect when exactly one "Developer ID Application" cert is in the
-# Keychain — the typical single-developer case. An explicit XCLAW_SIGN_IDENTITY
+# Keychain — the typical single-developer case. An explicit OCTOBUDDY_SIGN_IDENTITY
 # override wins (multi-team setups, switching personal/work certs).
-if [[ -z "${XCLAW_SIGN_IDENTITY:-}" ]]; then
+if [[ -z "${OCTOBUDDY_SIGN_IDENTITY:-}" ]]; then
   identities=("${(@f)$(security find-identity -p codesigning -v 2>/dev/null \
     | awk -F'"' '/Developer ID Application/{print $2}')}")
   # awk emits nothing → array gets one empty element; strip.
@@ -63,27 +63,27 @@ if [[ -z "${XCLAW_SIGN_IDENTITY:-}" ]]; then
       exit 1
       ;;
     1)
-      XCLAW_SIGN_IDENTITY="${identities[1]}"
-      echo "▸ signing identity (auto): $XCLAW_SIGN_IDENTITY"
+      OCTOBUDDY_SIGN_IDENTITY="${identities[1]}"
+      echo "▸ signing identity (auto): $OCTOBUDDY_SIGN_IDENTITY"
       ;;
  *)
       echo "✗ multiple Developer ID Application identities in Keychain:" >&2
       for id in "${identities[@]}"; do echo "    $id" >&2; done
-      echo "  pass the one you want as XCLAW_SIGN_IDENTITY=… and re-run." >&2
+      echo "  pass the one you want as OCTOBUDDY_SIGN_IDENTITY=… and re-run." >&2
       exit 1
       ;;
   esac
 fi
-export XCLAW_SIGN_IDENTITY
+export OCTOBUDDY_SIGN_IDENTITY
 
 # --- resolve notary profile ---
-# Default to a convention ("xclaw-notary") set up once with
-#   xcrun notarytool store-credentials xclaw-notary --key … --key-id … --issuer …
+# Default to a convention ("octobuddy-notary") set up once with
+#   xcrun notarytool store-credentials octobuddy-notary --key … --key-id … --issuer …
 # We don't probe the keychain item to verify — notarytool will surface a clear
 # error at use-time, and probing would needlessly hit the network.
-: "${XCLAW_NOTARY_PROFILE:=xclaw-notary}"
-export XCLAW_NOTARY_PROFILE
-echo "▸ notary profile: $XCLAW_NOTARY_PROFILE"
+: "${OCTOBUDDY_NOTARY_PROFILE:=octobuddy-notary}"
+export OCTOBUDDY_NOTARY_PROFILE
+echo "▸ notary profile: $OCTOBUDDY_NOTARY_PROFILE"
 
 command -v gh >/dev/null || { echo "✗ gh CLI required to publish releases"; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "✗ run \`gh auth login\` first"; exit 1; }
@@ -104,29 +104,29 @@ if git -C "$repo_root" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   fi
 else
   echo "▸ tagging HEAD as $tag"
-  git -C "$repo_root" tag -a "$tag" -m "XClaw $tag"
+  git -C "$repo_root" tag -a "$tag" -m "OctoBuddy $tag"
 fi
 git -C "$repo_root" push origin "$tag"
 
 echo "▸ packaging (universal + sign + notarize)…"
-XCLAW_UNIVERSAL=1 XCLAW_VERSION="$ver" zsh "$repo_root/scripts/package-desktop.sh"
+OCTOBUDDY_UNIVERSAL=1 OCTOBUDDY_VERSION="$ver" zsh "$repo_root/scripts/package-desktop.sh"
 
 echo "▸ staging release assets → $stage"
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "$out/XClaw.zip"                "$stage/XClaw-${ver}-macos-universal.zip"
-cp "$out/xclawd-darwin-arm64"      "$stage/xclawd-${ver}-darwin-arm64"
-cp "$out/xclawd-darwin-amd64"      "$stage/xclawd-${ver}-darwin-amd64"
-cp "$out/xclawd-linux-amd64"       "$stage/xclawd-${ver}-linux-amd64"
-cp "$out/xclawd-linux-arm64"       "$stage/xclawd-${ver}-linux-arm64"
-cp "$out/xclawd-windows-amd64.exe" "$stage/xclawd-${ver}-windows-amd64.exe"
+cp "$out/OctoBuddy.zip"                "$stage/OctoBuddy-${ver}-macos-universal.zip"
+cp "$out/octobuddy-daemon-darwin-arm64"      "$stage/octobuddy-daemon-${ver}-darwin-arm64"
+cp "$out/octobuddy-daemon-darwin-amd64"      "$stage/octobuddy-daemon-${ver}-darwin-amd64"
+cp "$out/octobuddy-daemon-linux-amd64"       "$stage/octobuddy-daemon-${ver}-linux-amd64"
+cp "$out/octobuddy-daemon-linux-arm64"       "$stage/octobuddy-daemon-${ver}-linux-arm64"
+cp "$out/octobuddy-daemon-windows-amd64.exe" "$stage/octobuddy-daemon-${ver}-windows-amd64.exe"
 ( cd "$stage" && shasum -a 256 ./* > checksums.txt )
 ls -lh "$stage"
 
 echo "▸ publishing GitHub Release $tag"
 gh release create "$tag" \
   --repo "$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
-  --title "XClaw $tag" \
+  --title "OctoBuddy $tag" \
   --generate-notes \
   "$stage"/*
 

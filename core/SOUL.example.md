@@ -1,5 +1,5 @@
 <!--
-  SOUL.md — the bot's identity / persona. Place at ~/.xclaw/<id>/SOUL.md.
+  SOUL.md — the bot's identity / persona. Place at ~/.octobuddy/<id>/SOUL.md.
 
   This is the operator-trusted system prompt: who the bot IS. It is concatenated
   with AGENTS.md (behavior norms) and passed to the agent after a fixed security

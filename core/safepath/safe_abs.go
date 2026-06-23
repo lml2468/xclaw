@@ -1,13 +1,13 @@
 // Absolute-path helpers for callers that work in absolute filesystem paths
-// (the daemon's <home>/.xclaw/<id>/... layout, the desktop's <home>/Library
-// /LaunchAgents/..., octocli's <home>/.xclaw/bin/...). When the path lies
+// (the daemon's <home>/.octobuddy/<id>/... layout, the desktop's <home>/Library
+// /LaunchAgents/..., octocli's <home>/.octobuddy/bin/...). When the path lies
 // inside the operator's $HOME we route through the safepath dirfd walk so
 // every component is O_NOFOLLOW-checked; otherwise the path is operator-
-// trusted (config-supplied --config /opt/xclaw/foo or similar) and we fall
+// trusted (config-supplied --config /opt/octobuddy/foo or similar) and we fall
 // back to the bare os.* primitive so legitimate OS-level symlinks like
 // macOS /tmp → /private/tmp don't refuse on startup.
 //
-// factored from core/cmd/xclawd/safemkdir.go + the inline copies
+// factored from core/cmd/octobuddy-daemon/safemkdir.go + the inline copies
 // in octocli/autostart/configstore so the home-prefix policy + the
 // macOS /tmp carve-out + the Windows case-insensitive compare all live in
 // one place.
@@ -35,7 +35,7 @@ func randHex() string {
 // (home, relPath) pair when so. On Windows the prefix compare is case-
 // insensitive (NTFS is case-preserving but case-insensitive), and both
 // sides are normalized via filepath.Clean so a config-supplied
-// `C:/Users/X/.xclaw/...` (forward-slash JSON-friendly) matches a
+// `C:/Users/X/.octobuddy/...` (forward-slash JSON-friendly) matches a
 // $HOME of `C:\Users\X`.
 func underHome(absPath string) (home, rel string, ok bool) {
 	h, err := os.UserHomeDir()
@@ -48,7 +48,7 @@ func underHome(absPath string) (home, rel string, ok bool) {
 	matches := strings.HasPrefix(abs, withSep)
 	if !matches && runtime.GOOS == "windows" && len(abs) >= len(withSep) {
 		// NTFS is case-preserving but case-insensitive: a config-supplied
-		// `C:/Users/X/.xclaw/...` (forward-slash JSON-friendly) must match
+		// `C:/Users/X/.octobuddy/...` (forward-slash JSON-friendly) must match
 		// a $HOME of `C:\Users\X`. Compare equal-length prefixes; an
 		// EqualFold against an inequal-length string is always false.
 		matches = strings.EqualFold(abs[:len(withSep)], withSep)
@@ -137,7 +137,7 @@ func SafeWriteAbs(absPath string, data []byte, perm os.FileMode) error {
 
 // SafeMkdirAllAbs creates absPath via SafeMkdirAll when under $HOME, else
 // falls back to os.MkdirAll (operator-trusted). The home-prefix policy +
-// macOS /tmp carve-out previously lived in core/cmd/xclawd/safemkdir.go;
+// macOS /tmp carve-out previously lived in core/cmd/octobuddy-daemon/safemkdir.go;
 // promoted to safepath in.
 func SafeMkdirAllAbs(absPath string, perm os.FileMode) error {
 	if home, rel, ok := underHome(absPath); ok {

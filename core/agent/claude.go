@@ -366,7 +366,7 @@ func isDirWritable(dir string) bool {
 	if dir == "" {
 		return false
 	}
-	probe := dir + "/.xclaw-writetest"
+	probe := dir + "/.octobuddy-writetest"
 	f, err := os.OpenFile(probe, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return false

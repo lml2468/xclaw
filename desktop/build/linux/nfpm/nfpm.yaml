@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "xclaw"
+name: "octobuddy"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "XClaw — agent gateway desktop"
-vendor: "XClaw"
+description: "OctoBuddy — agent gateway desktop"
+vendor: "OctoBuddy"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/xclaw"
-    dst: "/usr/local/bin/xclaw"
+  - src: "./bin/octobuddy"
+    dst: "/usr/local/bin/octobuddy"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/xclaw.png"
-  - src: "./build/linux/xclaw.desktop"
-    dst: "/usr/share/applications/xclaw.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/octobuddy.png"
+  - src: "./build/linux/octobuddy.desktop"
+    dst: "/usr/share/applications/octobuddy.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

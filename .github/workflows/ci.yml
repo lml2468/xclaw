@@ -77,7 +77,7 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
-        run: go build -o /dev/null ./cmd/xclawd
+        run: go build -o /dev/null ./cmd/octobuddy-daemon
 
   desktop:
     name: Desktop (Wails) — ${{ matrix.os }}

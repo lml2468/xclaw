@@ -6,13 +6,13 @@
 // WITHOUT downloading (it has no session cwd). The gateway materializes them in
 // runTurn AFTER the session cwd is resolved and BEFORE driver.Query:
 //
-// - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.xclaw-media/ so the
+// - Images (PNG/JPEG/GIF/WebP) are downloaded into <cwd>/.octobuddy-media/ so the
 // agent's Read tool can open them natively, and a Read hint is appended to
 // THIS turn's prompt body (not stored history).
 // - Small text files (<20 KiB) are inlined as base64 inside a <file_content>
 // wrapper — base64's alphabet can't forge the closing tag, defeating the
 // "--- file end ---" prompt-injection break-out (file-inline-wrap.ts S2).
-// - Larger / binary files are downloaded to <cwd>/.xclaw-media/ and described
+// - Larger / binary files are downloaded to <cwd>/.octobuddy-media/ and described
 // with a path hint.
 //
 // SSRF: every download (and every redirect hop) is re-validated against
@@ -38,17 +38,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safepath"
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safepath"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // InboundMediaDir is the subdir (under the session cwd) where downloaded inbound
 // images and oversized files land. Mirrors INBOUND_MEDIA_DIR in media-inbound.ts
 // (renamed for this project). It shares the session cwd partition, so the 7-day
 // sandbox janitor reclaims it — no separate cleanup needed.
-const InboundMediaDir = ".xclaw-media"
+const InboundMediaDir = ".octobuddy-media"
 
 // Download / inline caps (media-inbound.ts + inbound.ts + file-inline-wrap.ts).
 const (
@@ -247,7 +247,7 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 	return b.String()
 }
 
-// downloadImage fetches url into <cwd>/.xclaw-media/<uuid>-<safeName> and returns
+// downloadImage fetches url into <cwd>/.octobuddy-media/<uuid>-<safeName> and returns
 // the path relative to cwd (what the Read hint shows). Mirrors
 // downloadInboundImage: SSRF-checked, per-hop token scoping, content-type gate,
 // 5 MB cap, downloadTimeout deadline.
@@ -271,7 +271,7 @@ func (g *Gateway) downloadImage(ctx context.Context, cwd, rawURL string) (string
 	}
 
 	// agent owns `cwd` (Bash + bypass) — bare MkdirAll
-	// would follow an agent-planted `.xclaw-media → ~/.ssh/` and the
+	// would follow an agent-planted `.octobuddy-media → ~/.ssh/` and the
 	// subsequent writeCapped would land attacker-supplied IM bytes under
 	//.ssh/. safepath's dirfd walk refuses the symlinked entry. cwd
 	// itself is operator-trusted as the sandbox root.
@@ -339,7 +339,7 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 		return fmt.Sprintf("[文件: %s - 过大未内联]", filename)
 	}
 	// dirfd-walk MkdirAll refuses an agent-planted
-	// `.xclaw-media → ~/.ssh/` redirect; same fix as the image path above.
+	// `.octobuddy-media → ~/.ssh/` redirect; same fix as the image path above.
 	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
 		return fmt.Sprintf("[文件: %s - 下载错误: %v]", filename, err)
 	}
@@ -441,7 +441,7 @@ func (b *cancelOnCloseBody) Close() error {
 // temp+rename. Caller passes `root` = the operator-trusted sandbox cwd and
 // `rel` = the leaf path inside it; for cwdBase configured outside $HOME
 // SafeWriteAbs's fallback skipped the dirfd walk entirely, leaving the
-// .xclaw-media exfil race open. Taking root explicitly closes that path.
+// .octobuddy-media exfil race open. Taking root explicitly closes that path.
 func writeCapped(root, rel string, src io.Reader, max int64) error {
 	buf, err := io.ReadAll(io.LimitReader(src, max+1))
 	if err != nil {

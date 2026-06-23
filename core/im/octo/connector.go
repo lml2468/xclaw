@@ -11,12 +11,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/gateway"
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/persona"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/gateway"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/persona"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // Connector wires the Octo IM platform to the gateway: it registers the bot,

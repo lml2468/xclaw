@@ -10,8 +10,8 @@
  // flag, surfaced in the footer's 保存/保存并重启 (the same SaveConfig path the
  // old ConfigEditor used). SkillsPane and WorkflowsPane write through to disk
  // immediately and don't participate in the dirty flag.
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
-  import { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
+  import { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
   import { store } from "../store.svelte";
   import { modal } from "../actions/modal";
   import { confirm } from "../confirm.svelte";
@@ -62,7 +62,7 @@
       return;
     }
     try {
-      bots = (await XClawService.LoadConfig()) ?? [];
+      bots = (await OctoBuddyService.LoadConfig()) ?? [];
       loadedIds = bots.map((b) => b.id);
       sel = 0;
       // First-run path: the Sidebar opens this modal with openWizardOnMount
@@ -95,11 +95,11 @@
     try {
       const present = new Set(bots.map((b) => b.id));
       const removed = loadedIds.filter((id) => !present.has(id));
-      await XClawService.SaveConfig(bots, removed);
+      await OctoBuddyService.SaveConfig(bots, removed);
       loadedIds = bots.map((b) => b.id);
       saved = true;
       dirty = false;
-      if (restart) { await XClawService.RestartCore(); store.bots = []; XClawService.BotsList(); onclose(); }
+      if (restart) { await OctoBuddyService.RestartCore(); store.bots = []; OctoBuddyService.BotsList(); onclose(); }
     } catch (e) {
       error = errMsg(e);
     } finally {
@@ -137,7 +137,7 @@
     if (bots.some((b) => b.id === id)) { wizError = `Bot ID 「${id}」已存在`; return; }
     wizError = ""; wizBusy = true;
     try {
-      const r = await XClawService.OctoAddBot(wizApiUrl.trim(), wizApiKey.trim(), wizName.trim());
+      const r = await OctoBuddyService.OctoAddBot(wizApiUrl.trim(), wizApiKey.trim(), wizName.trim());
       const b = new BotConfig({ id, apiUrl: wizApiUrl.trim(), octoToken: r.botToken, env: { OCTO_BOT_ID: r.robotId } });
       bots = [...bots, b];
       sel = bots.length - 1;

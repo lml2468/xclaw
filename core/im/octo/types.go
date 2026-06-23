@@ -5,7 +5,7 @@ package octo
 import (
 	"encoding/json"
 
-	"github.com/lml2468/xclaw/core/persona"
+	"github.com/lml2468/octobuddy/core/persona"
 )
 
 // ChannelType mirrors Octo's channel kind (types.ts ChannelType).

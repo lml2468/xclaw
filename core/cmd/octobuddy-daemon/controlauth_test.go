@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/octobuddy/core/control"
 )
 
 // TestReadControlToken covers the capability-token reader the daemon uses to

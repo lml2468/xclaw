@@ -1,6 +1,6 @@
-# XClaw core (`xclawd`)
+# OctoBuddy core (`octobuddy-daemon`)
 
-The XClaw gateway daemon, written in Go. It **drives coding agents by spawning
+The OctoBuddy gateway daemon, written in Go. It **drives coding agents by spawning
 their CLI and normalizing their output into one unified event stream** —
 replacing the Node-only `claude-agent-sdk`. Single static binary, zero cgo,
 cross-compiles everywhere. Native shells (the Wails v3 desktop app in `../desktop`)
@@ -43,7 +43,7 @@ in allow rules).
 ## Layout
 
 ```
-cmd/xclawd/   daemon entry point — wires store+router+gateway+driver; ships a
+cmd/octobuddy-daemon/   daemon entry point — wires store+router+gateway+driver; ships a
               REPL inbound source (stdin) for the headless MVP.
 agent/        Driver abstraction (the heart). Everything above depends only on this.
   agent.go    AgentEvent, Request, Capabilities, Driver interface
@@ -59,7 +59,7 @@ safety/       prompt-injection defense: SanitizeDisplayName / Escape{Role,Sectio
               + SafeText choke-point + SecurityPrefix. Ported from prompt-safety.ts.
 groupctx/     per-channel group context window + cursor + @mention resolution;
               renders the [Recent group messages] delta for injection.
-config/       single-file config (~/.xclaw/config.json): shared defaults +
+config/       single-file config (~/.octobuddy/config.json): shared defaults +
               inline bots[], derived data dir, SOUL.md + AGENTS.md prompt,
               slug + SSRF validation.
 fixtures/     recorded stream-json turn (text + tool_use + result)
@@ -69,26 +69,26 @@ fixtures/     recorded stream-json turn (text + tool_use + result)
 
 ```bash
 go test ./...                            # driver, store, router, gateway, control, im/octo
-go run ./cmd/xclawd                      # REPL on stdin, claude driver
-go run ./cmd/xclawd -control /tmp/xclaw.sock           # serve control bus (GUI)
-go run ./cmd/xclawd -octo-api https://octo.example -octo-token bf_xxx   # single Octo IM bot
-go run ./cmd/xclawd -config                # multi-bot from ~/.xclaw/config.json
-go run ./cmd/xclawd -config ./my.json      # multi-bot from a given config
+go run ./cmd/octobuddy-daemon                      # REPL on stdin, claude driver
+go run ./cmd/octobuddy-daemon -control /tmp/octobuddy.sock           # serve control bus (GUI)
+go run ./cmd/octobuddy-daemon -octo-api https://octo.example -octo-token bf_xxx   # single Octo IM bot
+go run ./cmd/octobuddy-daemon -config                # multi-bot from ~/.octobuddy/config.json
+go run ./cmd/octobuddy-daemon -config ./my.json      # multi-bot from a given config
 # in the REPL: type a message; /reset clears the session; Ctrl-D exits
 
 # cross-compile the daemon (zero cgo)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/xclawd ./cmd/xclawd
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/octobuddy-daemon ./cmd/octobuddy-daemon
 ```
 
 ## Config mode
 
-`-config` loads the single `~/.xclaw/config.json` (see `config.example.json`) and
+`-config` loads the single `~/.octobuddy/config.json` (see `config.example.json`) and
 runs every bot in its bots[] list in its own isolated stack — separate SQLite
 store, gateway, driver, group-context, and Octo connector, each under
-`~/.xclaw/<id>/`. Layout:
+`~/.octobuddy/<id>/`. Layout:
 
 ```
-~/.xclaw/
+~/.octobuddy/
   config.json          # apiUrl + shared defaults + bots[] (each bot: id + octoToken + overrides)
   <id>/SOUL.md         # per-bot identity/persona (operator-trusted system prompt)
   <id>/AGENTS.md       # per-bot behavior norms (appended after SOUL.md)

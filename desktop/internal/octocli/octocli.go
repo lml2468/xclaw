@@ -2,7 +2,7 @@
 // (github.com/Mininglamp-OSS/octo-cli) for the desktop app. octo-cli is a
 // metadata-driven CLI with structured JSON I/O and no interactive prompts —
 // the spawned Claude agent calls it via Bash, so we keep it on the agent's PATH
-// at ~/.xclaw/bin/octo-cli (writable, so one-click upgrade can replace it).
+// at ~/.octobuddy/bin/octo-cli (writable, so one-click upgrade can replace it).
 //
 // On first run the baseline bundled inside the app (Contents/Helpers/octo-cli)
 // is copied into place; Upgrade fetches the latest GitHub release, verifies its
@@ -30,16 +30,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safepath"
-	"github.com/lml2468/xclaw/desktop/internal/octoapi"
-	"github.com/lml2468/xclaw/desktop/internal/safehttp"
+	"github.com/lml2468/octobuddy/core/safepath"
+	"github.com/lml2468/octobuddy/desktop/internal/octoapi"
+	"github.com/lml2468/octobuddy/desktop/internal/safehttp"
 )
 
 const repo = "Mininglamp-OSS/octo-cli"
 
 // userAgent is sent on every HTTP request so the server can attribute traffic
 // (also lets GitHub's anti-abuse return clearer errors than "blank UA").
-const userAgent = "xclaw-desktop/octocli (+https://github.com/lml2468/xclaw)"
+const userAgent = "octobuddy-desktop/octocli (+https://github.com/lml2468/octobuddy)"
 
 // Injectable seams for tests. Production uses the real GitHub API over the
 // hardened HTTP client (dial-time SSRF guard); tests point these at an
@@ -66,18 +66,18 @@ func binName() string {
 	return "octo-cli"
 }
 
-// Dir is ~/.xclaw/bin — the writable install dir, added to the agent's PATH.
+// Dir is ~/.octobuddy/bin — the writable install dir, added to the agent's PATH.
 func Dir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", "bin")
+	return filepath.Join(home, ".octobuddy", "bin")
 }
 
-// BinPath is ~/.xclaw/bin/octo-cli.
+// BinPath is ~/.octobuddy/bin/octo-cli.
 func BinPath() string { return filepath.Join(Dir(), binName()) }
 
 // InstalledVersion returns the recorded version of the installed binary, or ""
 // if octo-cli isn't installed. routed through SafeRead so
-// an agent-planted `~/.xclaw/bin/octo-cli.version → ~/.ssh/known_hosts`
+// an agent-planted `~/.octobuddy/bin/octo-cli.version → ~/.ssh/known_hosts`
 // can't surface arbitrary file contents in the tray as a "version" string.
 func InstalledVersion() string {
 	if !isFile(BinPath()) {
@@ -91,7 +91,7 @@ func InstalledVersion() string {
 }
 
 // writeVersion records the installed octo-cli version. // routed through safepath.SafeWrite so an agent-planted
-// `~/.xclaw/bin/octo-cli.version → ~/Library/LaunchAgents/x.plist` can't
+// `~/.octobuddy/bin/octo-cli.version → ~/Library/LaunchAgents/x.plist` can't
 // hijack the write into operator-launched plists. (The bare
 // os.WriteFile would have followed the symlink and written
 // attacker-chosen content under the operator's uid.)
@@ -120,7 +120,7 @@ func bundledBinary() (path, version string) {
 	return filepath.Clean(p), v
 }
 
-// EnsureInstalled copies the bundled baseline into ~/.xclaw/bin when nothing is
+// EnsureInstalled copies the bundled baseline into ~/.octobuddy/bin when nothing is
 // installed yet, or when the bundle ships a newer version than what's installed
 // (an app update) — but never downgrades a binary the user upgraded via Upgrade.
 // Best-effort: a dev build with no bundle is a no-op (the user can still
@@ -129,7 +129,7 @@ func bundledBinary() (path, version string) {
 // Verifies the bundled binary's SHA-256 against a sha256 sidecar shipped
 // alongside the version file (Contents/Resources/octo-cli.sha256), so a
 // post-build / post-install tamper of the helper — anyone with write access
-// to XClaw.app/Contents/Helpers/ on a non-Developer-signed bundle, e.g. an
+// to OctoBuddy.app/Contents/Helpers/ on a non-Developer-signed bundle, e.g. an
 // admin user, a tampered.zip downloaded over HTTP, a malicious package
 // extractor — fails closed instead of getting silently installed and
 // executed (Sec). A production bundle is detected by the presence
@@ -157,11 +157,11 @@ func EnsureInstalled() error {
 		return fmt.Errorf("EnsureInstalled: bundled octo-cli integrity check failed: %w", err)
 	}
 	// H1 /: was `os.MkdirAll(Dir, 0o755)` which follows
-	// symlinks at every intermediate. Agent plants `~/.xclaw/bin → ~/.ssh/`;
+	// symlinks at every intermediate. Agent plants `~/.octobuddy/bin → ~/.ssh/`;
 	// MkdirAll silently follows; subsequent installBinary writes the 0o700
 	// octo-cli executable under.ssh. SafeMkdirAll walks via dirfd.
 	home, _ := os.UserHomeDir()
-	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
+	if err := safepath.SafeMkdirAll(home, ".octobuddy/bin", 0o755); err != nil {
 		return err
 	}
 	if err := installBinary("", buf); err != nil {
@@ -323,14 +323,14 @@ func Upgrade(ctx context.Context) (string, error) {
 	// H1 /: same dirfd-walk MkdirAll as EnsureInstalled
 	// (replacement for os.MkdirAll which follows symlinks).
 	home, _ := os.UserHomeDir()
-	if err := safepath.SafeMkdirAll(home, ".xclaw/bin", 0o755); err != nil {
+	if err := safepath.SafeMkdirAll(home, ".octobuddy/bin", 0o755); err != nil {
 		return "", err
 	}
 	// Snapshot the current binary as.prev before replacing it, so a bad upgrade
 	// (verified checksum but non-functional binary) has a known-good rollback
 	// point. Best-effort: a missing current binary (first install) just skips it.
 	// routed through safepath so an agent-planted
-	// `~/.xclaw/bin/octo-cli.prev → <attacker-writable-path>` can't redirect
+	// `~/.octobuddy/bin/octo-cli.prev → <attacker-writable-path>` can't redirect
 	// the 0o700-mode write (executable!) to a path of the attacker's choosing.
 	if cur, rerr := safepath.SafeRead(Dir(), binName(), 64<<20); rerr == nil {
 		_ = safepath.SafeWrite(Dir(), binName()+".prev", cur, 0o700)

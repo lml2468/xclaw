@@ -356,7 +356,7 @@ func TestGatingFieldsResolution(t *testing.T) {
 //
 // The refactor switched env to map[string]{value,secretRef}. EnvValue's custom
 // UnmarshalJSON keeps the legacy string shape readable so existing
-// ~/.xclaw/config.json files don't crash the daemon on first launch of the
+// ~/.octobuddy/config.json files don't crash the daemon on first launch of the
 // new build.
 func TestEnvValueAcceptsLegacyString(t *testing.T) {
 	dir := t.TempDir()

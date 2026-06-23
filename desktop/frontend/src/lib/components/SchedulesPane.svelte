@@ -10,8 +10,8 @@
  // the existing SaveConfig + RestartCore flow. Create is disabled while the
  // banner is up so the user doesn't fire-and-forget into a daemon that won't
  // schedule anything.
-  import type { BotConfig } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/configstore/models";
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import type { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { store, CONSOLE_UID } from "../store.svelte";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
@@ -40,7 +40,7 @@
   async function refreshList() {
     if (isPreview || !armedCron) return;
     try {
-      await XClawService.CronList(bot.id);
+      await OctoBuddyService.CronList(bot.id);
       listError = "";
     } catch (e) {
       listError = errMsg(e);
@@ -66,7 +66,7 @@
       return;
     }
     try {
-      groups = (await XClawService.GroupsList(bot.id)) ?? [];
+      groups = (await OctoBuddyService.GroupsList(bot.id)) ?? [];
       groupsError = "";
     } catch (e) {
       groups = [];
@@ -90,7 +90,7 @@
   async function toggleEnabled(taskId: string, enabled: boolean) {
     if (isPreview) return;
     try {
-      await XClawService.CronUpdate({ botId: bot.id, id: taskId, enabled } as any);
+      await OctoBuddyService.CronUpdate({ botId: bot.id, id: taskId, enabled } as any);
       await refreshList();
     } catch (e) {
       listError = errMsg(e);
@@ -101,7 +101,7 @@
     if (isPreview) return;
     if (!(await confirm({ message: "确认删除此定时任务？", confirmLabel: "删除", danger: true }))) return;
     try {
-      await XClawService.CronDelete(bot.id, "", taskId);
+      await OctoBuddyService.CronDelete(bot.id, "", taskId);
       await refreshList();
     } catch (e) {
       listError = errMsg(e);
@@ -190,7 +190,7 @@
     formBusy = true;
     try {
       if (editingId) {
-        await XClawService.CronUpdate({
+        await OctoBuddyService.CronUpdate({
           botId: bot.id,
           id: editingId,
           schedule: formSchedule.trim(),
@@ -202,7 +202,7 @@
           fromName,
         } as any);
       } else {
-        await XClawService.CronCreate({
+        await OctoBuddyService.CronCreate({
           botId: bot.id,
           schedule: formSchedule.trim(),
           prompt: formPrompt,
@@ -262,7 +262,7 @@
     <div class="banner">
       <div class="b-text">
         <strong>定时任务未启用</strong>
-        <p>启用后将为该 Bot 加载 <code>~/.xclaw/{bot.id}/cron.json</code> 并定时触发。</p>
+        <p>启用后将为该 Bot 加载 <code>~/.octobuddy/{bot.id}/cron.json</code> 并定时触发。</p>
       </div>
       <button class="b-btn" onclick={enableCron}>启用</button>
     </div>

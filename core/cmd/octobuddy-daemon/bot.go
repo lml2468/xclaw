@@ -11,19 +11,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/core/control"
-	"github.com/lml2468/xclaw/core/control/wire"
-	"github.com/lml2468/xclaw/core/cron"
-	"github.com/lml2468/xclaw/core/gateway"
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/groupmd"
-	"github.com/lml2468/xclaw/core/im/octo"
-	"github.com/lml2468/xclaw/core/persona"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safepath"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/control"
+	"github.com/lml2468/octobuddy/core/control/wire"
+	"github.com/lml2468/octobuddy/core/cron"
+	"github.com/lml2468/octobuddy/core/gateway"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/groupmd"
+	"github.com/lml2468/octobuddy/core/im/octo"
+	"github.com/lml2468/octobuddy/core/persona"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safepath"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // Reaper cadence for a running bot. reapInterval is how often the sweep runs;
@@ -169,7 +169,7 @@ func runConfigMode(path, controlSock string, exitWithParent bool, authStdin bool
 		}()
 	}
 
-	fmt.Printf("xclawd — config mode: %d bot(s)\n", len(bots))
+	fmt.Printf("octobuddy-daemon — config mode: %d bot(s)\n", len(bots))
 
 	var wg sync.WaitGroup
 	for _, cfg := range bots {
@@ -229,9 +229,9 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	// SafeMkdirAllAbs walks the parent chain via dirfd, refusing any
 	// symlinked intermediate with ErrSymlink. An agent (Bash + bypass)
 	// in any existing bot's cwd could otherwise plant
-	// `~/.xclaw/<newbotID>` as a symlink to `~/.ssh/` BEFORE the operator
+	// `~/.octobuddy/<newbotID>` as a symlink to `~/.ssh/` BEFORE the operator
 	// adds the new bot; a bare MkdirAll would silently follow it, and
-	// store.Open would then create xclaw.db/.wal/.shm under .ssh. When
+	// store.Open would then create octobuddy.db/.wal/.shm under .ssh. When
 	// DataDir is outside $HOME (operator-supplied absolute path)
 	// SafeMkdirAllAbs falls back to bare MkdirAll — that boundary is
 	// operator-trusted.
@@ -245,7 +245,7 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 			return fmt.Errorf("bot %s: mkdir claude config dir: %w", cfg.BotID, err)
 		}
 	}
-	st, err := store.Open(filepath.Join(cfg.DataDir, "xclaw.db"))
+	st, err := store.Open(filepath.Join(cfg.DataDir, "octobuddy.db"))
 	if err != nil {
 		return fmt.Errorf("bot %s: store: %w", cfg.BotID, err)
 	}

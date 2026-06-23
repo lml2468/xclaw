@@ -11,18 +11,18 @@ import (
 	"testing"
 )
 
-// TestMain doubles as a fake xclawd: when XCLAW_FAKE_DAEMON=1 the test binary
+// TestMain doubles as a fake octobuddy-daemon: when OCTOBUDDY_FAKE_DAEMON=1 the test binary
 // impersonates the daemon so TestTokenDeliveredOutOfBand can inspect exactly
 // what the supervisor handed it (argv, environ, stdin).
 func TestMain(m *testing.M) {
-	if os.Getenv("XCLAW_FAKE_DAEMON") == "1" {
+	if os.Getenv("OCTOBUDDY_FAKE_DAEMON") == "1" {
 		fakeDaemon()
 		return
 	}
 	os.Exit(m.Run())
 }
 
-// fakeDaemon mimics the bits of xclawd the supervisor relies on: it reads the
+// fakeDaemon mimics the bits of octobuddy-daemon the supervisor relies on: it reads the
 // capability token from stdin (the out-of-band channel), creates the control
 // socket file so the supervisor's startup wait succeeds, and records what it saw
 // (argv, environ, the stdin token) to <socket>.seen for the test to assert on.
@@ -49,7 +49,7 @@ func fakeDaemon() {
 // capability token must reach the daemon on stdin and must NOT appear in its
 // argv or environment (both world-readable via /proc on Linux).
 func TestTokenDeliveredOutOfBand(t *testing.T) {
-	t.Setenv("XCLAW_FAKE_DAEMON", "1")
+	t.Setenv("OCTOBUDDY_FAKE_DAEMON", "1")
 	sock := filepath.Join(t.TempDir(), "x.sock")
 
 	sup := &Supervisor{BinPath: os.Args[0], SocketPath: sock}
@@ -113,7 +113,7 @@ func TestRandomTokenUnique(t *testing.T) {
 // TestDaemonArgsOmitToken guards the invariant that the token is never an argv
 // element — the whole point of the stdin channel.
 func TestDaemonArgsOmitToken(t *testing.T) {
-	args := daemonArgs("/tmp/x.sock", "/home/u/.xclaw/config.json")
+	args := daemonArgs("/tmp/x.sock", "/home/u/.octobuddy/config.json")
 	if !slices.Contains(args, "-control-auth-stdin") {
 		t.Fatalf("missing -control-auth-stdin: %v", args)
 	}
@@ -123,7 +123,7 @@ func TestDaemonArgsOmitToken(t *testing.T) {
 }
 
 // TestEnvWithOctoBinAugmentsPath verifies the daemon env carries a PATH that
-// (1) leads with ~/.xclaw/bin, (2) includes the well-known agent install dirs so
+// (1) leads with ~/.octobuddy/bin, (2) includes the well-known agent install dirs so
 // a GUI-launched daemon finds `claude`, and (3) still contains the inherited
 // PATH entries, with no duplicates.
 func TestEnvWithOctoBinAugmentsPath(t *testing.T) {
@@ -147,7 +147,7 @@ func TestEnvWithOctoBinAugmentsPath(t *testing.T) {
 	}
 	entries := strings.Split(path, sep)
 
-	octoBin := filepath.Join(home, ".xclaw", "bin")
+	octoBin := filepath.Join(home, ".octobuddy", "bin")
 	if entries[0] != octoBin {
 		t.Fatalf("PATH does not lead with %q: %q", octoBin, entries[0])
 	}

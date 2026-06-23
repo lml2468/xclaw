@@ -1,4 +1,4 @@
-// Package core supervises the xclawd daemon subprocess for the desktop app:
+// Package core supervises the octobuddy-daemon daemon subprocess for the desktop app:
 // it resolves the binary, picks a control-socket path, spawns the daemon in
 // control-bus mode (tied to the app's lifetime via -exit-with-parent), and
 // stops it cleanly. Reconnect/backoff policy is layered on in Phase 1.
@@ -27,13 +27,13 @@ import (
 // which is the root cause of the selfcheck `claude=MISSING` / "turn failed at
 // driver.Query: exec: claude: executable file not found in $PATH" reports.
 //
-// Precedence (first wins after dedup): ~/.xclaw/bin (octo-cli companion) →
+// Precedence (first wins after dedup): ~/.octobuddy/bin (octo-cli companion) →
 // the user's interactive login-shell PATH (darwin/linux only — captures
 // whatever the user actually configured, including nvm/asdf/volta-managed
 // dirs) → a static list of well-known install dirs (belt-and-suspenders for
 // the common cases) → whatever PATH we inherited. Windows GUI apps already
 // inherit the full user+machine PATH from the registry, so there it just
-// prepends ~/.xclaw/bin (+ %APPDATA%\npm for npm-global installs).
+// prepends ~/.octobuddy/bin (+ %APPDATA%\npm for npm-global installs).
 //
 // Note: Go's exec.Command resolves a bare binary name against the *parent*
 // process PATH (os.Getenv), not cmd.Env — so it is the daemon's own PATH, set
@@ -56,7 +56,7 @@ func envWithOctoBin() []string {
 		dirs = append(dirs, d)
 	}
 
-	add(filepath.Join(home, ".xclaw", "bin"))
+	add(filepath.Join(home, ".octobuddy", "bin"))
 	for _, d := range strings.Split(loginShellPath(), sep) {
 		add(d)
 	}
@@ -143,7 +143,7 @@ func loginShellPath() string {
 	if shell == "" {
 		return ""
 	}
-	const marker = "__XCLAW_PATH__"
+	const marker = "__OCTOBUDDY_PATH__"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Interactive shells often exit non-zero yet still print the fenced value, so
@@ -170,9 +170,9 @@ func loginShellPath() string {
 // instead.
 func SocketPath() string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), fmt.Sprintf("xclaw-%s.sock", windowsUserSuffix()))
+		return filepath.Join(os.TempDir(), fmt.Sprintf("octobuddy-%s.sock", windowsUserSuffix()))
 	}
-	return filepath.Join("/tmp", fmt.Sprintf("xclaw-%d.sock", os.Getuid()))
+	return filepath.Join("/tmp", fmt.Sprintf("octobuddy-%d.sock", os.Getuid()))
 }
 
 // windowsUserSuffix derives a short stable per-user token. USERNAME is the
@@ -207,35 +207,35 @@ func sanitizeWinUser(s string) string {
 	return string(b)
 }
 
-// ConfigPath is the daemon's multi-bot config (~/.xclaw/config.json).
+// ConfigPath is the daemon's multi-bot config (~/.octobuddy/config.json).
 func ConfigPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", "config.json")
+	return filepath.Join(home, ".octobuddy", "config.json")
 }
 
-// ResolveBinary finds the xclawd executable, mirroring the Swift CorePaths
+// ResolveBinary finds the octobuddy-daemon executable, mirroring the Swift CorePaths
 // order: explicit override → bundled helper → monorepo dev build → PATH.
 func ResolveBinary() (string, error) {
-	if override := os.Getenv("XCLAWD_BIN"); override != "" {
+	if override := os.Getenv("OCTOBUDDY_DAEMON_BIN"); override != "" {
 		if isExec(override) {
 			return override, nil
 		}
 	}
-	// Bundled next to the app executable (production):../Helpers/xclawd.
+	// Bundled next to the app executable (production):../Helpers/octobuddy-daemon.
 	if exe, err := os.Executable(); err == nil {
 		cand := filepath.Join(filepath.Dir(exe), "..", "Helpers", binName())
 		if isExec(cand) {
 			return filepath.Clean(cand), nil
 		}
 	}
-	// Monorepo dev: walk up from cwd looking for core/.xclawd-dev. TRUST NOTE:
+	// Monorepo dev: walk up from cwd looking for core/.octobuddy-daemon-dev. TRUST NOTE:
 	// this (and the PATH fallback below) trusts the working directory / PATH, so it
-	// is for developer machines only. In production the bundled Helpers/xclawd
+	// is for developer machines only. In production the bundled Helpers/octobuddy-daemon
 	// branch above resolves first via the app's own executable path, so a hostile
 	// cwd can't substitute a binary for an installed app.
 	if dir, err := os.Getwd(); err == nil {
 		for range 6 {
-			cand := filepath.Join(dir, "core", ".xclawd-dev")
+			cand := filepath.Join(dir, "core", ".octobuddy-daemon-dev")
 			if isExec(cand) {
 				return cand, nil
 			}
@@ -250,10 +250,10 @@ func ResolveBinary() (string, error) {
 	if p, err := exec.LookPath(binName()); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("xclawd binary not found (set XCLAWD_BIN, build core/.xclawd-dev, or install xclawd)")
+	return "", fmt.Errorf("octobuddy-daemon binary not found (set OCTOBUDDY_DAEMON_BIN, build core/.octobuddy-daemon-dev, or install octobuddy-daemon)")
 }
 
-// Supervisor owns one xclawd process. All lifecycle methods (Start/Stop/Restart)
+// Supervisor owns one octobuddy-daemon process. All lifecycle methods (Start/Stop/Restart)
 // are serialized by mu so the cmd field is never read/written concurrently —
 // the desktop calls these from both the UI thread (RestartCore) and the
 // daemon-read goroutine (crash reconnect), which would otherwise race on cmd
@@ -266,7 +266,7 @@ type Supervisor struct {
 	// Output captures the daemon's stdout+stderr. nil means inherit the
 	// desktop's os.Stderr (legacy behavior; tests and silent runs).
 	// Set this to the desktop's persistent log file in production so end users
-	// can `cat ~/.xclaw/logs/xclaw.log` after a crash without having to relaunch
+	// can `cat ~/.octobuddy.logs/octobuddy.log` after a crash without having to relaunch
 	// from a terminal. Both streams point at the same Writer so daemon stdout
 	// (banner, "config mode: N bot(s)") and stderr ([gateway] errors,
 	// [selfcheck] lines) interleave by timestamp.
@@ -290,7 +290,7 @@ func (s *Supervisor) Token() string {
 	return s.authToken
 }
 
-// Start spawns xclawd in control-bus mode and waits for the socket to appear.
+// Start spawns octobuddy-daemon in control-bus mode and waits for the socket to appear.
 func (s *Supervisor) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -324,11 +324,11 @@ func (s *Supervisor) startLocked() error {
 	}
 	cmd.Stdout = out // surface daemon banner + selfcheck + gateway errors
 	cmd.Stderr = out
-	cmd.Env = envWithOctoBin() // put ~/.xclaw/bin on PATH so the agent can call octo-cli
+	cmd.Env = envWithOctoBin() // put ~/.octobuddy/bin on PATH so the agent can call octo-cli
 	if err := cmd.Start(); err != nil {
 		tokenR.Close()
 		tokenW.Close()
-		return fmt.Errorf("start xclawd: %w", err)
+		return fmt.Errorf("start octobuddy-daemon: %w", err)
 	}
 	// The child holds its own dup of the read end; write the token and close both
 	// ends so the daemon sees a clean newline-terminated line then EOF. Never log it.
@@ -359,7 +359,7 @@ func (s *Supervisor) startLocked() error {
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
-	return fmt.Errorf("xclawd did not create control socket within timeout")
+	return fmt.Errorf("octobuddy-daemon did not create control socket within timeout")
 }
 
 // Stop terminates the daemon. -exit-with-parent also covers the case where we
@@ -411,9 +411,9 @@ func (s *Supervisor) Restart() error {
 
 func binName() string {
 	if runtime.GOOS == "windows" {
-		return "xclawd.exe"
+		return "octobuddy-daemon.exe"
 	}
-	return "xclawd"
+	return "octobuddy-daemon"
 }
 
 func isExec(path string) bool {
@@ -437,7 +437,7 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// daemonArgs builds the xclawd command line. The capability token is NEVER an
+// daemonArgs builds the octobuddy-daemon command line. The capability token is NEVER an
 // argument (it would be world-readable via /proc/<pid>/cmdline) — it is written
 // to the daemon's stdin instead, which -control-auth-stdin tells it to read.
 func daemonArgs(socketPath, configPath string) []string {

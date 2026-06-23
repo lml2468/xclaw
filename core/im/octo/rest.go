@@ -70,7 +70,7 @@ func (c *RESTClient) Register(ctx context.Context, forceRefresh bool) (RegisterR
 		path += "?force_refresh=true"
 	}
 	body := map[string]string{
-		"agent_platform": "xclaw",
+		"agent_platform": "octobuddy",
 		"agent_version":  "0.1.0",
 	}
 	var out RegisterResponse

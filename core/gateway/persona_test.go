@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/persona"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/persona"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // TestPersonaSystemPromptInjection proves a persona clone's system prompt

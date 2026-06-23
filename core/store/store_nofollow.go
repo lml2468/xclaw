@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // refuseSymlinkLeaf returns an error if path exists AND is a symlink at the

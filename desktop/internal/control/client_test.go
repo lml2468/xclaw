@@ -7,34 +7,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/desktop/internal/control"
-	"github.com/lml2468/xclaw/desktop/internal/core"
+	"github.com/lml2468/octobuddy/desktop/internal/control"
+	"github.com/lml2468/octobuddy/desktop/internal/core"
 )
 
-// TestBridgeHealthRoundTrip spawns the real xclawd daemon via the supervisor,
+// TestBridgeHealthRoundTrip spawns the real octobuddy-daemon daemon via the supervisor,
 // connects the control client over the Unix socket, and asserts a health
 // command round-trips back as a response envelope. This is the Phase 0 proof
 // that "Go reads the UDS stream + commands work" end-to-end. It skips when the
 // daemon binary isn't available (so it never blocks CI without a build).
 func TestBridgeHealthRoundTrip(t *testing.T) {
-	bin := os.Getenv("XCLAWD_BIN")
+	bin := os.Getenv("OCTOBUDDY_DAEMON_BIN")
 	if bin == "" {
 		// Fall back to the monorepo dev build if present.
 		if wd, err := os.Getwd(); err == nil {
 			//.../desktop/internal/control -> repo root is three up.
-			cand := filepath.Join(wd, "..", "..", "..", "core", ".xclawd-dev")
+			cand := filepath.Join(wd, "..", "..", "..", "core", ".octobuddy-daemon-dev")
 			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
 				bin = cand
 			}
 		}
 	}
 	if bin == "" {
-		t.Skip("no xclawd binary (set XCLAWD_BIN or build core/.xclawd-dev)")
+		t.Skip("no octobuddy-daemon binary (set OCTOBUDDY_DAEMON_BIN or build core/.octobuddy-daemon-dev)")
 	}
 
 	// Short path under /tmp — sockaddr_un caps at ~104 bytes, and macOS t.TempDir
 	// paths blow past that.
-	sock := filepath.Join("/tmp", "xclaw-test.sock")
+	sock := filepath.Join("/tmp", "octobuddy-test.sock")
 	_ = os.Remove(sock)
 	defer os.Remove(sock)
 	sup := &core.Supervisor{

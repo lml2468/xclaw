@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/desktop/internal/safehttp"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/desktop/internal/safehttp"
 )
 
 // ValidRobotID is the strictest character class we can put on a value that's

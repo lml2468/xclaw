@@ -1,7 +1,7 @@
 // Package workspace exposes read-only views of a chat session's sandbox-backed
 // files to the desktop app: workspace files under
-// ~/.xclaw/<botID>/workspace/<hash> and auto-memory files under
-// ~/.xclaw/<botID>/memory/<hash>. The hash is the same one core/sandbox derives
+// ~/.octobuddy/<botID>/workspace/<hash> and auto-memory files under
+// ~/.octobuddy/<botID>/memory/<hash>. The hash is the same one core/sandbox derives
 // from the session's (kind, sessionKey), and callers pass the persisted channel
 // type explicitly so the file browser does not guess DM vs group.
 //
@@ -24,8 +24,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/lml2468/xclaw/core/safepath"
-	"github.com/lml2468/xclaw/core/sandbox"
+	"github.com/lml2468/octobuddy/core/safepath"
+	"github.com/lml2468/octobuddy/core/sandbox"
 )
 
 // Bounds keep an arbitrarily large or deep workspace from overwhelming the UI or
@@ -54,10 +54,10 @@ const (
 	memorySpace    treeSpace = "memory"
 )
 
-// Dir is ~/.xclaw (the install root), matching configstore.Dir.
+// Dir is ~/.octobuddy (the install root), matching configstore.Dir.
 func Dir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw")
+	return filepath.Join(home, ".octobuddy")
 }
 
 // Node is a file or directory in the workspace tree. Path is relative to the

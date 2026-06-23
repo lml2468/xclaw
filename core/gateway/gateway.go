@@ -439,33 +439,8 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 		return msg.Text
 	}
 
-	// Cold-start backfill (cc G4): the FIRST time this channel is seen with an
-	// empty local window, seed it from the IM REST API. Runs at most once per
-	// (process, channel). The inferred cutoff (highest bot-reply seq found in the
-	// backfill) primes answered/new segmentation so the first turn doesn't treat
-	// already-answered history as new.
-	if g.groupBackfill != nil {
-		channelID := msg.ChannelID
-		botUID := ""
-		if g.botUID != nil {
-			botUID = g.botUID()
-		}
-		inferred, ran := g.groups.Backfill(channelID, botUID, func() []groupctx.BackfillMessage {
-			return g.groupBackfill(channelID, 0)
-		})
-		if ran && inferred > 0 {
-			if err := g.store.SaveBotReplySeq(sessionKey, inferred); err != nil {
-				fmt.Fprintf(os.Stderr, "[gateway] save inferred reply seq %s: %v\n", sessionKey, err)
-			}
-		}
-	}
-
-	// Answered/new cutoff (cc G10): the IM seq of the last message the bot replied
-	// to. Messages at/below it render under [Previously answered].
-	cutoffSeq, err := g.store.BotReplySeq(sessionKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[gateway] bot reply seq %s: %v\n", sessionKey, err)
-	}
+	g.backfillGroupContext(sessionKey, msg.ChannelID)
+	cutoffSeq := g.botReplyCutoffSeq(sessionKey)
 
 	cursor := g.groups.Cursor(msg.ChannelID)
 	deltaText, _ := g.groups.BuildContextSince(msg.ChannelID, cursor, cutoffSeq)
@@ -474,6 +449,43 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 	// Advance the cursor past everything now in the channel.
 	g.groups.SetCursor(msg.ChannelID, g.groups.MaxID(msg.ChannelID))
 
+	return renderGroupPrompt(deltaText, msg.Text)
+}
+
+func (g *Gateway) backfillGroupContext(sessionKey, channelID string) {
+	// Cold-start backfill (cc G4): the FIRST time this channel is seen with an
+	// empty local window, seed it from the IM REST API. Runs at most once per
+	// (process, channel). The inferred cutoff (highest bot-reply seq found in the
+	// backfill) primes answered/new segmentation so the first turn doesn't treat
+	// already-answered history as new.
+	if g.groupBackfill == nil {
+		return
+	}
+	botUID := ""
+	if g.botUID != nil {
+		botUID = g.botUID()
+	}
+	inferred, ran := g.groups.Backfill(channelID, botUID, func() []groupctx.BackfillMessage {
+		return g.groupBackfill(channelID, 0)
+	})
+	if ran && inferred > 0 {
+		if err := g.store.SaveBotReplySeq(sessionKey, inferred); err != nil {
+			fmt.Fprintf(os.Stderr, "[gateway] save inferred reply seq %s: %v\n", sessionKey, err)
+		}
+	}
+}
+
+func (g *Gateway) botReplyCutoffSeq(sessionKey string) int64 {
+	// Answered/new cutoff (cc G10): the IM seq of the last message the bot
+	// replied to. Messages at/below it render under [Previously answered].
+	cutoffSeq, err := g.store.BotReplySeq(sessionKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[gateway] bot reply seq %s: %v\n", sessionKey, err)
+	}
+	return cutoffSeq
+}
+
+func renderGroupPrompt(deltaText, currentText string) string {
 	var b strings.Builder
 	if deltaText != "" {
 		// The whole block (header + raw bodies) is escaped once here.
@@ -486,7 +498,7 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 	// / section markers so a crafted body cannot forge prompt structure below the
 	// real anchor (e.g. a second [Current message …] anchor or a fake
 	// [Recent group messages] header).
-	b.WriteString(safety.SafeBody(msg.Text).String())
+	b.WriteString(safety.SafeBody(currentText).String())
 	return b.String()
 }
 

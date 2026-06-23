@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/lml2468/xclaw/core/config"
+	"github.com/lml2468/xclaw/desktop/internal/secrets"
 	"github.com/zalando/go-keyring"
 )
 
-// setup points the store at a temp HOME and an in-memory keychain so tests
-// never touch the real ~/.xclaw or the OS credential store.
+// setup points the store at a temp HOME and an in-memory keyring so tests
+// never touch the real ~/.xclaw or OS credential store.
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
@@ -51,16 +52,20 @@ func readBack(t *testing.T) config.File {
 func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{
-		APIURL: "https://top.example",
-		Agent:  &config.AgentConfig{Model: "top-model"},
 		Bots: []config.BotEntry{{
+			APIURL:            "https://top.example",
 			ID:                "a",
 			RateLimit:         &config.RateLimitConfig{MaxPerMinute: 7},
 			Context:           &config.ContextConfig{MaxContextChars: 1234},
 			GroupConfigDir:    "/srv/groups",
 			OnBehalfOf:        &config.OnBehalfOf{UID: "grantor-9"},
 			MentionFreeGroups: []string{"g1", "g2"},
-			Agent:             &config.AgentConfig{Cron: ptrTo(true), ToolProgress: true},
+			Agent: &config.AgentConfig{
+				Cron:               ptrTo(true),
+				ToolProgress:       true,
+				InheritUserConfig:  true,
+				DispatchTimeoutSec: 3600,
+			},
 		}},
 	})
 
@@ -100,37 +105,31 @@ func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 	if b.Agent == nil || b.Agent.Cron == nil || !*b.Agent.Cron || !b.Agent.ToolProgress {
 		t.Errorf("agent cron/toolProgress dropped: %+v", b.Agent)
 	}
+	if b.Agent == nil || !b.Agent.InheritUserConfig || b.Agent.DispatchTimeoutSec != 3600 {
+		t.Errorf("unmodeled agent fields dropped: %+v", b.Agent)
+	}
 }
 
 func ptrTo[T any](v T) *T { return &v }
 
-// Editor-owned values that merely equal the top-level default must NOT be
-// materialized into the per-bot entry, so the default keeps propagating.
-func TestSaveDoesNotMaterializeDefaults(t *testing.T) {
+func TestSaveWritesPerBotFields(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{
-		APIURL: "https://top.example",
-		Agent:  &config.AgentConfig{Model: "top-model"},
-		Bots:   []config.BotEntry{{ID: "a"}}, // inherits apiUrl + model
+		Bots: []config.BotEntry{{ID: "a"}},
 	})
 
-	loaded, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded[0].APIURL != "https://top.example" || loaded[0].Model != "top-model" {
-		t.Fatalf("Load should resolve defaults: %+v", loaded[0])
-	}
-	if err := Save(loaded, nil); err != nil {
+	if err := Save([]BotConfig{{
+		ID: "a", APIURL: "https://top.example", Model: "bot-model",
+	}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	b := readBack(t).Bots[0]
-	if b.APIURL != "" {
-		t.Errorf("apiUrl materialized into bot entry: %q (should inherit)", b.APIURL)
+	if b.APIURL != "https://top.example" {
+		t.Errorf("apiUrl not written per-bot: %q", b.APIURL)
 	}
-	if b.Agent != nil && b.Agent.Model != "" {
-		t.Errorf("model materialized into bot entry: %q (should inherit)", b.Agent.Model)
+	if b.Agent == nil || b.Agent.Model != "bot-model" {
+		t.Errorf("model not written per-bot: %+v", b.Agent)
 	}
 }
 
@@ -296,13 +295,56 @@ func TestSaveNeverWritesTokensToDisk(t *testing.T) {
 		}
 	}
 
-	// Sanity: after Save+Load round-trip, the keychain restores the tokens.
+	// Sanity: after Save+Load round-trip, the secret backend restores the tokens.
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if len(loaded) != 1 || loaded[0].OctoToken != octoSecret || loaded[0].GatewayToken != gwSecret {
-		t.Fatalf("tokens didn't survive the keychain round-trip: %+v", loaded)
+		t.Fatalf("tokens didn't survive the secret backend round-trip: %+v", loaded)
+	}
+}
+
+func TestSaveSecretEnvUsesSecretRef(t *testing.T) {
+	setup(t)
+	const ghSecret = "ghp_secret_canary"
+	bots := []BotConfig{{
+		ID:        "alpha",
+		APIURL:    "https://octo.example",
+		Env:       map[string]string{"PLAIN": "visible", "GH_TOKEN": ghSecret},
+		SecretEnv: map[string]bool{"GH_TOKEN": true},
+	}}
+	if err := Save(bots, nil); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	raw, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	if filepathContains(string(raw), ghSecret) {
+		t.Fatalf("secret env value leaked to config.json:\n%s", raw)
+	}
+	b := readBack(t).Bots[0]
+	if b.Agent == nil {
+		t.Fatal("agent missing")
+	}
+	if got := b.Agent.Env["PLAIN"].Value; got != "visible" {
+		t.Fatalf("plain env not written: %q", got)
+	}
+	if got := b.Agent.Env["GH_TOKEN"].SecretRef; got != "env/GH_TOKEN" {
+		t.Fatalf("secretRef not written: %q", got)
+	}
+	if got := secrets.Get("alpha", secrets.Kind("env/GH_TOKEN")); got != ghSecret {
+		t.Fatalf("secret backend value = %q", got)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !loaded[0].SecretEnv["GH_TOKEN"] || loaded[0].Env["GH_TOKEN"] != "" {
+		t.Fatalf("secret env should load locked without plaintext: %+v", loaded[0])
 	}
 }
 

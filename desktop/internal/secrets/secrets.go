@@ -1,13 +1,18 @@
-// Package secrets stores bot tokens in the OS credential store (macOS Keychain,
-// Windows Credential Manager, Linux Secret Service) via go-keyring — zero cgo,
-// cross-platform. Tokens never touch config.json; the bridge reads them here and
-// injects them into the daemon at runtime over the control bus (secret.inject).
+// Package secrets stores per-bot secrets behind a small backend abstraction.
+// The OS credential store is preferred; a local 0600 file backend is the
+// writable headless fallback; env vars are the read-only CI fallback. Secret
+// values never touch config.json; the bridge reads them here and injects them
+// into the daemon at runtime over the control bus (secret.inject).
 package secrets
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/zalando/go-keyring"
 
@@ -44,32 +49,23 @@ func account(botID string, kind Kind) (string, error) {
 	return botID + "/" + string(kind), nil
 }
 
-// Get returns the stored token, or "" if none is set. A "not found" result and a
-// real keyring failure both yield "" (callers treat that as "no token to
-// inject"), but a real failure (keychain access denied, service unavailable) is
-// logged so it isn't silently indistinguishable from "unset" — that case is the
-// common confusion after a re-signed binary prompts and is denied (L).
-func Get(botID string, kind Kind) string {
-	acct, err := account(botID, kind)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[secrets] %v\n", err)
-		return ""
-	}
-	v, err := keyring.Get(service, acct)
-	if err != nil {
-		if !errors.Is(err, keyring.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "[secrets] keyring get failed for %s/%s: %v\n", botID, kind, err)
-		}
-		return ""
-	}
-	return v
+type backend interface {
+	Get(botID string, kind Kind) (string, error)
+	Set(botID string, kind Kind, value string) error
+	Delete(botID string, kind Kind) error
 }
 
-// Set stores (or, with an empty value, deletes) a token.
-func Set(botID string, kind Kind, value string) error {
-	if value == "" {
-		return Delete(botID, kind)
+type keyringBackend struct{}
+
+func (keyringBackend) Get(botID string, kind Kind) (string, error) {
+	acct, err := account(botID, kind)
+	if err != nil {
+		return "", err
 	}
+	return keyring.Get(service, acct)
+}
+
+func (keyringBackend) Set(botID string, kind Kind, value string) error {
 	acct, err := account(botID, kind)
 	if err != nil {
 		return err
@@ -77,15 +73,154 @@ func Set(botID string, kind Kind, value string) error {
 	return keyring.Set(service, acct, value)
 }
 
-// Delete removes a token; a missing entry is not an error.
-func Delete(botID string, kind Kind) error {
+func (keyringBackend) Delete(botID string, kind Kind) error {
 	acct, err := account(botID, kind)
 	if err != nil {
 		return err
 	}
 	err = keyring.Delete(service, acct)
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// fileBackend is the headless fallback when an OS credential store is
+// unavailable. It is intentionally simple and local-user scoped (0600 files);
+// desktop builds still prefer the OS backend whenever it works.
+type fileBackend struct{}
+
+func secretFile(botID string, kind Kind) (string, error) {
+	if !safepath.ValidSlug(botID) {
+		return "", fmt.Errorf("invalid bot id %q", botID)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	name := base64.RawURLEncoding.EncodeToString([]byte(kind))
+	return filepath.Join(home, ".xclaw", "secrets", botID, name), nil
+}
+
+func (fileBackend) Get(botID string, kind Kind) (string, error) {
+	path, err := secretFile(botID, kind)
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (fileBackend) Set(botID string, kind Kind, value string) error {
+	path, err := secretFile(botID, kind)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(value), 0o600)
+}
+
+func (fileBackend) Delete(botID string, kind Kind) error {
+	path, err := secretFile(botID, kind)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+type envBackend struct{}
+
+func secretEnvName(botID string, kind Kind) string {
+	var b strings.Builder
+	b.WriteString("XCLAW_SECRET_")
+	for _, r := range botID + "_" + string(kind) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(unicode.ToUpper(r))
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func (envBackend) Get(botID string, kind Kind) (string, error) {
+	if !safepath.ValidSlug(botID) {
+		return "", fmt.Errorf("invalid bot id %q", botID)
+	}
+	v, ok := os.LookupEnv(secretEnvName(botID, kind))
+	if !ok {
+		return "", os.ErrNotExist
+	}
+	return v, nil
+}
+
+func (envBackend) Set(string, Kind, string) error { return errors.New("env backend is read-only") }
+
+func (envBackend) Delete(string, Kind) error { return errors.New("env backend is read-only") }
+
+var backends = []backend{keyringBackend{}, fileBackend{}, envBackend{}}
+
+// Get returns the stored token, or "" if none is set. A "not found" result and a
+// real backend failure both yield "" (callers treat that as "no token to
+// inject"), but real failures are logged so they aren't silently
+// indistinguishable from "unset".
+func Get(botID string, kind Kind) string {
+	var last error
+	for _, b := range backends {
+		v, err := b.Get(botID, kind)
+		if err == nil {
+			return v
+		}
+		if !errors.Is(err, keyring.ErrNotFound) && !os.IsNotExist(err) {
+			last = err
+		}
+	}
+	if last != nil {
+		fmt.Fprintf(os.Stderr, "[secrets] get failed for %s/%s: %v\n", botID, kind, last)
+	}
+	return ""
+}
+
+// Set stores (or, with an empty value, deletes) a token.
+func Set(botID string, kind Kind, value string) error {
+	if value == "" {
+		return Delete(botID, kind)
+	}
+	var last error
+	for _, b := range backends {
+		if err := b.Set(botID, kind, value); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+	}
+	return last
+}
+
+// Delete removes a token; a missing entry is not an error.
+func Delete(botID string, kind Kind) error {
+	var last error
+	ok := false
+	for _, b := range backends {
+		if err := b.Delete(botID, kind); err != nil {
+			last = err
+		} else {
+			ok = true
+		}
+	}
+	if ok {
+		return nil
+	}
+	return last
 }

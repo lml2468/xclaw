@@ -1,8 +1,8 @@
 // Package config implements XClaw's single-file configuration.
 //
-// One ~/.xclaw/config.json holds shared top-level defaults
-// (apiUrl/agent/rateLimit/context) plus a bots[] list where each entry inlines a
-// bot's id + octoToken + per-bot overrides. The per-bot data directory
+// One ~/.xclaw/config.json holds shared runtime policy (rateLimit/context) plus
+// a bots[] list where each entry inlines a bot's identity and agent config.
+// Agent/env/apiUrl settings are intentionally per-bot, never inherited. The per-bot data directory
 // (~/.xclaw/<id>/data) is DERIVED from baseDir + id, never configurable — so a
 // bot can't escape its own subtree. The bot's persona/behavior prompt lives in
 // SOUL.md + AGENTS.md in ~/.xclaw/<id>/, not in config.
@@ -16,28 +16,31 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/envenc"
 	"github.com/lml2468/xclaw/core/safepath"
 )
+
+// EnvValue is one declared agent environment variable. Plain values live in
+// config.json for reviewability; secrets live in the configured secret backend
+// and are referenced here by key (for example "env/GH_TOKEN").
+type EnvValue struct {
+	Value     string `json:"value,omitempty"`
+	SecretRef string `json:"secretRef,omitempty"`
+}
 
 // AgentConfig is the on-disk "agent" block: the model and the model-gateway
 // routing (base URL + token) plus any extra env vars injected into the agent CLI.
 type AgentConfig struct {
-	Model          string            `json:"model,omitempty"`
-	GatewayBaseURL string            `json:"gatewayBaseUrl,omitempty"`
-	GatewayToken   string            `json:"gatewayToken,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
+	Model          string              `json:"model,omitempty"`
+	GatewayBaseURL string              `json:"gatewayBaseUrl,omitempty"`
+	GatewayToken   string              `json:"gatewayToken,omitempty"`
+	Env            map[string]EnvValue `json:"env,omitempty"`
 	// Cron enables the per-bot scheduled-task scheduler (#115). Off by default;
 	// when true the bot loads <dataDir>/cron.json at startup and fires due tasks
 	// through the gateway. Owner-gated create/delete is exposed over the control
 	// bus (cron.create / cron.list / cron.delete).
 	//
-	// *bool (not bool) so per-bot config can override a top-level default in
-	// EITHER direction — a plain bool's zero value (false) is indistinguishable
-	// from "not set" once mergeAgent runs, leaving GUI-driven "disable cron for
-	// just this bot" unimplementable when the top-level default is true. The
-	// nil pointer means "inherit top-level"; a non-nil pointer (true OR false)
-	// overrides.
+	// *bool (not bool) so config can distinguish "unset" from an explicit false
+	// if future policy needs it. In today's canonical schema cron is per-bot.
 	Cron *bool `json:"cron,omitempty"`
 	// ToolProgress, when true, makes the IM connector mirror each tool the agent
 	// invokes back to the channel as a brief "🔧 Running <tool>(<params>)…" notice
@@ -87,9 +90,10 @@ type OnBehalfOf struct {
 
 // BotEntry is one bot's full inline configuration in the global config's bots[]
 // list. octoToken is OPTIONAL — it may be injected at runtime (secret.inject)
-// instead of stored here; apiUrl/agent/rateLimit/context override the global
-// top-level defaults of the same name. The bot's persona/behavior prompt is NOT
-// here — it lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/.
+// instead of stored here. apiUrl/agent/group/gating settings are per-bot; only
+// rateLimit/context have top-level runtime-policy defaults. The bot's
+// persona/behavior prompt is NOT here — it lives in SOUL.md + AGENTS.md under
+// ~/.xclaw/<id>/.
 type BotEntry struct {
 	ID        string           `json:"id,omitempty"`
 	OctoToken string           `json:"octoToken,omitempty"`
@@ -99,36 +103,25 @@ type BotEntry struct {
 	Context   *ContextConfig   `json:"context,omitempty"`
 	// GroupConfigDir is an operator-controlled directory holding per-conversation
 	// instruction files (<channelId>.md), injected as a trusted [Group instructions]
-	// block. Overrides the top-level default. MUST be outside CwdBase — see Resolved.
+	// block. MUST be outside CwdBase — see Resolved.
 	GroupConfigDir string `json:"groupConfigDir,omitempty"`
 	// OnBehalfOf, when its uid is set, marks this bot a persona clone (openclaw OBO).
 	OnBehalfOf *OnBehalfOf `json:"onBehalfOf,omitempty"`
 
-	// Gating overrides (cc-channel-octo session-router.ts: G12 mention-free
-	// groups, G14 bot-loop guard, DM blocklist). When non-nil, the slice REPLACES
-	// the top-level default of the same name (override ?? base), matching the
-	// reference's resolveBotConfigs precedence.
+	// Gating policy (cc-channel-octo session-router.ts: G12 mention-free groups,
+	// G14 bot-loop guard, DM blocklist). Per-bot only in the canonical schema.
 	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
 	KnownBotUids      []string `json:"knownBotUids,omitempty"`
 	AllowedBotUids    []string `json:"allowedBotUids,omitempty"`
 	BotBlocklist      []string `json:"botBlocklist,omitempty"`
 }
 
-// File is the on-disk shape of the single ~/.xclaw/config.json. The top-level
-// apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry may
-// override them.
+// File is the on-disk shape of the single ~/.xclaw/config.json. Top-level
+// rateLimit/context are shared runtime policy; bot identity, agent, env, group
+// config, and gating settings live only on each bots[] entry.
 type File struct {
-	APIURL         string           `json:"apiUrl,omitempty"`
-	Agent          *AgentConfig     `json:"agent,omitempty"`
-	RateLimit      *RateLimitConfig `json:"rateLimit,omitempty"`
-	Context        *ContextConfig   `json:"context,omitempty"`
-	GroupConfigDir string           `json:"groupConfigDir,omitempty"`
-
-	// Top-level gating defaults; a bots[] entry may override each (override ?? base).
-	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
-	KnownBotUids      []string `json:"knownBotUids,omitempty"`
-	AllowedBotUids    []string `json:"allowedBotUids,omitempty"`
-	BotBlocklist      []string `json:"botBlocklist,omitempty"`
+	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
+	Context   *ContextConfig   `json:"context,omitempty"`
 
 	Bots []BotEntry `json:"bots,omitempty"`
 }
@@ -177,15 +170,6 @@ type Resolved struct {
 	// auto-discovered by the claude CLI as user-scope assets — no per-turn
 	// sandbox symlinking needed.
 	ClaudeConfigDir string
-
-	// MasterKey is the 32-byte AES-GCM key used to decrypt enc:v1:… values
-	// in Agent.Env (so config.json can ship tokens encrypted-at-rest while a
-	// leaked file stays opaque). Loaded from envenc.DefaultMasterPath() at
-	// Load time; nil means decryption is disabled and every Agent.Env value
-	// is treated as plaintext (backward compat with pre-encryption configs).
-	// Never written to disk past the file at envenc.DefaultMasterPath; never
-	// echoed to logs.
-	MasterKey []byte
 }
 
 func defaults() Resolved {
@@ -228,22 +212,6 @@ func Load(path string) ([]Resolved, error) {
 	bots, err := resolveBots(global, baseDir)
 	if err != nil {
 		return nil, err
-	}
-	// Master key for decrypting enc:v1:… values in agent.env. Lives next to
-	// config.json (baseDir/master.key) so test runs against a tempdir config
-	// don't touch the operator's real ~/.xclaw/master.key, and so a config
-	// + master.key bundle moves together as a unit. Loaded once and shared
-	// across all bots in this daemon — every encrypted value in every bot's
-	// config.json was sealed by the same per-machine key. Wrong-size or
-	// other I/O errors surface as a Load failure so the operator sees
-	// "master key corrupted" instead of silently orphaning every encrypted
-	// secret to "decrypt failed at turn time".
-	key, err := envenc.LoadOrCreateMaster(filepath.Join(baseDir, "master.key"))
-	if err != nil {
-		return nil, fmt.Errorf("config: master key: %w", err)
-	}
-	for i := range bots {
-		bots[i].MasterKey = key
 	}
 	return bots, nil
 }
@@ -307,30 +275,29 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		r.MemoryBase = filepath.Join(botRoot, "memory")
 		r.ClaudeConfigDir = filepath.Join(botRoot, ".claude")
 
-		// precedence: inlineBot ?? global default
-		r.APIURL = firstNonEmpty(bot.APIURL, global.APIURL)
+		// Bot identity/agent config is per-bot only. Top-level config carries
+		// shared runtime policy (rateLimit/context), not bot defaults.
+		r.APIURL = bot.APIURL
 		r.OctoToken = bot.OctoToken
 
-		// shallow-merge agent/rateLimit/context: global default → inline bot keys
-		mergeAgent(&r.Agent, global.Agent)
+		// shallow-merge runtime policy defaults first, then the per-bot override.
 		mergeAgent(&r.Agent, bot.Agent)
 		mergeRate(&r.RateLimit, global.RateLimit)
 		mergeRate(&r.RateLimit, bot.RateLimit)
 		mergeCtx(&r.Context, global.Context)
 		mergeCtx(&r.Context, bot.Context)
 
-		// Gating lists: per-bot REPLACES top-level when non-nil (override ?? base),
-		// matching session-router.ts resolveBotConfigs.
-		r.MentionFreeGroups = firstNonNil(bot.MentionFreeGroups, global.MentionFreeGroups)
-		r.KnownBotUids = firstNonNil(bot.KnownBotUids, global.KnownBotUids)
-		r.AllowedBotUids = firstNonNil(bot.AllowedBotUids, global.AllowedBotUids)
-		r.BotBlocklist = firstNonNil(bot.BotBlocklist, global.BotBlocklist)
+		// Gating lists are per-bot policy. Nil and empty both resolve to "unset".
+		r.MentionFreeGroups = bot.MentionFreeGroups
+		r.KnownBotUids = bot.KnownBotUids
+		r.AllowedBotUids = bot.AllowedBotUids
+		r.BotBlocklist = bot.BotBlocklist
 
 		// System prompt: SOUL.md (identity) + AGENTS.md (behavior), file-based.
 		r.SystemPrompt = soul(botRoot)
 
-		// Per-bot groupConfigDir overrides the top-level default. Empty = feature off.
-		r.GroupConfigDir = firstNonEmpty(bot.GroupConfigDir, global.GroupConfigDir)
+		// Per-bot groupConfigDir. Empty = feature off.
+		r.GroupConfigDir = bot.GroupConfigDir
 
 		// Persona clone (openclaw OBO): grantor identity comes from config, not
 		// from message payloads. A nil block leaves r.OnBehalfOf zero (regular bot).
@@ -340,7 +307,7 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 
 		// validation. octoToken is intentionally NOT required: it may be omitted
 		// from the file and injected at runtime via the control bus (secret.inject)
-		// from the GUI's Keychain. The connector waits for a token before connecting.
+		// from the GUI's secret backend. The connector waits for a token before connecting.
 		if r.APIURL != "" && !IsAllowedURL(r.APIURL) {
 			return nil, fmt.Errorf("bot %q: unsafe apiUrl %q (must be https:// or http://localhost; SSRF protection)", id, r.APIURL)
 		}
@@ -358,25 +325,6 @@ func resolveBots(global File, baseDir string) ([]Resolved, error) {
 		out = append(out, r)
 	}
 	return out, nil
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// firstNonNil returns override when it is non-nil (including a deliberately empty
-// slice, which clears the default), else base. Mirrors the reference's
-// `override ?? base` precedence for the gating lists.
-func firstNonNil(override, base []string) []string {
-	if override != nil {
-		return override
-	}
-	return base
 }
 
 func mergeAgent(dst *AgentConfig, src *AgentConfig) {
@@ -409,12 +357,11 @@ func mergeAgent(dst *AgentConfig, src *AgentConfig) {
 	if src.DispatchTimeoutSec > 0 {
 		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
 	}
-	// env merges per-key (global base + per-bot overrides/additions), not whole
-	// replacement — so a bot can add its own OCTO_BOT_ID without dropping a
-	// globally-shared key.
+	// Env is per-bot only in the canonical config. Merge per-key into dst so
+	// defaults() can still seed future built-in env entries if needed.
 	if len(src.Env) > 0 {
 		if dst.Env == nil {
-			dst.Env = map[string]string{}
+			dst.Env = map[string]EnvValue{}
 		}
 		for k, v := range src.Env {
 			dst.Env[k] = v
@@ -510,7 +457,8 @@ func isPathInside(child, parent string) bool {
 // and the per-bot CLAUDE_CONFIG_DIR isolation toggle. Tokens are supplied
 // explicitly so the caller can pass runtime-injected values (from the in-memory
 // secret store) rather than the config-file copies; empty strings omit the
-// corresponding env var. Order matters: agent.env first, the named vars last —
+// corresponding env var. secretValue resolves EnvValue.SecretRef entries from
+// the active secret backend. Order matters: agent.env first, the named vars last —
 // so the routing/credential injections always win over a same-named agent.env
 // entry.
 //
@@ -532,14 +480,20 @@ func isPathInside(child, parent string) bool {
 // profile (see desktop/internal/octocli.Login, called from configstore.Save).
 // We still inject OCTO_BOT_TOKEN + OCTO_API_BASE_URL here as the fallback path
 // for any agent code that bypasses --bot-id (e.g. a one-off `octo-cli api …`).
-func (r Resolved) DriverEnv(gatewayToken, octoToken string) []string {
+func (r Resolved) DriverEnv(gatewayToken, octoToken string, secretValue func(string) string) []string {
 	var out []string
-	for k, v := range r.Agent.Env {
-		dec, ok := r.decryptValue(k, v)
-		if !ok {
-			continue // fail-soft: skip the entry, warning already logged
+	for k, ev := range r.Agent.Env {
+		v := ev.Value
+		if ev.SecretRef != "" {
+			if secretValue == nil {
+				continue
+			}
+			v = secretValue(ev.SecretRef)
+			if v == "" {
+				continue
+			}
 		}
-		out = append(out, k+"="+dec)
+		out = append(out, k+"="+v)
 	}
 	if r.Agent.GatewayBaseURL != "" {
 		out = append(out, "ANTHROPIC_BASE_URL="+r.Agent.GatewayBaseURL)
@@ -562,31 +516,4 @@ func (r Resolved) DriverEnv(gatewayToken, octoToken string) []string {
 		out = append(out, "CLAUDE_CONFIG_DIR="+r.ClaudeConfigDir)
 	}
 	return out
-}
-
-// decryptValue decrypts v if it carries the enc:v1:… envelope. Returns
-// (plaintext, true) on success or no-encryption-needed; (zero, false) when
-// decryption fails. The failure case is logged once per turn (acceptable
-// noise — a stale ciphertext from a wiped master.key needs to be loud, not
-// quiet). The k argument is for the log line only.
-func (r Resolved) decryptValue(k, v string) (string, bool) {
-	if !envenc.IsCiphertext(v) {
-		return v, true
-	}
-	if len(r.MasterKey) == 0 {
-		// Encrypted value but no key loaded: misconfigured caller (only
-		// possible in tests). Loud rather than silent.
-		fmt.Fprintf(os.Stderr, "[envenc] bot=%s key=%s skipped: no master key loaded\n", r.BotID, k)
-		return "", false
-	}
-	pt, err := envenc.Decrypt(r.MasterKey, v)
-	if err != nil {
-		// Most likely cause: config.json copied from another machine without
-		// master.key, or master.key was regenerated. Operator action: re-enter
-		// the secret in the GUI. Skipping the env entry is safer than
-		// injecting empty (a same-name plaintext fallback might win).
-		fmt.Fprintf(os.Stderr, "[envenc] bot=%s key=%s skipped: %v\n", r.BotID, k, err)
-		return "", false
-	}
-	return pt, true
 }

@@ -149,6 +149,10 @@ type SecretKind string
 const (
 	SecretKindOcto    SecretKind = "octoToken"
 	SecretKindGateway SecretKind = "gatewayToken"
+	// SecretKindEnvPrefix prefixes per-bot agent env secrets. Example:
+	// "env/GH_TOKEN" is injected into the env declaration whose secretRef
+	// is "env/GH_TOKEN".
+	SecretKindEnvPrefix = "env/"
 )
 
 // SecretInjectBody carries a single secret into the core (proto: secret.inject).

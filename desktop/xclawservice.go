@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/lml2468/xclaw/core/envenc"
 	"github.com/lml2468/xclaw/desktop/internal/configstore"
 	"github.com/lml2468/xclaw/desktop/internal/control"
 	"github.com/lml2468/xclaw/desktop/internal/core"
@@ -39,14 +37,6 @@ type XClawService struct {
 	sup          *core.Supervisor
 	client       *control.Client
 	shuttingDown bool
-	// masterKey is the AES-256 key used to encrypt env-var values the user
-	// flags as secret in the GUI. Loaded from ~/.xclaw/master.key at
-	// ServiceStartup (same path the daemon's config.Load reads). Held in
-	// memory for the app's lifetime so EncryptSecret can wrap new values
-	// without re-reading the file on every call. DO NOT expose a Decrypt
-	// path to the frontend — secrets are write-only from the GUI's
-	// perspective, the renderer never sees plaintext after Save.
-	masterKey []byte
 	// daemonOut is where the daemon's stdout+stderr land. nil means inherit
 	// os.Stderr (the legacy default). main() supplies the rotating xclaw.log
 	// tee so daemon banner / gateway errors / selfcheck lines survive past the
@@ -88,17 +78,6 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 	// -config and picks up the freshly-written roster, instead of remaining
 	// stuck in the synthetic single-bot REPL fallback.
 	cfg := core.ConfigPath()
-	// Master key for encrypting secret env values on Save. Lives next to
-	// config.json — same file the daemon's config.Load reads on the other
-	// side, so both processes agree without IPC handshake. Failure here is
-	// fatal: if we can't get a key, EncryptSecret would silently corrupt
-	// every value the user pastes.
-	mkPath := filepath.Join(filepath.Dir(cfg), "master.key")
-	key, err := envenc.LoadOrCreateMaster(mkPath)
-	if err != nil {
-		return fmt.Errorf("master key: %w", err)
-	}
-	x.masterKey = key
 	x.sup = &core.Supervisor{BinPath: bin, SocketPath: core.SocketPath(), ConfigPath: cfg, Output: x.daemonOut}
 	if err := x.sup.Start(); err != nil {
 		// Start may have spawned the daemon process before the socket-wait
@@ -118,8 +97,8 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 }
 
 // connect dials the control socket, starts forwarding the envelope stream to the
-// frontend, primes health + roster, and injects per-bot secrets from the OS
-// credential store so the daemon can authenticate without tokens on disk.
+// frontend, primes health + roster, and injects per-bot secrets from the secret
+// backend so the daemon can authenticate without tokens in config.json.
 func (x *XClawService) connect() error {
 	client, err := control.Dial(x.sup.SocketPath)
 	if err != nil {
@@ -194,9 +173,9 @@ func (x *XClawService) connect() error {
 	_, _ = client.Send("health", nil)
 	_, _ = client.Send("bots.list", nil)
 	x.emitConnState(true, "") // bus is up — clear any "reconnecting" UI state
-	// Inject secrets off the startup path: reading the OS credential store can
-	// block on a SecurityAgent prompt (a differently-signed binary isn't yet in
-	// the item ACL), and that must never freeze the bridge boot or the UI.
+	// Inject secrets off the startup path: reading the secret backend can block
+	// (for example on an OS credential prompt), and that must never freeze the
+	// bridge boot or the UI.
 	go x.injectSecrets(client)
 	return nil
 }
@@ -259,20 +238,27 @@ func (x *XClawService) emitConnState(connected bool, detail string) {
 	})
 }
 
-// injectSecrets reads each configured bot's tokens from the credential store and
-// pushes them to the daemon over the bus (secret.inject). Tokens never touch
-// config.json. Best-effort: a bot with no stored token simply stays unauthed.
+// injectSecrets reads each configured bot's secrets from the configured secret
+// backend and pushes them to the daemon over the bus (secret.inject). Secret
+// values never touch config.json. Best-effort: a missing secret simply leaves
+// that runtime value unset.
 func (x *XClawService) injectSecrets(client *control.Client) {
 	ids, err := configstore.BotIDs()
 	if err != nil || len(ids) == 0 {
 		return
 	}
+	refs, _ := configstore.BotSecretRefs()
 	for _, id := range ids {
 		if t := secrets.Get(id, secrets.OctoToken); t != "" {
 			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.OctoToken, Value: t})
 		}
 		if t := secrets.Get(id, secrets.GatewayToken); t != "" {
 			_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.GatewayToken, Value: t})
+		}
+		for _, ref := range refs[id] {
+			if t := secrets.Get(id, secrets.Kind(ref)); t != "" {
+				_, _ = client.Send("secret.inject", control.SecretInjectBody{BotID: id, Kind: secrets.Kind(ref), Value: t})
+			}
 		}
 	}
 }
@@ -354,44 +340,19 @@ func (x *XClawService) CronUpdate(body control.CronUpdateBody) error {
 	return x.send("cron.update", body)
 }
 
-// --- config (synchronous; touches config.json + credential store directly) ---
+// --- config (synchronous; touches config.json + secret backend directly) ---
 
 // LoadConfig returns the editor view of every configured bot.
 func (x *XClawService) LoadConfig() ([]configstore.BotConfig, error) {
 	return configstore.Load()
 }
 
-// SaveConfig writes the bots back (config.json + SOUL/AGENTS + credential store).
+// SaveConfig writes the bots back (config.json + SOUL/AGENTS + secret backend).
 // removedIDs is the explicit list of bot ids the editor deleted this session;
 // only those are pruned from disk (never an inferred set-difference). The caller
 // follows with RestartCore to apply.
 func (x *XClawService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
 	return configstore.Save(bots, removedIDs)
-}
-
-// EncryptSecret seals plaintext into the enc:v1:… envelope so the GUI can
-// drop it straight into BotConfig.Env and round-trip it through SaveConfig
-// without ever touching config.json in plaintext. This is the ONLY direction
-// the master key is exposed to the renderer process — there is no
-// DecryptSecret counterpart. To change an existing secret the user re-pastes
-// the new value; the old ciphertext is never round-tripped through the UI.
-// That asymmetry is what lets a compromised webview leak only one secret at
-// a time (the one being typed) instead of enumerating every stored token.
-//
-// Errors propagate untouched: a wrong-size master key or rand failure is a
-// configuration bug the operator needs to see, not silently swallowed.
-func (x *XClawService) EncryptSecret(plaintext string) (string, error) {
-	if len(x.masterKey) == 0 {
-		return "", fmt.Errorf("encrypt secret: master key not loaded")
-	}
-	return envenc.Encrypt(x.masterKey, plaintext)
-}
-
-// IsCiphertext reports whether a value carries the enc:v1:… envelope.
-// Exposed to the GUI so the env editor can render encrypted rows as masked
-// dots without trying to decrypt — the user must re-paste to change them.
-func (x *XClawService) IsCiphertext(value string) bool {
-	return envenc.IsCiphertext(value)
 }
 
 // --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---
@@ -435,7 +396,7 @@ func (x *XClawService) GroupsList(botID string) ([]octocli.Group, error) {
 	return octocli.Groups(ctx, robotID)
 }
 
-// OctoCliRelogin re-writes the disk profile for the bot from the keychain'd
+// OctoCliRelogin re-writes the disk profile for the bot from the stored
 // bf_ token. Used to repair a missing/stale profile from the Octo-integration
 // pane without forcing the operator to re-save the whole config.
 func (x *XClawService) OctoCliRelogin(botID string) error {
@@ -447,14 +408,14 @@ func (x *XClawService) OctoCliRelogin(botID string) error {
 		return fmt.Errorf("bot %q has no OCTO_BOT_ID in env", botID)
 	}
 	if token == "" {
-		return fmt.Errorf("bot %q has no bf_ token in keychain — set it via the Octo 集成 tab and re-save", botID)
+		return fmt.Errorf("bot %q has no bf_ token in the secret backend — set it via the Octo 集成 tab and re-save", botID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return octocli.Login(ctx, robotID, token, apiURL)
 }
 
-// OctoCliLogout clears the bot's disk profile. The keychain'd bf_ token is
+// OctoCliLogout clears the bot's disk profile. The stored bf_ token is
 // left alone — re-login can restore the profile from it.
 func (x *XClawService) OctoCliLogout(botID string) error {
 	robotID, _, _, err := loadOctoBinding(botID)
@@ -470,7 +431,7 @@ func (x *XClawService) OctoCliLogout(botID string) error {
 }
 
 // loadOctoBinding returns the bot's (robotID, bf_token, apiURL) by reading
-// configstore. Uses LoadOne so we do one config.json parse + two keychain
+// configstore. Uses LoadOne so we do one config.json parse + two secret
 // reads — not N of each for a single-bot lookup.
 func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
 	bot, ok, lerr := configstore.LoadOne(botID)
@@ -486,7 +447,7 @@ func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
 // OctoAddBot provisions a new bot on octo-server using the operator's User API
 // Key (uk_…), returning the bot's robot id + bf_ token. The wizard then folds
 // these into a BotConfig and calls SaveConfig — so the token reaches the
-// keychain (never config.json) by the existing path. Self-service replacement
+// secret backend (never config.json) by the existing path. Self-service replacement
 // for the manual BotFather /newbot flow.
 func (x *XClawService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResult, error) {
 	// Bound the call so the wizard UI can't strand a request forever — the

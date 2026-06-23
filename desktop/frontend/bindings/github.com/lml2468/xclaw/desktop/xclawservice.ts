@@ -170,23 +170,6 @@ export function CronUpdate(body: control$0.CronUpdateBody): $CancellablePromise<
 }
 
 /**
- * EncryptSecret seals plaintext into the enc:v1:… envelope so the GUI can
- * drop it straight into BotConfig.Env and round-trip it through SaveConfig
- * without ever touching config.json in plaintext. This is the ONLY direction
- * the master key is exposed to the renderer process — there is no
- * DecryptSecret counterpart. To change an existing secret the user re-pastes
- * the new value; the old ciphertext is never round-tripped through the UI.
- * That asymmetry is what lets a compromised webview leak only one secret at
- * a time (the one being typed) instead of enumerating every stored token.
- * 
- * Errors propagate untouched: a wrong-size master key or rand failure is a
- * configuration bug the operator needs to see, not silently swallowed.
- */
-export function EncryptSecret(plaintext: string): $CancellablePromise<string> {
-    return $Call.ByID(3943159567, plaintext);
-}
-
-/**
  * GroupsList enumerates the IM groups the bot is a member of, populated for
  * the scheduled-task target picker so the operator picks "this group" from
  * a dropdown instead of pasting a channelId. Synchronous (not fire-and-
@@ -219,15 +202,6 @@ export function History(botID: string, sessionKey: string, limit: number): $Canc
 }
 
 /**
- * IsCiphertext reports whether a value carries the enc:v1:… envelope.
- * Exposed to the GUI so the env editor can render encrypted rows as masked
- * dots without trying to decrypt — the user must re-paste to change them.
- */
-export function IsCiphertext(value: string): $CancellablePromise<boolean> {
-    return $Call.ByID(1606476290, value);
-}
-
-/**
  * LoadConfig returns the editor view of every configured bot.
  */
 export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
@@ -240,7 +214,7 @@ export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
  * OctoAddBot provisions a new bot on octo-server using the operator's User API
  * Key (uk_…), returning the bot's robot id + bf_ token. The wizard then folds
  * these into a BotConfig and calls SaveConfig — so the token reaches the
- * keychain (never config.json) by the existing path. Self-service replacement
+ * secret backend (never config.json) by the existing path. Self-service replacement
  * for the manual BotFather /newbot flow.
  */
 export function OctoAddBot(apiURL: string, apiKey: string, name: string): $CancellablePromise<octoapi$0.BotResult> {
@@ -250,7 +224,7 @@ export function OctoAddBot(apiURL: string, apiKey: string, name: string): $Cance
 }
 
 /**
- * OctoCliLogout clears the bot's disk profile. The keychain'd bf_ token is
+ * OctoCliLogout clears the bot's disk profile. The stored bf_ token is
  * left alone — re-login can restore the profile from it.
  */
 export function OctoCliLogout(botID: string): $CancellablePromise<void> {
@@ -258,7 +232,7 @@ export function OctoCliLogout(botID: string): $CancellablePromise<void> {
 }
 
 /**
- * OctoCliRelogin re-writes the disk profile for the bot from the keychain'd
+ * OctoCliRelogin re-writes the disk profile for the bot from the stored
  * bf_ token. Used to repair a missing/stale profile from the Octo-integration
  * pane without forcing the operator to re-save the whole config.
  */
@@ -293,7 +267,7 @@ export function RestartCore(): $CancellablePromise<void> {
 }
 
 /**
- * SaveConfig writes the bots back (config.json + SOUL/AGENTS + credential store).
+ * SaveConfig writes the bots back (config.json + SOUL/AGENTS + secret backend).
  * removedIDs is the explicit list of bot ids the editor deleted this session;
  * only those are pruned from disk (never an inferred set-difference). The caller
  * follows with RestartCore to apply.

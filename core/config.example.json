@@ -1,48 +1,42 @@
 {
-  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level apiUrl/agent/rateLimit/context are shared defaults; each bots[] entry overrides them. Per-bot persona/behavior lives in SOUL.md + AGENTS.md under ~/.xclaw/<id>/. Secrets (octoToken, agent.gatewayToken) are OPTIONAL here: the macOS app stores them in the Keychain and injects them at runtime (secret.inject). Set them inline only for headless/no-GUI deployments.",
-  "apiUrl": "https://your-octo-server.example",
-  "agent": {
-    "_comment": "Shared defaults for every bot; override per bot in bots[].",
-    "model": "claude-opus-4-8",
-    "gatewayBaseUrl": "https://your-model-gateway.example/v1",
-    "gatewayToken": "sk-your-gateway-token",
-    "_comment_cron": "Set cron=true to enable per-bot scheduled tasks (#115): owner-gated cron.create/list/delete over the control bus, fired through the gateway. Off by default.",
-    "cron": false,
-    "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief '🔧 Running <tool>(<params>)…' notice (deduped, capped at 10/turn). Off by default.",
-    "toolProgress": false,
-    "_comment_inheritUserConfig": "When true, the agent inherits the operator's ~/.claude (user-scope skills + installed plugins). OFF by default: each bot gets an isolated CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude) so operator plugins/user-skills don't leak into every bot. The bot's own skills/workflows live under ~/.xclaw/<id>/.claude/{skills,workflows} and the CLI auto-loads them as user-scope; built-in CLI skills still load. Set true only for a trusted single-operator deployment.",
-    "inheritUserConfig": false,
-    "_comment_dispatchTimeoutSec": "Per-turn IDLE timeout (seconds) — resets on every AgentEvent, so a long-running healthy turn (multi-agent workflow, big stream, many tool calls) survives as long as events flow; only N seconds of silence kills it. Omit to use the daemon default (1200 = 20 min). Bump higher when the bot routinely runs long silent tools (e.g. a slow Bash); lower for snappy DMs where a stuck turn should surface fast.",
-    "dispatchTimeoutSec": 0
-  },
+  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level rateLimit/context are shared runtime policy. Bot identity, API URL, agent routing, env, group policy, and persona-clone config are per-bot only. Secrets are not written here: config stores secretRef entries that are resolved from the secret backend at runtime.",
   "rateLimit": { "maxPerMinute": 5 },
   "context": { "maxContextChars": 6000 },
-  "_comment_groupConfigDir": "Optional directory of operator-authored per-conversation instruction files. For a group channel <channelId>, the file <groupConfigDir>/<channelId>.md is injected into the system prompt as a trusted [Group instructions] block (capped at 32 KiB). A thread channel '<groupNo>____<shortId>' prefers <groupNo>____<shortId>.md and falls back to <groupNo>.md. SECURITY: these files are injected UNSANITIZED, so the dir MUST be operator-controlled and OUTSIDE the agent-writable workspace — config load rejects a groupConfigDir at or under a bot's cwdBase, and group/world-writable files are refused. Settable top-level (shared) and per bot (override).",
-  "groupConfigDir": "/etc/xclaw/groups",
-  "_comment_gating": "Optional group-gating policy (session-router): mentionFreeGroups = channel ids the bot answers WITHOUT an @mention; knownBotUids/allowedBotUids = the bot-loop guard (uids ending in _bot or in knownBotUids are dropped in DMs and mention-free groups unless in allowedBotUids); botBlocklist = uids whose DMs are dropped. All are top-level defaults; a bots[] entry may override each (the per-bot value REPLACES the default).",
-  "mentionFreeGroups": [],
-  "knownBotUids": [],
-  "allowedBotUids": [],
-  "botBlocklist": [],
-  "_comment_skills": "Skills/workflows are NOT configured here. Each bot owns its own under ~/.xclaw/<id>/.claude/skills/<name>/ (SKILL.md bundles) and ~/.xclaw/<id>/.claude/workflows/<name>.js — the claude CLI auto-loads them as user-scope via CLAUDE_CONFIG_DIR. There is no shared marketplace, no install concept. Author/edit them in the desktop app (gear → per-bot Skills / Workflows). Any leftover top-level or per-bot \"skills\"/\"workflows\" keys in this file are ignored.",
   "bots": [
     {
       "id": "my-bot",
-      "octoToken": "bf_your_bot_token_here",
-      "_comment_overrides": "apiUrl/agent/rateLimit/context here override the top-level defaults for this bot only.",
+      "apiUrl": "https://your-octo-server.example",
+      "_comment_tokens": "octoToken and agent.gatewayToken are intentionally absent. The desktop app stores them in the secret backend and injects them into xclawd at runtime. Headless deployments may still provide inline tokens if they accept config-file exposure.",
       "agent": {
-        "_comment_env": "Extra env vars injected into THIS bot's agent CLI. Per-bot identity vars like OCTO_BOT_ID belong here. agent.env merges over the top-level agent.env by key.",
+        "model": "claude-opus-4-8",
+        "gatewayBaseUrl": "https://your-model-gateway.example/v1",
+        "_comment_cron": "Set cron=true to enable this bot's scheduled tasks (#115): owner-gated cron.create/list/delete over the control bus, fired through the gateway. Off by default.",
+        "cron": false,
+        "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief 'Running <tool>(<params>)...' notice (deduped, capped at 10/turn). Off by default.",
+        "toolProgress": false,
+        "_comment_inheritUserConfig": "When true, the agent inherits the operator's ~/.claude (user-scope skills + installed plugins). OFF by default: each bot gets an isolated CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude).",
+        "inheritUserConfig": false,
+        "_comment_dispatchTimeoutSec": "Per-turn IDLE timeout (seconds). Omit to use the daemon default (1200 = 20 min).",
+        "dispatchTimeoutSec": 0,
+        "_comment_env": "Env is per-bot. Use {\"value\":\"...\"} for non-secret values and {\"secretRef\":\"env/NAME\"} for values stored in the secret backend.",
         "env": {
-          "OCTO_BOT_ID": "this-bot-octo-id",
-          "GH_TOKEN": "ghp_xxx"
+          "OCTO_BOT_ID": { "value": "this-bot-octo-id" },
+          "GH_TOKEN": { "secretRef": "env/GH_TOKEN" }
         }
       },
-      "context": { "maxContextChars": 8000 }
+      "_comment_groupConfigDir": "Optional operator-controlled directory of per-conversation instruction files. Must be outside this bot's agent-writable workspace.",
+      "groupConfigDir": "/etc/xclaw/groups/my-bot",
+      "_comment_gating": "Optional per-bot group-gating policy (session-router). mentionFreeGroups = channel ids the bot answers WITHOUT an @mention; knownBotUids/allowedBotUids = bot-loop guard; botBlocklist = uids whose DMs are dropped.",
+      "mentionFreeGroups": [],
+      "knownBotUids": [],
+      "allowedBotUids": [],
+      "botBlocklist": [],
+      "_comment_skills": "Skills/workflows are NOT configured here. Each bot owns its own under ~/.xclaw/<id>/.claude/skills/<name>/ and ~/.xclaw/<id>/.claude/workflows/<name>.js."
     },
     {
       "id": "admin-clone",
-      "octoToken": "bf_persona_clone_token_here",
-      "_comment_persona": "Persona clone (openclaw OBO): replies in the grantor's voice. Triggered when the grantor is @-mentioned or the group is @所有人. uid is the grantor's server uid (the security anchor — only OBO fields signed by this uid are trusted); name is woven into the persona system prompt; personaPrompt is an optional free-form instruction.",
+      "apiUrl": "https://your-octo-server.example",
+      "_comment_persona": "Persona clone (openclaw OBO): replies in the grantor's voice. uid is the grantor's server uid; name is woven into the persona system prompt; personaPrompt is optional.",
       "onBehalfOf": {
         "uid": "u_admin_grantor_uid",
         "name": "Admin",

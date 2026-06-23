@@ -538,7 +538,7 @@ func isFile(path string) bool {
 // profile lookup (NOT env fallback) and errors with "no profile found" if the
 // profile is missing — so without this call, every octo-cli invocation from
 // the agent for a newly-added bot fails authoritatively even though the bf_
-// token is in our keychain + injected as OCTO_BOT_TOKEN.
+// token is in our secret backend + injected as OCTO_BOT_TOKEN.
 //
 // Idempotent: re-running with the same (robotID, token, apiURL) replaces the
 // profile in place. Best-effort by design: a missing octo-cli binary or a

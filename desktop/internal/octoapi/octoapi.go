@@ -67,7 +67,7 @@ func validBaseURL(s string) error {
 // BotResult is the provisioned bot's identity returned to the wizard.
 type BotResult struct {
 	RobotID  string `json:"robotId"`
-	BotToken string `json:"botToken"` // bf_… — stored in the keychain, never config.json
+	BotToken string `json:"botToken"` // bf_… — stored in the secret backend, never config.json
 }
 
 // AddBot provisions a bot on octo-server using the operator's User API Key and
@@ -147,7 +147,7 @@ func AddBot(ctx context.Context, apiURL, apiKey, name string) (BotResult, error)
 		return BotResult{}, fmt.Errorf("创建 Bot 失败：服务返回不完整")
 	}
 	// The robot_id flows verbatim into octocli's argv as `--bot-id <id>`,
-	// and the bf_ token flows into the keychain + later as a bearer. Both
+	// and the bf_ token flows into the secret backend + later as a bearer. Both
 	// come from the server's JSON response, so a hostile / MITM'd server
 	// could try to slip a flag-shaped string ("-config=/tmp/x", "-h", …)
 	// that octo-cli's flag parser would consume as a flag for the previous

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/lml2468/xclaw/core/control/wire"
@@ -10,12 +11,13 @@ import (
 // secretStore holds a bot's secret tokens in memory only — never persisted to
 // disk and never logged. Tokens may be seeded from the config file (the headless
 // fallback) and/or injected at runtime over the control bus (secret.inject from
-// the GUI's Keychain). Consumers read them lazily through the getters, so an
+// the GUI's secret backend). Consumers read them lazily through the getters, so an
 // injection takes effect on the next use without rebuilding the bot stack.
 type secretStore struct {
 	mu      sync.RWMutex
 	octo    string
 	gateway string
+	env     map[string]string
 }
 
 // OctoToken returns the current Octo bot token (empty if not yet set).
@@ -30,6 +32,14 @@ func (s *secretStore) GatewayToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.gateway
+}
+
+// Secret returns an arbitrary secret by ref, used for agent env secretRef
+// entries such as "env/GH_TOKEN".
+func (s *secretStore) Secret(ref string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.env[ref]
 }
 
 // Set records a token by kind. An empty value is ignored (seeding from an absent
@@ -47,7 +57,13 @@ func (s *secretStore) Set(kind wire.SecretKind, value string) error {
 	case wire.SecretKindGateway:
 		s.gateway = value
 	default:
-		return fmt.Errorf("unknown secret kind %q", kind)
+		if !strings.HasPrefix(string(kind), wire.SecretKindEnvPrefix) {
+			return fmt.Errorf("unknown secret kind %q", kind)
+		}
+		if s.env == nil {
+			s.env = map[string]string{}
+		}
+		s.env[string(kind)] = value
 	}
 	return nil
 }
@@ -63,7 +79,10 @@ func (s *secretStore) Clear(kind wire.SecretKind) error {
 	case wire.SecretKindGateway:
 		s.gateway = ""
 	default:
-		return fmt.Errorf("unknown secret kind %q", kind)
+		if !strings.HasPrefix(string(kind), wire.SecretKindEnvPrefix) {
+			return fmt.Errorf("unknown secret kind %q", kind)
+		}
+		delete(s.env, string(kind))
 	}
 	return nil
 }

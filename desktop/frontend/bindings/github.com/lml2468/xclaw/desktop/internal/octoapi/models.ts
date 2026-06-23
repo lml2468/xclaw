@@ -12,7 +12,7 @@ export class BotResult {
     "robotId": string;
 
     /**
-     * bf_… — stored in the keychain, never config.json
+     * bf_… — stored in the secret backend, never config.json
      */
     "botToken": string;
 

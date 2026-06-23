@@ -12,11 +12,10 @@ func TestMultiBotIsolation(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{
-	  "apiUrl":"https://octo.example",
 	  "context":{"maxContextChars":4000},
 	  "bots":[
-	    {"id":"alpha","octoToken":"bf_alpha"},
-	    {"id":"beta","octoToken":"bf_beta","context":{"maxContextChars":9000}}
+	    {"id":"alpha","apiUrl":"https://octo.example","octoToken":"bf_alpha"},
+	    {"id":"beta","apiUrl":"https://octo.example","octoToken":"bf_beta","context":{"maxContextChars":9000}}
 	  ]
 	}`)
 
@@ -38,9 +37,9 @@ func TestMultiBotIsolation(t *testing.T) {
 	if a.OctoToken != "bf_alpha" || b.OctoToken != "bf_beta" {
 		t.Fatalf("tokens not isolated: %q %q", a.OctoToken, b.OctoToken)
 	}
-	// shared global apiUrl inherited by both
+	// apiUrl is per-bot.
 	if a.APIURL != "https://octo.example" || b.APIURL != a.APIURL {
-		t.Fatalf("apiUrl not inherited: %q %q", a.APIURL, b.APIURL)
+		t.Fatalf("apiUrl wrong: %q %q", a.APIURL, b.APIURL)
 	}
 	// per-bot context override only affects beta; alpha keeps the global
 	if a.Context.MaxContextChars != 4000 {

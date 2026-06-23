@@ -20,7 +20,7 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -67,7 +67,7 @@ jobs:
           - { goos: linux, goarch: arm64 }
           - { goos: windows, goarch: amd64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: core/go.mod
@@ -100,7 +100,7 @@ jobs:
         # steps behave identically regardless of the default shell.
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Wails v3 (alpha) on Linux defaults to GTK4 + webkitgtk-6.0 (the GTK3 /
       # webkit2gtk-4.1 packages are only the optional legacy set).

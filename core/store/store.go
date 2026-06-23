@@ -114,9 +114,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 
 // Open initializes the database (creating the schema) at path.
 //
-// pre-check each of xclaw.db / xclaw.db-wal / xclaw.db-shm
+// pre-check each of octobuddy.db / octobuddy.db-wal / octobuddy.db-shm
 // for a leaf symlink before SQLite opens them. An agent (Bash + bypass)
-// that plants `<dataDir>/xclaw.db → ~/Documents/important.sqlite` would
+// that plants `<dataDir>/octobuddy.db → ~/Documents/important.sqlite` would
 // otherwise have SQLite open through the symlink and run schema
 // migrations (ALTER, DROP TABLE agent_sessions_legacy, INSERT) on the
 // operator's unrelated DB — data destruction / cross-DB write.
@@ -415,7 +415,7 @@ type SessionSummary struct {
 
 // ListSessions returns every persisted session for this bot's store, newest
 // updated first, each with a preview from its latest message. The store is
-// already per-bot (one DB under ~/.xclaw/<id>/), so this lists exactly that
+// already per-bot (one DB under ~/.octobuddy/<id>/), so this lists exactly that
 // bot's sessions. The correlated subquery picks the highest-id (newest) message
 // per session, covered by idx_messages_session_id.
 func (s *Store) ListSessions() ([]SessionSummary, error) {

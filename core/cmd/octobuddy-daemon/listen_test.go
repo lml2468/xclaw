@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/octobuddy/core/control"
 )
 
 // TestPeerCredListenerAllowsSameUID verifies the hardened control-bus listener:
@@ -20,7 +20,7 @@ import (
 func TestPeerCredListenerAllowsSameUID(t *testing.T) {
 	// Keep the path short: the AF_UNIX sockaddr_un path limit is ~104 bytes, and
 	// t.TempDir on macOS is well over that. Use /tmp with a unique name.
-	sock := filepath.Join("/tmp", "xclaw-listen-test-"+filepath.Base(t.TempDir())+".sock")
+	sock := filepath.Join("/tmp", "octobuddy-listen-test-"+filepath.Base(t.TempDir())+".sock")
 	defer os.Remove(sock)
 
 	ln := mustListenUnix(sock)

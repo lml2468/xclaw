@@ -36,7 +36,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // MaxBytes caps an instruction file we will inject, keeping the prompt bounded.

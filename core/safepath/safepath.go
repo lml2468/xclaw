@@ -41,7 +41,7 @@ import (
 var slugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ValidSlug reports whether s is a safe single path segment: non-empty, not "."
-// or "..", does not begin with "." (no dotfile collisions inside ~/.xclaw/),
+// or "..", does not begin with "." (no dotfile collisions inside ~/.octobuddy/),
 // and only letters/digits/dot/underscore/dash (so it can't contain a path
 // separator or traversal).
 func ValidSlug(s string) bool {

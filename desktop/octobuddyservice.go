@@ -13,32 +13,32 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/lml2468/xclaw/desktop/internal/configstore"
-	"github.com/lml2468/xclaw/desktop/internal/control"
-	"github.com/lml2468/xclaw/desktop/internal/core"
-	"github.com/lml2468/xclaw/desktop/internal/octoapi"
-	"github.com/lml2468/xclaw/desktop/internal/octocli"
-	"github.com/lml2468/xclaw/desktop/internal/secrets"
-	"github.com/lml2468/xclaw/desktop/internal/skills"
-	"github.com/lml2468/xclaw/desktop/internal/workflows"
-	"github.com/lml2468/xclaw/desktop/internal/workspace"
+	"github.com/lml2468/octobuddy/desktop/internal/configstore"
+	"github.com/lml2468/octobuddy/desktop/internal/control"
+	"github.com/lml2468/octobuddy/desktop/internal/core"
+	"github.com/lml2468/octobuddy/desktop/internal/octoapi"
+	"github.com/lml2468/octobuddy/desktop/internal/octocli"
+	"github.com/lml2468/octobuddy/desktop/internal/secrets"
+	"github.com/lml2468/octobuddy/desktop/internal/skills"
+	"github.com/lml2468/octobuddy/desktop/internal/workflows"
+	"github.com/lml2468/octobuddy/desktop/internal/workspace"
 )
 
 // EventStream is the single Wails event name the backend uses to push every
 // control-bus envelope (responses + events) to the frontend. The Svelte store
 // folds them into the view model.
-const EventStream = "xclaw:event"
+const EventStream = "octobuddy:event"
 
-// XClawService is the Wails-bound bridge: it owns the xclawd supervisor and the
+// OctoBuddyService is the Wails-bound bridge: it owns the octobuddy-daemon supervisor and the
 // control-bus client, exposes command + config methods to the frontend, and
 // forwards the daemon's envelope stream as Wails events.
-type XClawService struct {
+type OctoBuddyService struct {
 	mu           sync.Mutex
 	sup          *core.Supervisor
 	client       *control.Client
 	shuttingDown bool
 	// daemonOut is where the daemon's stdout+stderr land. nil means inherit
-	// os.Stderr (the legacy default). main() supplies the rotating xclaw.log
+	// os.Stderr (the legacy default). main() supplies the rotating octobuddy.log
 	// tee so daemon banner / gateway errors / selfcheck lines survive past the
 	// app's stderr.
 	daemonOut io.Writer
@@ -58,20 +58,20 @@ type XClawService struct {
 // itself producing a large event, which a re-dial won't fix — so don't loop on it.
 const maxOversizedRedials = 3
 
-// NewXClawService constructs the bridge (ServiceStartup wires it). daemonOut
+// NewOctoBuddyService constructs the bridge (ServiceStartup wires it). daemonOut
 // receives the daemon's stdout+stderr; pass nil to inherit os.Stderr.
-func NewXClawService(daemonOut io.Writer) *XClawService {
-	return &XClawService{daemonOut: daemonOut}
+func NewOctoBuddyService(daemonOut io.Writer) *OctoBuddyService {
+	return &OctoBuddyService{daemonOut: daemonOut}
 }
 
-// ServiceStartup spawns xclawd and connects the control bus.
-func (x *XClawService) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+// ServiceStartup spawns octobuddy-daemon and connects the control bus.
+func (x *OctoBuddyService) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	bin, err := core.ResolveBinary()
 	if err != nil {
 		return err
 	}
 	// Always run the daemon in multi-bot config mode. On first launch
-	// ~/.xclaw/config.json may not exist yet — the daemon tolerates that and
+	// ~/.octobuddy/config.json may not exist yet — the daemon tolerates that and
 	// serves an empty bots.list; the GUI then drives the user to the Add Bot
 	// wizard. We MUST pin the supervisor's ConfigPath now (never to "") so a
 	// later RestartCore after the first SaveConfig actually re-spawns with
@@ -92,14 +92,14 @@ func (x *XClawService) ServiceStartup(ctx context.Context, _ application.Service
 		x.sup.Stop()
 		return err
 	}
-	log.Printf("xclaw: bridge up (bin=%s socket=%s)", bin, x.sup.SocketPath)
+	log.Printf("octobuddy: bridge up (bin=%s socket=%s)", bin, x.sup.SocketPath)
 	return nil
 }
 
 // connect dials the control socket, starts forwarding the envelope stream to the
 // frontend, primes health + roster, and injects per-bot secrets from the secret
 // backend so the daemon can authenticate without tokens in config.json.
-func (x *XClawService) connect() error {
+func (x *OctoBuddyService) connect() error {
 	client, err := control.Dial(x.sup.SocketPath)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (x *XClawService) connect() error {
 			myEpoch := x.epoch
 			x.mu.Unlock()
 			if n <= maxOversizedRedials {
-				log.Printf("xclaw: oversized control frame (%v); re-dial %d/%d", err, n, maxOversizedRedials)
+				log.Printf("octobuddy: oversized control frame (%v); re-dial %d/%d", err, n, maxOversizedRedials)
 				time.Sleep(300 * time.Millisecond)
 				if !x.epochCurrent(myEpoch) {
 					return // a manual restart / newer reconnect superseded us
@@ -162,7 +162,7 @@ func (x *XClawService) connect() error {
 					return
 				}
 			} else {
-				log.Printf("xclaw: oversized control frame persists after %d re-dials; full reconnect", n)
+				log.Printf("octobuddy: oversized control frame persists after %d re-dials; full reconnect", n)
 			}
 		}
 		// Clean EOF / closed socket → the daemon exited; respawn + reconnect.
@@ -185,7 +185,7 @@ func (x *XClawService) connect() error {
 // It claims a fresh epoch on entry and bails the moment a newer one appears
 // (a manual RestartCore, or a later reconnect) so it can't tear down a daemon
 // someone else just started.
-func (x *XClawService) reconnect() {
+func (x *OctoBuddyService) reconnect() {
 	x.mu.Lock()
 	x.epoch++
 	myEpoch := x.epoch
@@ -206,16 +206,16 @@ func (x *XClawService) reconnect() {
 			continue
 		}
 		if err := x.connect(); err == nil {
-			log.Printf("xclaw: reconnected to daemon after crash")
+			log.Printf("octobuddy: reconnected to daemon after crash")
 			return
 		}
 	}
-	log.Printf("xclaw: gave up reconnecting to daemon")
+	log.Printf("octobuddy: gave up reconnecting to daemon")
 }
 
 // epochCurrent reports whether e is still the live generation and we're not
 // shutting down.
-func (x *XClawService) epochCurrent(e uint64) bool {
+func (x *OctoBuddyService) epochCurrent(e uint64) bool {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	return !x.shuttingDown && x.epoch == e
@@ -224,7 +224,7 @@ func (x *XClawService) epochCurrent(e uint64) bool {
 // emitConnState pushes a synthetic bridge.status event to the frontend so the UI
 // can reflect the bus connection state (connected / reconnecting) instead of
 // silently freezing on its last state when the daemon drops.
-func (x *XClawService) emitConnState(connected bool, detail string) {
+func (x *OctoBuddyService) emitConnState(connected bool, detail string) {
 	app := application.Get()
 	if app == nil {
 		return
@@ -242,7 +242,7 @@ func (x *XClawService) emitConnState(connected bool, detail string) {
 // backend and pushes them to the daemon over the bus (secret.inject). Secret
 // values never touch config.json. Best-effort: a missing secret simply leaves
 // that runtime value unset.
-func (x *XClawService) injectSecrets(client *control.Client) {
+func (x *OctoBuddyService) injectSecrets(client *control.Client) {
 	ids, err := configstore.BotIDs()
 	if err != nil || len(ids) == 0 {
 		return
@@ -264,7 +264,7 @@ func (x *XClawService) injectSecrets(client *control.Client) {
 }
 
 // ServiceShutdown tears the bridge down: close the socket, stop the daemon.
-func (x *XClawService) ServiceShutdown() error {
+func (x *OctoBuddyService) ServiceShutdown() error {
 	x.mu.Lock()
 	x.shuttingDown = true
 	c := x.client
@@ -281,23 +281,23 @@ func (x *XClawService) ServiceShutdown() error {
 // --- session commands (fire-and-forget; replies arrive via EventStream) ---
 
 // Health requests a daemon health snapshot.
-func (x *XClawService) Health() error { return x.send("health", nil) }
+func (x *OctoBuddyService) Health() error { return x.send("health", nil) }
 
 // BotsList requests the bot roster.
-func (x *XClawService) BotsList() error { return x.send("bots.list", nil) }
+func (x *OctoBuddyService) BotsList() error { return x.send("bots.list", nil) }
 
 // Send routes a DM message to a bot (botID may be empty for the default bot).
-func (x *XClawService) Send(botID, uid, text string) error {
+func (x *OctoBuddyService) Send(botID, uid, text string) error {
 	return x.send("session.send", control.SessionSendBody{BotID: botID, UID: uid, Text: text})
 }
 
 // Reset clears a session's resume mapping (start fresh).
-func (x *XClawService) Reset(botID, uid string) error {
+func (x *OctoBuddyService) Reset(botID, uid string) error {
 	return x.send("session.reset", control.SessionSendBody{BotID: botID, UID: uid})
 }
 
 // History requests recent messages for a session (response arrives via EventStream).
-func (x *XClawService) History(botID, sessionKey string, limit int) error {
+func (x *OctoBuddyService) History(botID, sessionKey string, limit int) error {
 	if limit <= 0 {
 		limit = 40
 	}
@@ -306,29 +306,29 @@ func (x *XClawService) History(botID, sessionKey string, limit int) error {
 
 // SessionsList requests all persisted sessions for a bot, newest first (response
 // arrives via EventStream as a sessions.list envelope).
-func (x *XClawService) SessionsList(botID string) error {
+func (x *OctoBuddyService) SessionsList(botID string) error {
 	return x.send("sessions.list", control.SessionsListBody{BotID: botID})
 }
 
 // UsageStats requests a bot's token usage over a range (since = Unix seconds at a
 // local-midnight bound; 0 = all time). The response arrives via EventStream as a
 // usage.stats envelope echoing `since`.
-func (x *XClawService) UsageStats(botID string, since int64) error {
+func (x *OctoBuddyService) UsageStats(botID string, since int64) error {
 	return x.send("usage.stats", control.UsageStatsBody{BotID: botID, Since: since})
 }
 
 // CronCreate schedules a task (owner-gated by the daemon).
-func (x *XClawService) CronCreate(body control.CronCreateBody) error {
+func (x *OctoBuddyService) CronCreate(body control.CronCreateBody) error {
 	return x.send("cron.create", body)
 }
 
 // CronList lists a bot's scheduled tasks.
-func (x *XClawService) CronList(botID string) error {
+func (x *OctoBuddyService) CronList(botID string) error {
 	return x.send("cron.list", control.CronListBody{BotID: botID})
 }
 
 // CronDelete removes a scheduled task.
-func (x *XClawService) CronDelete(botID, uid, id string) error {
+func (x *OctoBuddyService) CronDelete(botID, uid, id string) error {
 	return x.send("cron.delete", control.CronDeleteBody{BotID: botID, UID: uid, ID: id})
 }
 
@@ -336,14 +336,14 @@ func (x *XClawService) CronDelete(botID, uid, id string) error {
 // renderer's per-row enable/disable toggle can send an enabled-only update
 // (other fields zero) without re-validating the unchanged schedule on the
 // daemon — see core/cron Update's enabled-only fast path.
-func (x *XClawService) CronUpdate(body control.CronUpdateBody) error {
+func (x *OctoBuddyService) CronUpdate(body control.CronUpdateBody) error {
 	return x.send("cron.update", body)
 }
 
 // --- config (synchronous; touches config.json + secret backend directly) ---
 
 // LoadConfig returns the editor view of every configured bot.
-func (x *XClawService) LoadConfig() ([]configstore.BotConfig, error) {
+func (x *OctoBuddyService) LoadConfig() ([]configstore.BotConfig, error) {
 	return configstore.Load()
 }
 
@@ -351,7 +351,7 @@ func (x *XClawService) LoadConfig() ([]configstore.BotConfig, error) {
 // removedIDs is the explicit list of bot ids the editor deleted this session;
 // only those are pruned from disk (never an inferred set-difference). The caller
 // follows with RestartCore to apply.
-func (x *XClawService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
+func (x *OctoBuddyService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
 	return configstore.Save(bots, removedIDs)
 }
 
@@ -368,7 +368,7 @@ type OctoCliStatus struct {
 
 // OctoCliStatus reports whether the bot's octo-cli profile is registered.
 // Reads config.json directly; no octo-cli spawn needed (cheap for a UI poll).
-func (x *XClawService) OctoCliStatus(botID string) (OctoCliStatus, error) {
+func (x *OctoBuddyService) OctoCliStatus(botID string) (OctoCliStatus, error) {
 	robotID, _, _, err := loadOctoBinding(botID)
 	if err != nil {
 		return OctoCliStatus{}, err
@@ -386,7 +386,7 @@ func (x *XClawService) OctoCliStatus(botID string) (OctoCliStatus, error) {
 // an error when octo-cli is not installed / not authenticated for this bot
 // so the GUI can surface a meaningful "log in first" message rather than
 // silently showing "no groups available".
-func (x *XClawService) GroupsList(botID string) ([]octocli.Group, error) {
+func (x *OctoBuddyService) GroupsList(botID string) ([]octocli.Group, error) {
 	robotID, _, _, err := loadOctoBinding(botID)
 	if err != nil {
 		return nil, err
@@ -399,7 +399,7 @@ func (x *XClawService) GroupsList(botID string) ([]octocli.Group, error) {
 // OctoCliRelogin re-writes the disk profile for the bot from the stored
 // bf_ token. Used to repair a missing/stale profile from the Octo-integration
 // pane without forcing the operator to re-save the whole config.
-func (x *XClawService) OctoCliRelogin(botID string) error {
+func (x *OctoBuddyService) OctoCliRelogin(botID string) error {
 	robotID, token, apiURL, err := loadOctoBinding(botID)
 	if err != nil {
 		return err
@@ -417,7 +417,7 @@ func (x *XClawService) OctoCliRelogin(botID string) error {
 
 // OctoCliLogout clears the bot's disk profile. The stored bf_ token is
 // left alone — re-login can restore the profile from it.
-func (x *XClawService) OctoCliLogout(botID string) error {
+func (x *OctoBuddyService) OctoCliLogout(botID string) error {
 	robotID, _, _, err := loadOctoBinding(botID)
 	if err != nil {
 		return err
@@ -449,7 +449,7 @@ func loadOctoBinding(botID string) (robotID, token, apiURL string, err error) {
 // these into a BotConfig and calls SaveConfig — so the token reaches the
 // secret backend (never config.json) by the existing path. Self-service replacement
 // for the manual BotFather /newbot flow.
-func (x *XClawService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResult, error) {
+func (x *OctoBuddyService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResult, error) {
 	// Bound the call so the wizard UI can't strand a request forever — the
 	// octoapi httpClient has a 30 s timeout but no caller-side ceiling
 	// (arch #7, matching the OctoCliRelogin / Logout pattern).
@@ -458,94 +458,98 @@ func (x *XClawService) OctoAddBot(apiURL, apiKey, name string) (octoapi.BotResul
 	return octoapi.AddBot(ctx, apiURL, apiKey, name)
 }
 
-// --- skills: per-bot (~/.xclaw/<id>/.claude/skills) ---
+// --- skills: per-bot (~/.octobuddy/<id>/.claude/skills) ---
 
 // BotSkillsList returns a bot's skill bundles.
-func (x *XClawService) BotSkillsList(botID string) ([]skills.SkillInfo, error) {
+func (x *OctoBuddyService) BotSkillsList(botID string) ([]skills.SkillInfo, error) {
 	return skills.BotList(botID)
 }
 
 // BotSkillFiles lists files in one of the bot's skill bundles.
-func (x *XClawService) BotSkillFiles(botID, name string) ([]string, error) {
+func (x *OctoBuddyService) BotSkillFiles(botID, name string) ([]string, error) {
 	return skills.BotFiles(botID, name)
 }
 
 // BotSkillRead reads a file within one of the bot's skill bundles.
-func (x *XClawService) BotSkillRead(botID, name, rel string) (string, error) {
+func (x *OctoBuddyService) BotSkillRead(botID, name, rel string) (string, error) {
 	return skills.BotRead(botID, name, rel)
 }
 
 // BotSkillWrite writes a file within one of the bot's skill bundles.
-func (x *XClawService) BotSkillWrite(botID, name, rel, content string) error {
+func (x *OctoBuddyService) BotSkillWrite(botID, name, rel, content string) error {
 	return skills.BotWrite(botID, name, rel, content)
 }
 
 // BotSkillDeleteFile removes a file within one of the bot's skill bundles.
-func (x *XClawService) BotSkillDeleteFile(botID, name, rel string) error {
+func (x *OctoBuddyService) BotSkillDeleteFile(botID, name, rel string) error {
 	return skills.BotDeleteFile(botID, name, rel)
 }
 
 // BotSkillCreate scaffolds a new per-bot skill bundle.
-func (x *XClawService) BotSkillCreate(botID, name string) error { return skills.BotCreate(botID, name) }
+func (x *OctoBuddyService) BotSkillCreate(botID, name string) error {
+	return skills.BotCreate(botID, name)
+}
 
 // BotSkillDelete removes one of the bot's skill bundles.
-func (x *XClawService) BotSkillDelete(botID, name string) error { return skills.BotDelete(botID, name) }
+func (x *OctoBuddyService) BotSkillDelete(botID, name string) error {
+	return skills.BotDelete(botID, name)
+}
 
-// --- workflows: per-bot (~/.xclaw/<id>/.claude/workflows) ---
+// --- workflows: per-bot (~/.octobuddy/<id>/.claude/workflows) ---
 
 // BotWorkflowsList returns a bot's workflow scripts.
-func (x *XClawService) BotWorkflowsList(botID string) ([]workflows.Info, error) {
+func (x *OctoBuddyService) BotWorkflowsList(botID string) ([]workflows.Info, error) {
 	return workflows.BotList(botID)
 }
 
 // BotWorkflowRead reads one of the bot's workflow scripts.
-func (x *XClawService) BotWorkflowRead(botID, name string) (string, error) {
+func (x *OctoBuddyService) BotWorkflowRead(botID, name string) (string, error) {
 	return workflows.BotRead(botID, name)
 }
 
 // BotWorkflowWrite writes one of the bot's workflow scripts.
-func (x *XClawService) BotWorkflowWrite(botID, name, content string) error {
+func (x *OctoBuddyService) BotWorkflowWrite(botID, name, content string) error {
 	return workflows.BotWrite(botID, name, content)
 }
 
 // BotWorkflowCreate scaffolds a new per-bot workflow script.
-func (x *XClawService) BotWorkflowCreate(botID, name string) error {
+func (x *OctoBuddyService) BotWorkflowCreate(botID, name string) error {
 	return workflows.BotCreate(botID, name)
 }
 
 // BotWorkflowDelete removes one of the bot's workflow scripts.
-func (x *XClawService) BotWorkflowDelete(botID, name string) error {
+func (x *OctoBuddyService) BotWorkflowDelete(botID, name string) error {
 	return workflows.BotDelete(botID, name)
 }
 
 // WorkspaceTree returns the file tree of a session's sandbox workspace
 // (read-only). Returns an empty tree when no turn has created the sandbox yet.
-func (x *XClawService) WorkspaceTree(botID string, channelType int, sessionKey string) (*workspace.Node, error) {
+func (x *OctoBuddyService) WorkspaceTree(botID string, channelType int, sessionKey string) (*workspace.Node, error) {
 	return workspace.Tree(botID, channelType, sessionKey)
 }
 
 // WorkspaceFile returns one workspace file's contents for inline preview
 // (utf8 text or base64 for images/binaries), bounded and traversal-safe.
-func (x *XClawService) WorkspaceFile(botID string, channelType int, sessionKey, relPath string) (workspace.FileContent, error) {
+func (x *OctoBuddyService) WorkspaceFile(botID string, channelType int, sessionKey, relPath string) (workspace.FileContent, error) {
 	return workspace.File(botID, channelType, sessionKey, relPath)
 }
 
 // MemoryTree returns the file tree of a session's auto-memory directory
 // (read-only). Returns an empty tree when no memory has been written yet.
-func (x *XClawService) MemoryTree(botID string, channelType int, sessionKey string) (*workspace.Node, error) {
+func (x *OctoBuddyService) MemoryTree(botID string, channelType int, sessionKey string) (*workspace.Node, error) {
 	return workspace.MemoryTree(botID, channelType, sessionKey)
 }
 
 // MemoryFile returns one session memory file's contents for inline preview,
 // bounded and traversal-safe.
-func (x *XClawService) MemoryFile(botID string, channelType int, sessionKey, relPath string) (workspace.FileContent, error) {
+func (x *OctoBuddyService) MemoryFile(botID string, channelType int, sessionKey, relPath string) (workspace.FileContent, error) {
 	return workspace.MemoryFile(botID, channelType, sessionKey, relPath)
 }
 
 // RestartCore restarts the daemon and reconnects (applies config changes). It
 // bumps the epoch first so any in-flight crash-reconnect loop bails instead of
 // racing this restart.
-func (x *XClawService) RestartCore() error {
+func (x *OctoBuddyService) RestartCore() error {
 	x.mu.Lock()
 	x.epoch++ // supersede any in-flight reconnect
 	if x.client != nil {
@@ -559,7 +563,7 @@ func (x *XClawService) RestartCore() error {
 	return x.connect()
 }
 
-func (x *XClawService) send(cmdType string, body any) error {
+func (x *OctoBuddyService) send(cmdType string, body any) error {
 	x.mu.Lock()
 	c := x.client
 	x.mu.Unlock()

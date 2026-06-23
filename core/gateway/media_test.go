@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // pngBytes is a tiny valid-enough PNG header blob (content is never decoded by
@@ -61,7 +61,7 @@ func TestMaterializeImage_LandsInCwd(t *testing.T) {
 	if !strings.Contains(hint, InboundMediaDir) {
 		t.Fatalf("hint rel path not under media dir: %q", hint)
 	}
-	// The file must exist on disk under <cwd>/.xclaw-media.
+	// The file must exist on disk under <cwd>/.octobuddy-media.
 	entries, err := os.ReadDir(filepath.Join(cwd, InboundMediaDir))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected 1 file in media dir, got %v err=%v", entries, err)

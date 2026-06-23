@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
-  import type { FileContent } from "../../../bindings/github.com/lml2468/xclaw/desktop/internal/workspace/models";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
+  import type { FileContent } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/workspace/models";
   import { renderMarkdown, highlight, onMarkdownCopyClick } from "../markdown";
   import { errMsg } from "../errors";
 
@@ -24,7 +24,7 @@
     "notes.md": { path: "notes.md", encoding: "utf8", mime: "text/markdown", kind: "markdown", truncated: false, size: 180,
       content: "# Notes\n\nThe proto contract is an **NDJSON** envelope over a Unix socket.\n\n- events out\n- commands in\n\n```go\nfunc main() {\n\tapp.Run()\n}\n```\n" } as FileContent,
     "page.html": { path: "page.html", encoding: "utf8", mime: "text/html", kind: "html", truncated: false, size: 240,
-      content: "<!doctype html><html><head><style>body{font-family:system-ui;padding:24px;color:#222}h1{color:#07c160}</style></head><body><h1>XClaw HTML preview</h1><p>Rendered in a <strong>sandboxed</strong> iframe.</p><ul><li>one</li><li>two</li></ul></body></html>" } as FileContent,
+      content: "<!doctype html><html><head><style>body{font-family:system-ui;padding:24px;color:#222}h1{color:#07c160}</style></head><body><h1>OctoBuddy HTML preview</h1><p>Rendered in a <strong>sandboxed</strong> iframe.</p><ul><li>one</li><li>two</li></ul></body></html>" } as FileContent,
     "diagram.png": { path: "diagram.png", encoding: "base64", mime: "image/png", kind: "image", truncated: false, size: 95,
  // 1×1 transparent PNG.
       content: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" } as FileContent,
@@ -74,8 +74,8 @@
     if (!b || !k) return;
     try {
       const fc = src === "memory"
-        ? await XClawService.MemoryFile(b, ct, k, p)
-        : await XClawService.WorkspaceFile(b, ct, k, p);
+        ? await OctoBuddyService.MemoryFile(b, ct, k, p)
+        : await OctoBuddyService.WorkspaceFile(b, ct, k, p);
       if (gen === loadGen) file = fc;
     } catch (e) {
       if (gen === loadGen) error = errMsg(e);

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // MentionFormatHint is the single source of truth for the structured-mention
@@ -34,7 +34,7 @@ const memberListInlineThreshold = 10
 // gateway-authored and the caller wraps it as safety.TrustedText.
 //
 // Divergence from the TS source: the >10 branch there names the openclaw
-// `octo_management action="group-members"` tool, which xclaw does not yet
+// `octo_management action="group-members"` tool, which octobuddy does not yet
 // expose; we keep the look-it-up intent but reference the recent-messages
 // context / a roster tool generically so the agent is never told to call a
 // tool that is not wired up.

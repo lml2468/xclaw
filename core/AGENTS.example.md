@@ -1,6 +1,6 @@
 <!--
   AGENTS.md — the bot's behavior norms / operating rules. Place at
-  ~/.xclaw/<id>/AGENTS.md.
+  ~/.octobuddy/<id>/AGENTS.md.
 
   This is appended after SOUL.md to form the operator-trusted system prompt:
   HOW the bot should behave. Use it for per-bot conventions, guardrails, and

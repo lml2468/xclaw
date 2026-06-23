@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // Kind classifies the channel a session belongs to.

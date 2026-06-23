@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in xclawd (core), the desktop app, or the control bus.
+description: Report a defect in octobuddy-daemon (core), the desktop app, or the control bus.
 labels: [bug]
 body:
   - type: dropdown
@@ -7,7 +7,7 @@ body:
     attributes:
       label: Which piece?
       options:
-        - core (Go daemon xclawd)
+        - core (Go daemon octobuddy-daemon)
         - desktop (Go + Wails v3 + Svelte app)
         - proto (control-bus contract)
         - build / packaging / CI
@@ -26,7 +26,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Run `go run ./cmd/xclawd -config ...`
+        1. Run `go run ./cmd/octobuddy-daemon -config ...`
         2. Send a message in a group channel
         3. ...
     validations:
@@ -35,7 +35,7 @@ body:
     id: env
     attributes:
       label: Environment
-      description: OS + version, Go version (`go version`), and how you ran XClaw (REPL / -config / app).
+      description: OS + version, Go version (`go version`), and how you ran OctoBuddy (REPL / -config / app).
     validations:
       required: true
   - type: textarea

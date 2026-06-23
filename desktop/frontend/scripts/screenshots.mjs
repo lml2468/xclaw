@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const docs = resolve(__dir, "../../../docs");
 
-const BASE = process.env.XCLAW_TEST_URL ?? "http://127.0.0.1:9245";
+const BASE = process.env.OCTOBUDDY_TEST_URL ?? "http://127.0.0.1:9245";
 const VIEW = { width: 1280, height: 800 };
 
 const browser = await chromium.launch({ channel: "chrome", headless: true });

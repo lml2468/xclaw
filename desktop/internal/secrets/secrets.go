@@ -16,13 +16,13 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/lml2468/xclaw/core/control/wire"
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/control/wire"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // service is the credential-store service name (shared with the legacy Swift
 // app so existing Keychain entries carry over on macOS).
-const service = "com.xclaw.tokens"
+const service = "com.mlt.octobuddy.tokens"
 
 // Kind is a token category. The account key is "<botID>/<kind>". Aliased to
 // wire.SecretKind so the desktop, the control bus, and the daemon all use one
@@ -99,7 +99,7 @@ func secretFile(botID string, kind Kind) (string, error) {
 		return "", err
 	}
 	name := base64.RawURLEncoding.EncodeToString([]byte(kind))
-	return filepath.Join(home, ".xclaw", "secrets", botID, name), nil
+	return filepath.Join(home, ".octobuddy", "secrets", botID, name), nil
 }
 
 func (fileBackend) Get(botID string, kind Kind) (string, error) {
@@ -140,7 +140,7 @@ type envBackend struct{}
 
 func secretEnvName(botID string, kind Kind) string {
 	var b strings.Builder
-	b.WriteString("XCLAW_SECRET_")
+	b.WriteString("OCTOBUDDY_SECRET_")
 	for _, r := range botID + "_" + string(kind) {
 		switch {
 		case r >= 'a' && r <= 'z':

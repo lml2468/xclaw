@@ -1,4 +1,4 @@
-// Package control is the desktop app's client for the xclawd control bus —
+// Package control is the desktop app's client for the octobuddy-daemon control bus —
 // NDJSON envelopes over a Unix-domain socket (see proto/README.md). It reuses
 // the wire types and codec from the daemon's control package so the GUI and the
 // daemon stay locked to one contract.
@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	wire "github.com/lml2468/xclaw/core/control/wire"
+	wire "github.com/lml2468/octobuddy/core/control/wire"
 )
 
 // Re-export the wire vocabulary so callers depend on this package, not the

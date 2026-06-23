@@ -1,6 +1,6 @@
 // Package skills manages a bot's own Claude skill bundles. Each skill is a
 // directory with a SKILL.md plus supporting files; they live under the bot's
-// CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude/skills), so the agent's claude CLI
+// CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude/skills), so the agent's claude CLI
 // auto-discovers them as user-scope assets every spawn — no per-turn sandbox
 // linking. There is no shared marketplace anymore: every bot owns its own
 // skills, period.
@@ -19,17 +19,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
-// botDir is ~/.xclaw/<botID>/.claude/skills — the bot's skills dir, sitting
+// botDir is ~/.octobuddy/<botID>/.claude/skills — the bot's skills dir, sitting
 // inside CLAUDE_CONFIG_DIR so the claude CLI loads it as user-scope on launch.
 func botDir(botID string) (string, error) {
 	if !safepath.ValidSlug(botID) {
 		return "", fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", botID)
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", botID, ".claude", "skills"), nil
+	return filepath.Join(home, ".octobuddy", botID, ".claude", "skills"), nil
 }
 
 // bundleRoot composes <root>/<name> as the validated per-bundle root, so the
@@ -217,7 +217,7 @@ func createIn(root, name string) error {
 	return nil
 }
 
-// ---- Per-bot skills (~/.xclaw/<id>/.claude/skills) ----
+// ---- Per-bot skills (~/.octobuddy/<id>/.claude/skills) ----
 
 // BotList returns the bot's skill bundles.
 func BotList(botID string) ([]SkillInfo, error) {
@@ -272,7 +272,7 @@ func BotCreate(botID, name string) error {
 	}
 	// the prior `os.MkdirAll(root, 0o755)` followed any
 	// symlinked intermediate component — an agent that planted
-	// `~/.xclaw/<id>/.claude → /etc` would silently get `/etc/skills`
+	// `~/.octobuddy/<id>/.claude → /etc` would silently get `/etc/skills`
 	// created before the SafeMkdirAll guard inside createIn could refuse.
 	// Walk from $HOME via dirfd so every component is O_NOFOLLOW-checked.
 	if err := ensureBotSkillsDir(botID); err != nil {
@@ -281,7 +281,7 @@ func BotCreate(botID, name string) error {
 	return createIn(root, name)
 }
 
-// ensureBotSkillsDir creates ~/.xclaw/<botID>/.claude/skills via the
+// ensureBotSkillsDir creates ~/.octobuddy/<botID>/.claude/skills via the
 // dirfd-walk SafeMkdirAll so every intermediate component is symlink-refused.
 // Skipping a regular MkdirAll here closes Sec #4.
 func ensureBotSkillsDir(botID string) error {
@@ -291,7 +291,7 @@ func ensureBotSkillsDir(botID string) error {
 	home, _ := os.UserHomeDir()
 	// `~/` is operator-trusted (operator shell == operator's own dirs);
 	// every component below is agent-reachable and gets checked.
-	return safepath.SafeMkdirAll(home, ".xclaw/"+botID+"/.claude/skills", 0o755)
+	return safepath.SafeMkdirAll(home, ".octobuddy/"+botID+"/.claude/skills", 0o755)
 }
 
 // BotDelete removes one of the bot's skill bundles entirely.

@@ -1,10 +1,10 @@
-// Command xclawd is the XClaw gateway daemon.
+// Command octobuddy-daemon is the OctoBuddy gateway daemon.
 //
 // It wires the full pipeline — store + router + gateway + agent driver — and
 // drives it from an inbound source. Two front ends:
 //
-//	xclawd # REPL on stdin (claude driver)
-//	xclawd -control /tmp/xclaw.sock # serve the control bus (for the GUI app)
+//	octobuddy-daemon # REPL on stdin (claude driver)
+//	octobuddy-daemon -control /tmp/octobuddy.sock # serve the control bus (for the GUI app)
 //
 // With -control it listens on a Unix socket speaking the proto/ NDJSON protocol
 // so the desktop app (or any client) can send commands and receive the live
@@ -27,35 +27,35 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/control"
-	"github.com/lml2468/xclaw/core/control/wire"
-	"github.com/lml2468/xclaw/core/gateway"
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/im/octo"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/control"
+	"github.com/lml2468/octobuddy/core/control/wire"
+	"github.com/lml2468/octobuddy/core/gateway"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/im/octo"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 func main() {
 	var (
 		claudeBin   = flag.String("claude-bin", "", "claude executable (default: 'claude' on PATH)")
 		fromUID     = flag.String("uid", "repl-user", "synthetic from_uid for REPL inbound (DM session key)")
-		dbPath      = flag.String("db", filepath.Join(os.TempDir(), "xclawd.db"), "sqlite path")
+		dbPath      = flag.String("db", filepath.Join(os.TempDir(), "octobuddy-daemon.db"), "sqlite path")
 		maxPerMin   = flag.Int("rate", 30, "max messages per minute per session")
 		controlSock = flag.String("control", "", "serve the control bus on this Unix socket path (enables GUI clients)")
 		noREPL      = flag.Bool("no-repl", false, "disable the stdin REPL (control-bus only)")
 		octoAPI     = flag.String("octo-api", "", "Octo API base URL (enables the Octo IM connector)")
-		octoToken   = flag.String("octo-token", "", "Octo bot token (bf_*); or set XCLAW_OCTO_TOKEN")
-		configPath  = flag.String("config", "", "load ~/.xclaw/config.json (or given path) and run all configured bots")
+		octoToken   = flag.String("octo-token", "", "Octo bot token (bf_*); or set OCTOBUDDY_OCTO_TOKEN")
+		configPath  = flag.String("config", "", "load ~/.octobuddy/config.json (or given path) and run all configured bots")
 		exitParent  = flag.Bool("exit-with-parent", false, "exit when the parent process dies (set by the GUI so the daemon never outlives the app)")
 		authStdin   = flag.Bool("control-auth-stdin", false, "read the control-bus capability token as the first line of stdin (set by the GUI; out-of-band, never an env/argv). Off = no token: privileged bus commands are denied")
 	)
 	flag.Parse()
 
-	// Config mode: load the single ~/.xclaw/config.json and run every bot in its
+	// Config mode: load the single ~/.octobuddy/config.json and run every bot in its
 	// own isolated stack. Mutually exclusive with the single-bot flag front ends.
-	// `-config` with no value uses the default ~/.xclaw/config.json. `-control`
+	// `-config` with no value uses the default ~/.octobuddy/config.json. `-control`
 	// additionally serves the bus so a GUI can manage all bots.
 	if configFlagSet() {
 		runConfigMode(*configPath, *controlSock, *exitParent, *authStdin)
@@ -113,12 +113,12 @@ func main() {
 	// gateway.Sink (delivers replies via REST), so build it before the gateway.
 	token := *octoToken
 	if token == "" {
-		token = os.Getenv("XCLAW_OCTO_TOKEN")
+		token = os.Getenv("OCTOBUDDY_OCTO_TOKEN")
 	}
 	var connector *octo.Connector
 	if *octoAPI != "" {
 		if token == "" {
-			fatal("-octo-api set but no token (use -octo-token or XCLAW_OCTO_TOKEN)")
+			fatal("-octo-api set but no token (use -octo-token or OCTOBUDDY_OCTO_TOKEN)")
 		}
 		_ = sec.Set(wire.SecretKindOcto, token)
 		connector = octo.NewConnector(octo.NewRESTClient(*octoAPI, sec.OctoToken))
@@ -160,7 +160,7 @@ func main() {
 		fmt.Printf("octo connector started (api=%s)\n", *octoAPI)
 	}
 
-	fmt.Printf("xclawd — driver=%s caps=%+v\n", drv.Name(), drv.Capabilities())
+	fmt.Printf("octobuddy-daemon — driver=%s caps=%+v\n", drv.Name(), drv.Capabilities())
 	fmt.Printf("db=%s  session=dm:%s\n", *dbPath, *fromUID)
 
 	if *noREPL || connector != nil {

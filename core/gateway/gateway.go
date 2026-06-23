@@ -19,14 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/groupmd"
-	"github.com/lml2468/xclaw/core/persona"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
-	"github.com/lml2468/xclaw/core/sandbox"
-	"github.com/lml2468/xclaw/core/store"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/groupmd"
+	"github.com/lml2468/octobuddy/core/persona"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/sandbox"
+	"github.com/lml2468/octobuddy/core/store"
 )
 
 // Sink receives normalized agent events for one turn, plus a final assembled
@@ -85,7 +85,7 @@ type Gateway struct {
 	// Per-session sandbox roots (set via WithSandbox). When cwdBase is set, each
 	// turn runs in cwdBase/<hash>, with auto-memory under memoryBase/<hash>.
 	// The bot's skills + workflows are NOT linked into the sandbox: they live
-	// under the per-bot CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude/{skills,workflows})
+	// under the per-bot CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude/{skills,workflows})
 	// and the claude CLI auto-discovers them as user-scope assets — every spawn
 	// already loads them, no per-turn link work needed. Empty cwdBase = no
 	// isolation (inherit proc).
@@ -494,7 +494,7 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 // ("", "", nil) when the sandbox is disabled. A non-nil error means the cwd
 // could not be built — the caller MUST abort the turn rather than fall back to
 // the process cwd (which would leak across sessions). Skills + workflows are
-// auto-loaded by the CLI from CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude/),
+// auto-loaded by the CLI from CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude/),
 // not symlinked in per-turn — see CLAUDE.md.
 func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (cwd, memDir string, err error) {
 	if g.cwdBase == "" {
@@ -602,7 +602,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 
 	// Materialize inbound media/file attachments now that the session cwd is
 	// known but before driver.Query (inbound.ts G1/G2 + media-inbound.ts #86):
-	// images download into <cwd>/.xclaw-media for the Read tool; small text files
+	// images download into <cwd>/.octobuddy-media for the Read tool; small text files
 	// inline as a base64 <file_content> block. The returned hint/blocks go into
 	// THIS turn's prompt ONLY — never the stored history (already persisted as the
 	// original text above), so it can't accumulate stale paths or inlined bodies.

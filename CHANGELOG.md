@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status moved into the window title bar and auto-scroll to the latest message.
   `AppState` gained a per-session message history; the GUI echoes its own sent
   messages locally (the bus doesn't return them). A `#if DEBUG`/env preview seam
-  (`XCLAW_UI_PREVIEW`) renders mock data for screenshots without a daemon.
+  (`OCTOBUDDY_UI_PREVIEW`) renders mock data for screenshots without a daemon.
 - Chat polish: assistant bubbles hug their content (short replies are small
   bubbles, not full-width boxes), and an animated "typing…" indicator shows
   between sending a message and the agent's first output. Verified in light and
@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the row selected. Reopening the editor window no longer **clobbers unsaved
   edits** — the config loads once (`loadIfNeeded`) instead of on every appear.
 - macOS app config save can no longer **destroy another bot's data**. Pruning a
-  bot's `~/.xclaw/<id>/` directory is now driven by *explicit* removals
+  bot's `~/.octobuddy/<id>/` directory is now driven by *explicit* removals
   (`ConfigStore.save(_, removing:)`), never inferred from a set-difference
   against on-disk dirs — a failed/partial load (e.g. empty list after a transient
   read error) previously looked like "every other bot was removed" and could wipe
@@ -110,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Control-bus server no longer crashes the daemon when a client disconnects
   during a broadcast. `client.enqueue` used `select { case sendCh <- … : default }`,
   but a *closed* channel send is never caught by `default` and panics; a GUI
-  disconnecting mid-turn (now common, with restarts) could take down `xclawd`.
+  disconnecting mid-turn (now common, with restarts) could take down `octobuddy-daemon`.
   The write loop now stops via a separate `done` channel and `sendCh` is never
   closed, so producers can never send on a closed channel. Regression test added.
 - Control handlers consolidated: single-bot and multi-bot modes now share one
@@ -201,7 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   save, Keychain persistence, legacy-token migration) extracted from `AppModel`
   into a dedicated `@Observable ConfigEditorModel`, so `AppModel` now owns only
   runtime lifecycle, bus connection, and messaging.
-- The embedded `xclawd` no longer leaks when the app dies non-gracefully
+- The embedded `octobuddy-daemon` no longer leaks when the app dies non-gracefully
   (crash/force-quit): a new `-exit-with-parent` flag (passed by the app) makes
   the daemon shut down when it's orphaned (reparented to pid 1), freeing the
   control socket. Found via a real packaged-app smoke test; graceful Quit was

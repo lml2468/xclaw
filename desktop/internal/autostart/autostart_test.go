@@ -27,7 +27,7 @@ func TestPlistPathFollowsHome(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	want := filepath.Join(home, "Library", "LaunchAgents", "com.xclaw.desktop.plist")
+	want := filepath.Join(home, "Library", "LaunchAgents", "com.mlt.octobuddy.desktop.plist")
 	if got := plistPath(); got != want {
 		t.Fatalf("plistPath = %q, want %q", got, want)
 	}

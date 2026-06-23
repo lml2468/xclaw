@@ -5,10 +5,10 @@
 	"info": {
 		"0000": {
 			"ProductVersion": "0.1.0",
-			"CompanyName": "XClaw",
-			"FileDescription": "XClaw — agent gateway desktop",
+			"CompanyName": "OctoBuddy",
+			"FileDescription": "OctoBuddy — agent gateway desktop",
 			"LegalCopyright": "© 2026, My Company",
-			"ProductName": "XClaw",
+			"ProductName": "OctoBuddy",
 			"Comments": "This is a comment"
 		}
 	}

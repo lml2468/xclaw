@@ -120,11 +120,11 @@
  // doesn't keep stacking handlers each save. Both subscriptions
  // share the same cleanup boundary.
   $effect(() => {
-    const offSettings = Events.On("xclaw:open-settings", (e: any) => {
+    const offSettings = Events.On("octobuddy:open-settings", (e: any) => {
       const tab = e?.data?.tab as SettingsTab | undefined;
       openSettings(tab && TABS.includes(tab) ? tab : "basic");
     });
-    const offUsage = Events.On("xclaw:open-usage", () => openUsage());
+    const offUsage = Events.On("octobuddy:open-usage", () => openUsage());
     return () => { try { offSettings?.(); offUsage?.(); } catch {} };
   });
 
@@ -169,7 +169,7 @@
           <span class="title">{(() => {
             const s = store.currentSession;
             const own = s?.channelName || s?.title;
-            if (!own) return "XClaw";
+            if (!own) return "OctoBuddy";
             return s?.parentChannelName ? `${s.parentChannelName} > ${own}` : own;
           })()}</span>
           {#if store.currentSession && !store.isConsole}

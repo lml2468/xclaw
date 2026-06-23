@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/config"
-	"github.com/lml2468/xclaw/core/control"
-	"github.com/lml2468/xclaw/core/cron"
+	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/control"
+	"github.com/lml2468/octobuddy/core/cron"
 )
 
 // TestCronControlHandlers exercises cron.create/list/delete over the multi-bot

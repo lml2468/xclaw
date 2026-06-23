@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/octobuddy/core/router"
 )
 
 // EventSink.OnUserMessage must forward msg.CronFire onto the broadcast body

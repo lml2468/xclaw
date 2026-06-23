@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/control"
+	"github.com/lml2468/octobuddy/core/control"
 )
 
 // privilegedControlCommands are the operator-only control-bus commands gated

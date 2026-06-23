@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/groupctx"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/groupctx"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // TestGroupContextInjectionAndSafety verifies the integrated pipeline: a group
@@ -20,7 +20,7 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	gc := groupctx.New(6000)
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
 		WithGroupContext(gc).
-		WithSystemPrompt("you are XClaw").
+		WithSystemPrompt("you are OctoBuddy").
 		WithModel("claude-opus-4-8")
 
 	// alice chats in the group WITHOUT mentioning the bot — observed as
@@ -62,7 +62,7 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	if !strings.Contains(second.SystemAppend, "UNTRUSTED") {
 		t.Fatalf("security prefix missing from system prompt:\n%s", second.SystemAppend)
 	}
-	if !strings.Contains(second.SystemAppend, "you are XClaw") {
+	if !strings.Contains(second.SystemAppend, "you are OctoBuddy") {
 		t.Fatalf("SOUL prompt missing from system prompt:\n%s", second.SystemAppend)
 	}
 	// The configured model override reaches the driver.
@@ -150,7 +150,7 @@ func TestGroupRosterInjectedIntoSystemPrompt(t *testing.T) {
 	gc := groupctx.New(6000)
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
 		WithGroupContext(gc).
-		WithSystemPrompt("you are XClaw")
+		WithSystemPrompt("you are OctoBuddy")
 
 	// alice is observed (learned) before bob triggers a turn.
 	gw.Observe(router.InboundMessage{
@@ -195,7 +195,7 @@ func TestDMTurnHasNoRoster(t *testing.T) {
 	gc := groupctx.New(6000)
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
 		WithGroupContext(gc).
-		WithSystemPrompt("you are XClaw")
+		WithSystemPrompt("you are OctoBuddy")
 
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelDM, FromUID: "u1", FromName: "alice", Text: "hi",

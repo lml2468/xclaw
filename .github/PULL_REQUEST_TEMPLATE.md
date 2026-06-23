@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to XClaw! Please fill out the sections below. -->
+<!-- Thanks for contributing to OctoBuddy! Please fill out the sections below. -->
 
 ## What & why
 
@@ -6,7 +6,7 @@
 
 ## Which piece(s)
 
-- [ ] `core/` (Go daemon `xclawd`)
+- [ ] `core/` (Go daemon `octobuddy-daemon`)
 - [ ] `desktop/` (Go + Wails v3 + Svelte app)
 - [ ] `proto/` (control-bus contract)
 - [ ] docs / CI / tooling

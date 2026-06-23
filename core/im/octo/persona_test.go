@@ -3,7 +3,7 @@ package octo
 import (
 	"testing"
 
-	"github.com/lml2468/xclaw/core/persona"
+	"github.com/lml2468/octobuddy/core/persona"
 )
 
 // TestTriggersPersonaClone exercises the persona-aware group trigger gate

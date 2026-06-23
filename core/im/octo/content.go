@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // RichText block-type tags and the inline-image placeholder (types.ts
@@ -73,7 +73,7 @@ type ResolvedContent struct {
 // malicious payload.url can never be fetched with the bot's Authorization
 // header (token-leak chokepoint) nor forge a marker line.
 //
-// xclaw has no separate CDN host config, so only the apiUrl host is allowed for
+// octobuddy has no separate CDN host config, so only the apiUrl host is allowed for
 // absolute URLs; the relative-path branch is preserved verbatim.
 func buildMediaURL(relURL, apiURL string) string {
 	if relURL == "" {

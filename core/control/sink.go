@@ -3,9 +3,9 @@ package control
 import (
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
-	"github.com/lml2468/xclaw/core/router"
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/agent"
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 // EventSink adapts the control Server to gateway.Sink: it projects normalized

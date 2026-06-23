@@ -17,10 +17,10 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
-const label = "com.xclaw.desktop"
+const label = "com.mlt.octobuddy.desktop"
 
 // plistPath is ~/Library/LaunchAgents/<label>.plist.
 func plistPath() string {
@@ -29,7 +29,7 @@ func plistPath() string {
 }
 
 // appBundlePath resolves the.app bundle the daemon is running from
-// (/Applications/XClaw.app or wherever). Refuses if not inside a.app, so we
+// (/Applications/OctoBuddy.app or wherever). Refuses if not inside a.app, so we
 // don't autostart a dev-build binary at some ephemeral cache path.
 func appBundlePath() (string, error) {
 	exe, err := os.Executable()
@@ -53,7 +53,7 @@ func appBundlePath() (string, error) {
 // Supported reports whether launch-at-login is implemented on this OS.
 func Supported() bool { return runtime.GOOS == "darwin" }
 
-// Enabled reports whether a LaunchAgent plist currently exists for XClaw.
+// Enabled reports whether a LaunchAgent plist currently exists for OctoBuddy.
 // (We don't query launchctl — the plist being on disk IS the user-visible
 // "enabled" state, and it survives reboots even if the agent isn't loaded.)
 func Enabled() (bool, error) {
@@ -77,7 +77,7 @@ func Enable() error {
 	if err != nil {
 		return fmt.Errorf("resolve app bundle: %w", err)
 	}
-	exe := filepath.Join(bundle, "Contents", "MacOS", "xclaw")
+	exe := filepath.Join(bundle, "Contents", "MacOS", "octobuddy")
 	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

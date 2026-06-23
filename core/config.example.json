@@ -1,12 +1,12 @@
 {
-  "_comment": "XClaw config. Single file at ~/.xclaw/config.json. Top-level rateLimit/context are shared runtime policy. Bot identity, API URL, agent routing, env, group policy, and persona-clone config are per-bot only. Secrets are not written here: config stores secretRef entries that are resolved from the secret backend at runtime.",
+  "_comment": "OctoBuddy config. Single file at ~/.octobuddy/config.json. Top-level rateLimit/context are shared runtime policy. Bot identity, API URL, agent routing, env, group policy, and persona-clone config are per-bot only. Secrets are not written here: config stores secretRef entries that are resolved from the secret backend at runtime.",
   "rateLimit": { "maxPerMinute": 30 },
   "context": { "maxContextChars": 6000 },
   "bots": [
     {
       "id": "my-bot",
       "apiUrl": "https://your-octo-server.example",
-      "_comment_tokens": "octoToken and agent.gatewayToken are intentionally absent. The desktop app stores them in the secret backend and injects them into xclawd at runtime. Headless deployments may still provide inline tokens if they accept config-file exposure.",
+      "_comment_tokens": "octoToken and agent.gatewayToken are intentionally absent. The desktop app stores them in the secret backend and injects them into octobuddy-daemon at runtime. Headless deployments may still provide inline tokens if they accept config-file exposure.",
       "agent": {
         "model": "claude-opus-4-8",
         "gatewayBaseUrl": "https://your-model-gateway.example/v1",
@@ -14,7 +14,7 @@
         "cron": false,
         "_comment_toolProgress": "Opt-in: when true, the bot mirrors each tool it runs to the channel as a brief 'Running <tool>(<params>)...' notice (deduped, capped at 10/turn). Off by default.",
         "toolProgress": false,
-        "_comment_inheritUserConfig": "When true, the agent inherits the operator's ~/.claude (user-scope skills + installed plugins). OFF by default: each bot gets an isolated CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude).",
+        "_comment_inheritUserConfig": "When true, the agent inherits the operator's ~/.claude (user-scope skills + installed plugins). OFF by default: each bot gets an isolated CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude).",
         "inheritUserConfig": false,
         "_comment_dispatchTimeoutSec": "Per-turn IDLE timeout (seconds). Omit to use the daemon default (1200 = 20 min).",
         "dispatchTimeoutSec": 0,
@@ -25,13 +25,13 @@
         }
       },
       "_comment_groupConfigDir": "Optional operator-controlled directory of per-conversation instruction files. Must be outside this bot's agent-writable workspace.",
-      "groupConfigDir": "/etc/xclaw/groups/my-bot",
+      "groupConfigDir": "/etc/octobuddy/groups/my-bot",
       "_comment_gating": "Optional per-bot group-gating policy (session-router). mentionFreeGroups = channel ids the bot answers WITHOUT an @mention; knownBotUids/allowedBotUids = bot-loop guard; botBlocklist = uids whose DMs are dropped.",
       "mentionFreeGroups": [],
       "knownBotUids": [],
       "allowedBotUids": [],
       "botBlocklist": [],
-      "_comment_skills": "Skills/workflows are NOT configured here. Each bot owns its own under ~/.xclaw/<id>/.claude/skills/<name>/ and ~/.xclaw/<id>/.claude/workflows/<name>.js."
+      "_comment_skills": "Skills/workflows are NOT configured here. Each bot owns its own under ~/.octobuddy/<id>/.claude/skills/<name>/ and ~/.octobuddy/<id>/.claude/workflows/<name>.js."
     },
     {
       "id": "admin-clone",

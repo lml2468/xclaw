@@ -1,5 +1,5 @@
-// Package control implements the XClaw control bus: the NDJSON-over-Unix-socket
-// protocol (see proto/README.md) between the Go daemon (xclawd) and client
+// Package control implements the OctoBuddy control bus: the NDJSON-over-Unix-socket
+// protocol (see proto/README.md) between the Go daemon (octobuddy-daemon) and client
 // shells (the desktop app, a web console, a CLI).
 //
 // The wire contract — envelope, codec, and typed bodies — lives in the
@@ -9,7 +9,7 @@
 // pieces (Server, CommandHandler, EventSink) that depend on agent.
 package control
 
-import "github.com/lml2468/xclaw/core/control/wire"
+import "github.com/lml2468/octobuddy/core/control/wire"
 
 // Protocol constants (re-exported from wire).
 const (

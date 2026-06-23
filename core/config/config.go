@@ -1,11 +1,11 @@
-// Package config implements XClaw's single-file configuration.
+// Package config implements OctoBuddy's single-file configuration.
 //
-// One ~/.xclaw/config.json holds shared runtime policy (rateLimit/context) plus
+// One ~/.octobuddy/config.json holds shared runtime policy (rateLimit/context) plus
 // a bots[] list where each entry inlines a bot's identity and agent config.
 // Agent/env/apiUrl settings are intentionally per-bot, never inherited. The per-bot data directory
-// (~/.xclaw/<id>/data) is DERIVED from baseDir + id, never configurable — so a
+// (~/.octobuddy/<id>/data) is DERIVED from baseDir + id, never configurable — so a
 // bot can't escape its own subtree. The bot's persona/behavior prompt lives in
-// SOUL.md + AGENTS.md in ~/.xclaw/<id>/, not in config.
+// SOUL.md + AGENTS.md in ~/.octobuddy/<id>/, not in config.
 package config
 
 import (
@@ -17,7 +17,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // EnvValue is one declared agent environment variable. Plain values live in
@@ -114,7 +114,7 @@ type OnBehalfOf struct {
 // instead of stored here. apiUrl/agent/group/gating settings are per-bot; only
 // rateLimit/context have top-level runtime-policy defaults. The bot's
 // persona/behavior prompt is NOT here — it lives in SOUL.md + AGENTS.md under
-// ~/.xclaw/<id>/.
+// ~/.octobuddy/<id>/.
 type BotEntry struct {
 	ID        string           `json:"id,omitempty"`
 	OctoToken string           `json:"octoToken,omitempty"`
@@ -137,7 +137,7 @@ type BotEntry struct {
 	BotBlocklist      []string `json:"botBlocklist,omitempty"`
 }
 
-// File is the on-disk shape of the single ~/.xclaw/config.json. Top-level
+// File is the on-disk shape of the single ~/.octobuddy/config.json. Top-level
 // rateLimit/context are shared runtime policy; bot identity, agent, env, group
 // config, and gating settings live only on each bots[] entry.
 type File struct {
@@ -180,10 +180,10 @@ type Resolved struct {
 	OnBehalfOf OnBehalfOf
 
 	// Derived per-bot directories (never from file).
-	DataDir    string // ~/.xclaw/<id>/data       — SQLite + state
-	CwdBase    string // ~/.xclaw/<id>/workspace   — per-session cwd sandboxes
-	MemoryBase string // ~/.xclaw/<id>/memory      — per-session auto-memory (outside CwdBase)
-	// ClaudeConfigDir is the per-bot CLAUDE_CONFIG_DIR (~/.xclaw/<id>/.claude).
+	DataDir    string // ~/.octobuddy/<id>/data       — SQLite + state
+	CwdBase    string // ~/.octobuddy/<id>/workspace   — per-session cwd sandboxes
+	MemoryBase string // ~/.octobuddy/<id>/memory      — per-session auto-memory (outside CwdBase)
+	// ClaudeConfigDir is the per-bot CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude).
 	// Set as the agent's config root to ISOLATE it from the operator's ~/.claude
 	// (user-scope skills + installed plugins would otherwise leak into every
 	// bot). Empty when agent.inheritUserConfig is set. The bot's own skills /
@@ -208,10 +208,10 @@ func validSlug(id string) bool {
 	return slugRE.MatchString(id) && id != "." && id != ".."
 }
 
-// DefaultConfigPath is ~/.xclaw/config.json.
+// DefaultConfigPath is ~/.octobuddy/config.json.
 func DefaultConfigPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", "config.json")
+	return filepath.Join(home, ".octobuddy", "config.json")
 }
 
 // Load reads the global config at path (or DefaultConfigPath) and resolves all
@@ -239,7 +239,7 @@ func Load(path string) ([]Resolved, error) {
 
 // readFile parses a config.json, returning a zero File if it doesn't exist.
 // Routes through safepath.SafeRead so an agent (Bash + bypass) that plants
-// `~/.xclaw/config.json → /attacker-controlled.json` cannot redirect the
+// `~/.octobuddy/config.json → /attacker-controlled.json` cannot redirect the
 // operator-trusted bot roster (URLs, ports, agent dirs, on-behalf-of
 // grantors) at next daemon restart.
 func readFile(path string) (File, error) {
@@ -261,7 +261,7 @@ func readFile(path string) (File, error) {
 
 // resolveBots expands the single global config into one Resolved per bot,
 // applying inlineBot-over-global-default precedence. SOUL.md + AGENTS.md are
-// still read from each bot's ~/.xclaw/<id>/ directory.
+// still read from each bot's ~/.octobuddy/<id>/ directory.
 func resolveBots(global File, baseDir string) ([]Resolved, error) {
 	entries := global.Bots
 	if len(entries) == 0 {
@@ -407,7 +407,7 @@ func mergeCtx(dst *ContextConfig, src *ContextConfig) {
 // is trimmed; missing/empty files are skipped. Returns "" if neither exists.
 //
 // Routes through safepath.SafeRead so an agent (Bash + bypass) that
-// plants `~/.xclaw/<id>/SOUL.md → /Users/victim/.aws/credentials` cannot
+// plants `~/.octobuddy/<id>/SOUL.md → /Users/victim/.aws/credentials` cannot
 // redirect the trusted-prompt source. The bytes from the symlink target
 // would otherwise have been injected verbatim as TrustedText into every
 // system prompt, leaking the file contents on next reply.

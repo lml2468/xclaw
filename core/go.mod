@@ -1,4 +1,4 @@
-module github.com/lml2468/xclaw/core
+module github.com/lml2468/octobuddy/core
 
 go 1.26.4
 

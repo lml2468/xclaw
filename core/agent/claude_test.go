@@ -271,7 +271,7 @@ func TestIsDirWritable(t *testing.T) {
 	if isDirWritable("") {
 		t.Fatal("empty dir reported writable")
 	}
-	if isDirWritable("/does/not/exist/xclaw-test") {
+	if isDirWritable("/does/not/exist/octobuddy-test") {
 		t.Fatal("nonexistent dir reported writable")
 	}
 	dir := t.TempDir()

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/groupmd"
-	"github.com/lml2468/xclaw/core/router"
+	"github.com/lml2468/octobuddy/core/groupmd"
+	"github.com/lml2468/octobuddy/core/router"
 )
 
 // TestGroupMDInjection verifies the [Group instructions] block from a per-channel
@@ -23,7 +23,7 @@ func TestGroupMDInjection(t *testing.T) {
 	st := newTestStore(t)
 	drv := &fakeDriver{threadID: "t", reply: "ok"}
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink()).
-		WithSystemPrompt("you are XClaw").
+		WithSystemPrompt("you are OctoBuddy").
 		WithGroupMD(groupmd.New(dir))
 
 	// Group turn for channel c1 → instructions injected.
@@ -42,7 +42,7 @@ func TestGroupMDInjection(t *testing.T) {
 	}
 	// Ordering: security prefix first, SOUL before instructions.
 	secIdx := strings.Index(sp, "UNTRUSTED")
-	soulIdx := strings.Index(sp, "you are XClaw")
+	soulIdx := strings.Index(sp, "you are OctoBuddy")
 	instrIdx := strings.Index(sp, "[Group instructions]")
 	if !(secIdx >= 0 && secIdx < soulIdx && soulIdx < instrIdx) {
 		t.Fatalf("ordering wrong: sec=%d soul=%d instr=%d\n%s", secIdx, soulIdx, instrIdx, sp)

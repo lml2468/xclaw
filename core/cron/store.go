@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a

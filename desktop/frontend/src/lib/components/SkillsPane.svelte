@@ -3,7 +3,7 @@
  // modal owns bot selection + scaffolding; this is just the bundle list +
  // file editor for one bot. Writes through to disk immediately (not part
  // of the basic/octo "save" dirty flag).
-  import { XClawService } from "../../../bindings/github.com/lml2468/xclaw/desktop";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { confirm } from "../confirm.svelte";
   import { errMsg } from "../errors";
   import { isImeComposing } from "../keys";
@@ -54,7 +54,7 @@
           name, description: descOf(fs["SKILL.md"] ?? ""), files: Object.keys(fs).length,
         }));
       } else {
-        next = ((await XClawService.BotSkillsList(capturedBot)) ?? []) as SkillInfo[];
+        next = ((await OctoBuddyService.BotSkillsList(capturedBot)) ?? []) as SkillInfo[];
       }
       if (gen !== loadGen || capturedBot !== botId) return;
       skills = next;
@@ -80,7 +80,7 @@
     try {
       const next = isPreview
         ? Object.keys(mockBot[capturedBot]?.[name] ?? {}).sort()
-        : ((await XClawService.BotSkillFiles(capturedBot, name)) ?? []) as string[];
+        : ((await OctoBuddyService.BotSkillFiles(capturedBot, name)) ?? []) as string[];
       if (gen !== selectGen || capturedBot !== botId || sel !== name) return;
       files = next;
       const first = files.find((f) => f === "SKILL.md") ?? files[0];
@@ -96,7 +96,7 @@
     const gen = ++openGen;
     const capturedBot = botId, capturedSel = sel;
     try {
-      const text = isPreview ? (mockBot[capturedBot]?.[capturedSel!]?.[rel] ?? "") : await XClawService.BotSkillRead(capturedBot, capturedSel!, rel);
+      const text = isPreview ? (mockBot[capturedBot]?.[capturedSel!]?.[rel] ?? "") : await OctoBuddyService.BotSkillRead(capturedBot, capturedSel!, rel);
       if (gen !== openGen || capturedBot !== botId || capturedSel !== sel || activeFile !== rel) return;
       content = text;
       dirty = false;
@@ -108,7 +108,7 @@
     if (!sel || !activeFile) return;
     try {
       if (isPreview) { (mockBot[botId][sel])[activeFile] = content; }
-      else await XClawService.BotSkillWrite(botId, sel, activeFile, content);
+      else await OctoBuddyService.BotSkillWrite(botId, sel, activeFile, content);
       dirty = false;
     } catch (e) { error = errMsg(e); }
   }
@@ -119,7 +119,7 @@
     const capturedBot = botId, capturedSel = sel;
     try {
       if (isPreview) { (mockBot[capturedBot][capturedSel])[rel] = ""; }
-      else await XClawService.BotSkillWrite(capturedBot, capturedSel, rel, "");
+      else await OctoBuddyService.BotSkillWrite(capturedBot, capturedSel, rel, "");
       if (capturedBot !== botId || capturedSel !== sel) return;
       newFilePath = "";
       await selectSkill(capturedSel);
@@ -132,7 +132,7 @@
     if (!(await confirm({ message: `删除文件 ${rel}?`, confirmLabel: "删除", danger: true }))) return;
     try {
       if (isPreview) { delete mockBot[botId][sel][rel]; }
-      else await XClawService.BotSkillDeleteFile(botId, sel, rel);
+      else await OctoBuddyService.BotSkillDeleteFile(botId, sel, rel);
       if (activeFile === rel) { activeFile = null; content = ""; }
       await selectSkill(sel);
     } catch (e) { error = errMsg(e); }
@@ -144,7 +144,7 @@
     const capturedBot = botId;
     try {
       if (isPreview) { (mockBot[capturedBot] ??= {})[name] = { "SKILL.md": `---\nname: ${name}\ndescription: One line on when to use this skill.\n---\n\n# ${name}\n` }; load(); }
-      else { await XClawService.BotSkillCreate(capturedBot, name); await load(); }
+      else { await OctoBuddyService.BotSkillCreate(capturedBot, name); await load(); }
       if (capturedBot !== botId) return;
       newName = "";
       selectSkill(name);
@@ -155,7 +155,7 @@
     if (!(await confirm({ message: `删除「${s.name}」?`, confirmLabel: "删除", danger: true }))) return;
     try {
       if (isPreview) { delete mockBot[botId][s.name]; load(); }
-      else { await XClawService.BotSkillDelete(botId, s.name); await load(); }
+      else { await OctoBuddyService.BotSkillDelete(botId, s.name); await load(); }
       if (sel === s.name) { sel = null; files = []; activeFile = null; content = ""; }
     } catch (e) { error = errMsg(e); }
   }

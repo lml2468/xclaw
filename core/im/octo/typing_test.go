@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lml2468/xclaw/core/agent"
+	"github.com/lml2468/octobuddy/core/agent"
 )
 
 // newTypingTestConnector builds a connector wired for offline typing-heartbeat

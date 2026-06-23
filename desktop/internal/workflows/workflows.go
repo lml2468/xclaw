@@ -1,7 +1,7 @@
 // Package workflows manages a bot's own workflow scripts. Each workflow is a
 // single.js file (an `export const meta = {…}` header plus a body using
 // agent/parallel/pipeline) living under the bot's CLAUDE_CONFIG_DIR
-// (~/.xclaw/<id>/.claude/workflows), so the agent's Workflow tool resolves
+// (~/.octobuddy/<id>/.claude/workflows), so the agent's Workflow tool resolves
 // them by name on every spawn — no per-turn sandbox linking. There is no
 // shared marketplace anymore: every bot owns its own workflows, period.
 //
@@ -18,17 +18,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lml2468/xclaw/core/safepath"
+	"github.com/lml2468/octobuddy/core/safepath"
 )
 
-// botDir is ~/.xclaw/<botID>/.claude/workflows — inside CLAUDE_CONFIG_DIR so
+// botDir is ~/.octobuddy/<botID>/.claude/workflows — inside CLAUDE_CONFIG_DIR so
 // the claude CLI loads it as user-scope on launch.
 func botDir(botID string) (string, error) {
 	if !safepath.ValidSlug(botID) {
 		return "", fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", botID)
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", botID, ".claude", "workflows"), nil
+	return filepath.Join(home, ".octobuddy", botID, ".claude", "workflows"), nil
 }
 
 // workflowRel returns "<name>.js" after slug-validating name. The result
@@ -165,7 +165,7 @@ func writeIn(root, name, content string) error {
 	return nil
 }
 
-// ensureBotWorkflowsDir creates ~/.xclaw/<botID>/.claude/workflows via the
+// ensureBotWorkflowsDir creates ~/.octobuddy/<botID>/.claude/workflows via the
 // dirfd-walk SafeMkdirAll so every intermediate component is symlink-
 // refused. replaces the prior `os.MkdirAll(root, …)`
 // in writeIn that followed any symlinked intermediate component.
@@ -174,7 +174,7 @@ func ensureBotWorkflowsDir(botID string) error {
 		return fmt.Errorf("invalid bot id %q", botID)
 	}
 	home, _ := os.UserHomeDir()
-	return safepath.SafeMkdirAll(home, ".xclaw/"+botID+"/.claude/workflows", 0o755)
+	return safepath.SafeMkdirAll(home, ".octobuddy/"+botID+"/.claude/workflows", 0o755)
 }
 
 func createIn(root, name string) error {
@@ -198,7 +198,7 @@ return { ok: true }
 	return writeIn(root, name, tmpl)
 }
 
-// ---- Per-bot workflows (~/.xclaw/<id>/.claude/workflows) ----
+// ---- Per-bot workflows (~/.octobuddy/<id>/.claude/workflows) ----
 
 // BotList returns the bot's workflow scripts.
 func BotList(botID string) ([]Info, error) {

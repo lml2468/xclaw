@@ -17,11 +17,11 @@ func setup(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 }
 
-// botPath returns ~/.xclaw/<id>/.claude/skills under the test HOME.
+// botPath returns ~/.octobuddy/<id>/.claude/skills under the test HOME.
 func botPath(t *testing.T, id string) string {
 	t.Helper()
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".xclaw", id, ".claude", "skills")
+	return filepath.Join(home, ".octobuddy", id, ".claude", "skills")
 }
 
 func TestBotCreateListFilesRoundTrip(t *testing.T) {

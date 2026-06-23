@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lml2468/xclaw/core/sandbox"
+	"github.com/lml2468/octobuddy/core/sandbox"
 )
 
 const testChannelDM = 1
@@ -26,7 +26,7 @@ func setHome(t *testing.T) string {
 func sandboxDir(t *testing.T, botID, sessionKey string) string {
 	t.Helper()
 	home := setHome(t)
-	dir := filepath.Join(home, ".xclaw", botID, "workspace",
+	dir := filepath.Join(home, ".octobuddy", botID, "workspace",
 		sandbox.SessionDirName(sandbox.SessionCtx{Kind: sandbox.KindDM, SessionKey: sessionKey}))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -91,9 +91,9 @@ func TestTreeShapeDirsFirst(t *testing.T) {
 func TestTreeUsesExplicitChannelType(t *testing.T) {
 	home := setHome(t)
 	botID, sessionKey := "bot1", "shared"
-	dmDir := filepath.Join(home, ".xclaw", botID, "workspace",
+	dmDir := filepath.Join(home, ".octobuddy", botID, "workspace",
 		sandbox.SessionDirName(sandbox.SessionCtx{Kind: sandbox.KindDM, SessionKey: sessionKey}))
-	groupDir := filepath.Join(home, ".xclaw", botID, "workspace",
+	groupDir := filepath.Join(home, ".octobuddy", botID, "workspace",
 		sandbox.SessionDirName(sandbox.SessionCtx{Kind: sandbox.KindGroup, SessionKey: sessionKey}))
 	write(t, filepath.Join(dmDir, "dm.txt"), "dm")
 	write(t, filepath.Join(groupDir, "group.txt"), "group")
@@ -109,7 +109,7 @@ func TestTreeUsesExplicitChannelType(t *testing.T) {
 
 func TestMemoryTreeAndFile(t *testing.T) {
 	home := setHome(t)
-	dir := filepath.Join(home, ".xclaw", "bot1", "memory",
+	dir := filepath.Join(home, ".octobuddy", "bot1", "memory",
 		sandbox.SessionDirName(sandbox.SessionCtx{Kind: sandbox.KindDM, SessionKey: "u1"}))
 	write(t, filepath.Join(dir, "memory.md"), "# remembered")
 

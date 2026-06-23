@@ -14,7 +14,7 @@ import (
 	"sync"
 	"unicode/utf16"
 
-	"github.com/lml2468/xclaw/core/safety"
+	"github.com/lml2468/octobuddy/core/safety"
 )
 
 const (

@@ -46,6 +46,7 @@ func Decode(line []byte) (Envelope, error) { return wire.Decode(line) }
 type (
 	AuthBody               = wire.AuthBody
 	SessionSendBody        = wire.SessionSendBody
+	SessionAttachment      = wire.SessionAttachment
 	SessionHistoryBody     = wire.SessionHistoryBody
 	SessionsListBody       = wire.SessionsListBody
 	SessionSummary         = wire.SessionSummary

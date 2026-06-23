@@ -44,3 +44,15 @@ export const Envelope = wire$0.Envelope;
  * daemon's, for the contract surface they use.
  */
 export type Envelope = wire$0.Envelope;
+
+/**
+ * Re-export the wire vocabulary so callers depend on this package, not the
+ * daemon's, for the contract surface they use.
+ */
+export const SessionAttachment = wire$0.SessionAttachment;
+
+/**
+ * Re-export the wire vocabulary so callers depend on this package, not the
+ * daemon's, for the contract surface they use.
+ */
+export type SessionAttachment = wire$0.SessionAttachment;

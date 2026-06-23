@@ -238,13 +238,124 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 		}
 	}
 
-	if len(imageRelPaths) == 1 {
-		fmt.Fprintf(&b, "\n[已下载图片到本地: %s — 请用 Read 工具查看]", imageRelPaths[0])
-	} else if len(imageRelPaths) > 1 {
-		fmt.Fprintf(&b, "\n[已下载 %d 张图片到本地: %s — 请用 Read 工具逐个查看]",
-			len(imageRelPaths), strings.Join(imageRelPaths, ", "))
+	if len(imageRelPaths) > 0 {
+		b.WriteString("\n")
+		b.WriteString(RenderImageFragment(imageRelPaths))
 	}
 	return b.String()
+}
+
+// RenderImageFragment returns the prompt line listing downloaded image paths
+// in the format the agent already knows from IM inbound — a single
+// "[已下载图片到本地: …]" hint for one image, or a "[已下载 N 张图片到本地: …]"
+// hint for multiple. Empty for an empty slice. Composer attachments and IM
+// inbound both route through here so the agent sees one consistent shape.
+func RenderImageFragment(relPaths []string) string {
+	switch len(relPaths) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf("[已下载图片到本地: %s — 请用 Read 工具查看]", relPaths[0])
+	default:
+		return fmt.Sprintf("[已下载 %d 张图片到本地: %s — 请用 Read 工具逐个查看]",
+			len(relPaths), strings.Join(relPaths, ", "))
+	}
+}
+
+// RenderFileFragment returns the prompt block for a downloaded file —
+// "[文件: name]\n本地路径: relPath". Mirrors resolveFile's downloaded-file
+// branch; shared so Composer attachments produce an identical line.
+func RenderFileFragment(name, relPath string) string {
+	return fmt.Sprintf("[文件: %s]\n本地路径: %s", name, relPath)
+}
+
+// RenderInlinedFileFragment wraps a small text-like file's bytes in a
+// `<file_content name=… encoding="base64" bytes="…">…</file_content>` block —
+// the same envelope IM-inbound uses for text files under inlineFileMaxBytes.
+// Caller must check ShouldInlineAsText + the size cap.
+func RenderInlinedFileFragment(name string, body []byte) string {
+	return buildInlinedFileBody(name, body)
+}
+
+// ShouldInlineAsText reports whether a filename's extension is in the
+// text-like set the inbound path inlines (vs writes-then-references). Shared
+// so Composer's branching mirrors inbound's.
+func ShouldInlineAsText(name string) bool {
+	return textFileExtensions[extractExtension("", name)]
+}
+
+// MaxInlineFileBytes is the size cap (in bytes) above which a text-like
+// attachment is materialized to disk instead of inlined in the prompt.
+// Exposed so Composer-path callers can branch identically to inbound.
+const MaxInlineFileBytes = inlineFileMaxBytes
+
+// MaxImageBytes is the per-attachment image size cap shared by IM inbound and
+// Composer outbound. Bytes over this cap are rejected at write time.
+const MaxImageBytes = maxImageBytes
+
+// MaxFileBytes is the per-attachment file (non-image) size cap shared by IM
+// inbound and Composer outbound.
+const MaxFileBytes = maxFileDownloadBytes
+
+// MaxImagesPerSend is the per-message image cap (IM inbound enforces it as
+// MAX_IMAGES_PER_MESSAGE; Composer respects the same).
+const MaxImagesPerSend = maxImagesPerMessage
+
+// WriteSandboxImage SafeWrites the given image bytes into
+// <cwd>/.octobuddy-media/<uuid>-image.<ext> and returns the cwd-relative path
+// the prompt fragment uses. The Composer path calls this with bytes the
+// operator picked locally (no HTTP fetch). Mime must be in allowedImageTypes;
+// body must be <= MaxImageBytes and non-empty.
+func WriteSandboxImage(cwd, mime string, body []byte) (string, error) {
+	rawType := strings.ToLower(strings.TrimSpace(mime))
+	ext, ok := allowedImageTypes[rawType]
+	if !ok {
+		if rawType == "" {
+			rawType = "未知"
+		}
+		return "", fmt.Errorf("unsupported image type: %s", rawType)
+	}
+	if err := checkAttachmentSize(body, MaxImageBytes); err != nil {
+		return "", err
+	}
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir media dir: %w", err)
+	}
+	name := fmt.Sprintf("%s-image.%s", uuid.NewString(), ext)
+	if err := safepath.SafeWrite(cwd, filepath.Join(InboundMediaDir, name), body, 0o600); err != nil {
+		return "", fmt.Errorf("write image: %w", err)
+	}
+	return filepath.Join(InboundMediaDir, name), nil
+}
+
+// WriteSandboxFile SafeWrites the given file bytes into
+// <cwd>/.octobuddy-media/<uuid>-<safename> and returns the cwd-relative path
+// the prompt fragment uses. The operator-supplied name is sanitized to
+// [A-Za-z0-9._-] for the on-disk leaf — the original name is preserved for
+// the prompt label by callers.
+func WriteSandboxFile(cwd, name string, body []byte) (string, error) {
+	if err := checkAttachmentSize(body, MaxFileBytes); err != nil {
+		return "", err
+	}
+	if err := safepath.SafeMkdirAll(cwd, InboundMediaDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir media dir: %w", err)
+	}
+	safeName := sanitizeFileBaseName(name)
+	leaf := fmt.Sprintf("%s-%s", uuid.NewString(), safeName)
+	if err := safepath.SafeWrite(cwd, filepath.Join(InboundMediaDir, leaf), body, 0o600); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	return filepath.Join(InboundMediaDir, leaf), nil
+}
+
+func checkAttachmentSize(body []byte, max int64) error {
+	if len(body) == 0 {
+		return fmt.Errorf("empty attachment")
+	}
+	if int64(len(body)) > max {
+		return fmt.Errorf("exceeds size cap %s", formatBytes(max))
+	}
+	return nil
 }
 
 // downloadImage fetches url into <cwd>/.octobuddy-media/<uuid>-<safeName> and returns
@@ -357,7 +468,7 @@ func (g *Gateway) resolveFile(ctx context.Context, cwd string, att router.Attach
 	if relErr != nil {
 		rel = localPath
 	}
-	return fmt.Sprintf("[文件: %s]\n本地路径: %s", filename, rel)
+	return RenderFileFragment(filename, rel)
 }
 
 // fetchGuarded performs an SSRF-guarded GET, manually walking redirects so each

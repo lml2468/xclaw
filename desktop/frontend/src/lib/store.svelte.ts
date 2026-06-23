@@ -1,5 +1,6 @@
 import { Events } from "@wailsio/runtime";
 import { OctoBuddyService } from "../../bindings/github.com/lml2468/octobuddy/desktop";
+import { SessionAttachment } from "../../bindings/github.com/lml2468/octobuddy/core/control/wire/models";
 
 // The uid the desktop console talks to its bot under (a DM peer). Control-bus
 // sends carry no space, so the daemon derives the session key as exactly this
@@ -28,6 +29,15 @@ const TURN_SWEEP_MS = 30 * 1000;
 
 export type Role = "user" | "assistant" | "tool";
 
+// MessageAttachment is display-only metadata for the chip row inside a
+// user-role bubble. The bytes were shipped via SessionAttachment on the
+// wire; this struct only carries enough info for the chip.
+export interface MessageAttachment {
+  name: string;
+  kind: "image" | "file";
+  size: number;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -39,6 +49,14 @@ export interface Message {
  // marker so the operator can tell at a glance that a prompt came from
  // automation. Optional / undefined for legacy non-cron messages.
   cron?: boolean;
+ // attachments are display-only metadata for files the operator sent
+ // alongside this user message. The actual bytes already shipped over the
+ // wire (and the daemon wrote them into the session sandbox + appended
+ // the agent-facing prompt fragments to .text); these chips just give the
+ // sender visual proof of what went out. Live-only — a reload restores
+ // .text from persistence but does NOT restore this list (the operator
+ // can still see the prompt fragments inline in .text).
+  attachments?: MessageAttachment[];
  // senderUid / senderName identify the human who authored a user-role
  // message arriving from IM (a group can have N humans sharing one
  // session — the bubble shows the name so the operator can tell speakers
@@ -413,21 +431,29 @@ class Store {
     OctoBuddyService.History(botId, key, 0);
   }
 
-  send(text: string) {
+  send(text: string, attachments?: SessionAttachment[], chips?: MessageAttachment[]) {
     const botId = this.selectedBotId;
-    if (!botId || !text.trim()) return;
+    const trimmed = text.trim();
+    const hasAttachments = (attachments?.length ?? 0) > 0;
+    if (!botId || (!trimmed && !hasAttachments)) return;
  // Desktop only writes to the Console session. IM-originated sessions belong
  // to the remote human in DM/Group; the Composer is hidden for them, but
  // guard here too so a stray keybinding path can't inject as the bot.
     if (!this.isConsole && this.selectedKey != null) return;
     const key = CONSOLE_UID;
     const s = this.ensureSession(botId, key, Date.now(), 1);
-    s.messages.push({ id: newId(), role: "user", text, ts: Date.now() / 1000 });
+    s.messages.push({
+      id: newId(),
+      role: "user",
+      text: trimmed,
+      ts: Date.now() / 1000,
+      attachments: chips && chips.length > 0 ? chips : undefined,
+    });
     s.awaiting = true;
     s.awaitingSince = Date.now();
     s.lastActivity = Date.now();
     this.selectedKey = key;
-    OctoBuddyService.Send(botId, CONSOLE_UID, text);
+    OctoBuddyService.Send(botId, CONSOLE_UID, trimmed, attachments ?? []);
   }
 
  // Reset clears the resume id for the active session and wipes its visible

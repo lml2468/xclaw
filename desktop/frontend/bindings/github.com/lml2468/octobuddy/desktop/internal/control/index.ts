@@ -4,5 +4,6 @@
 export {
     CronCreateBody,
     CronUpdateBody,
-    Envelope
+    Envelope,
+    SessionAttachment
 } from "./models.js";

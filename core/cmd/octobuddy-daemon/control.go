@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -107,11 +108,24 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			if err != nil {
 				return nil, err
 			}
+			text := b.Text
+			if len(b.Attachments) > 0 {
+				extra, err := materializeComposerAttachments(t.gateway, b.UID, b.Attachments)
+				if err != nil {
+					return nil, err
+				}
+				if extra != "" {
+					if text != "" {
+						text += "\n\n"
+					}
+					text += extra
+				}
+			}
 			t.turnsWG.Add(1)
 			go func() {
 				defer t.turnsWG.Done()
 				d, herr := t.gateway.Handle(ctx, router.InboundMessage{
-					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: b.Text,
+					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: text,
 				})
 				if deps.broadcast == nil {
 					return
@@ -434,6 +448,86 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 		out = append(out, row)
 	}
 	return out
+}
+
+// composerAttachmentLimit caps how many attachments one Composer send can
+// carry — defense in depth on top of the per-attachment size cap. Generous
+// vs the IM-inbound image limit (gateway.MaxImagesPerSend = 6) since text
+// files inline cheaply.
+const composerAttachmentLimit = 10
+
+// materializeComposerAttachments writes each attachment's bytes into the
+// Console session's sandbox using the same gateway/media writers IM inbound
+// uses, then returns the concatenated prompt fragment the agent will see.
+// The fragment is identical in shape to what an IM peer sending the same
+// files would produce, so the agent's Read-tool prompting is uniform.
+//
+// Errors here bubble up to the control-bus caller (the GUI) as a session.send
+// rejection so the operator gets immediate feedback ("file too large", "no
+// sandbox configured") instead of a turn that silently lost its attachments.
+func materializeComposerAttachments(gw *gateway.Gateway, uid string, atts []control.SessionAttachment) (string, error) {
+	if len(atts) > composerAttachmentLimit {
+		return "", fmt.Errorf("attachment count %d exceeds limit %d", len(atts), composerAttachmentLimit)
+	}
+	cwd, err := gw.SessionCwd(router.ChannelDM, uid)
+	if err != nil {
+		return "", fmt.Errorf("resolve sandbox: %w", err)
+	}
+	if cwd == "" {
+		return "", fmt.Errorf("attachments require a sandbox; bot has no cwdBase configured")
+	}
+
+	var imageRels []string
+	var fileBlocks []string
+	imageBudget := 0
+	for i, att := range atts {
+		body, derr := base64.StdEncoding.DecodeString(att.Data)
+		if derr != nil {
+			return "", fmt.Errorf("attachment %d (%q): decode base64: %w", i, att.Name, derr)
+		}
+		switch att.Kind {
+		case "image":
+			if imageBudget >= gateway.MaxImagesPerSend {
+				return "", fmt.Errorf("attachment %d (%q): image budget exceeded (max %d per send)",
+					i, att.Name, gateway.MaxImagesPerSend)
+			}
+			rel, werr := gateway.WriteSandboxImage(cwd, att.Mime, body)
+			if werr != nil {
+				return "", fmt.Errorf("attachment %d (%q): %w", i, att.Name, werr)
+			}
+			imageRels = append(imageRels, rel)
+			imageBudget++
+		case "file", "":
+			// File path: inline small text-like files (mirrors IM inbound),
+			// write everything else to the sandbox + render a path hint.
+			if gateway.ShouldInlineAsText(att.Name) && len(body) <= gateway.MaxInlineFileBytes {
+				fileBlocks = append(fileBlocks, gateway.RenderInlinedFileFragment(att.Name, body))
+				continue
+			}
+			rel, werr := gateway.WriteSandboxFile(cwd, att.Name, body)
+			if werr != nil {
+				return "", fmt.Errorf("attachment %d (%q): %w", i, att.Name, werr)
+			}
+			fileBlocks = append(fileBlocks, gateway.RenderFileFragment(att.Name, rel))
+		default:
+			return "", fmt.Errorf("attachment %d (%q): unknown kind %q", i, att.Name, att.Kind)
+		}
+	}
+
+	var b strings.Builder
+	for _, blk := range fileBlocks {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(blk)
+	}
+	if img := gateway.RenderImageFragment(imageRels); img != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(img)
+	}
+	return b.String(), nil
 }
 
 // summariesFromSessions projects store session summaries onto the wire type,

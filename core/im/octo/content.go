@@ -445,22 +445,12 @@ func resolveMultipleForwardText(users []forwardUser, msgs []forwardMessage, apiU
 // embedded media URLs (inbound.ts resolveContent). Text is never empty for a
 // supported type, so the connector can stop dropping non-text payloads.
 func ResolveContent(p MessagePayload, apiURL string) ResolvedContent {
+	if marker, ok := urlMarkerForMessageType(p.Type); ok {
+		return resolveURLMarkerContent(marker, p.URL, apiURL)
+	}
 	switch p.Type {
 	case MsgText:
 		return ResolvedContent{Text: p.Content}
-
-	case MsgImage:
-		return resolveURLMarkerContent("[图片]", p.URL, apiURL)
-
-	case MsgGIF:
-		return resolveURLMarkerContent("[GIF]", p.URL, apiURL)
-
-	case MsgVoice:
-		// The model receives the URL as a marker; transcription is out of scope.
-		return resolveURLMarkerContent("[语音消息]", p.URL, apiURL)
-
-	case MsgVideo:
-		return resolveURLMarkerContent("[视频]", p.URL, apiURL)
 
 	case MsgFile:
 		return resolveFileContent(p, apiURL)
@@ -480,6 +470,22 @@ func ResolveContent(p MessagePayload, apiURL string) ResolvedContent {
 
 	default:
 		return resolveUnknownContent(p)
+	}
+}
+
+func urlMarkerForMessageType(t MessageType) (string, bool) {
+	switch t {
+	case MsgImage:
+		return "[图片]", true
+	case MsgGIF:
+		return "[GIF]", true
+	case MsgVoice:
+		// The model receives the URL as a marker; transcription is out of scope.
+		return "[语音消息]", true
+	case MsgVideo:
+		return "[视频]", true
+	default:
+		return "", false
 	}
 }
 

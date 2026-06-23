@@ -201,9 +201,7 @@ func parseOneShot(schedule string) (time.Time, bool) {
 	// UTC round-trip probe: if time.Date had to normalize any field, the rendered
 	// field won't match what the user wrote. This catches offset rollover too
 	// (e.g. 2026-02-31T00:00:00+08:00, which would otherwise roll into March).
-	probe := time.Date(yr, time.Month(mo), day, hh, mm, ss, 0, time.UTC)
-	if probe.Year() != yr || int(probe.Month()) != mo || probe.Day() != day ||
-		probe.Hour() != hh || probe.Minute() != mm || probe.Second() != ss {
+	if !validWallClock(yr, mo, day, hh, mm, ss) {
 		return time.Time{}, false
 	}
 	// Parse the actual instant honoring the zone. The zone-less form is the local
@@ -216,6 +214,16 @@ func parseOneShot(schedule string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
+}
+
+func validWallClock(yr, mo, day, hh, mm, ss int) bool {
+	probe := time.Date(yr, time.Month(mo), day, hh, mm, ss, 0, time.UTC)
+	return probe.Year() == yr &&
+		int(probe.Month()) == mo &&
+		probe.Day() == day &&
+		probe.Hour() == hh &&
+		probe.Minute() == mm &&
+		probe.Second() == ss
 }
 
 // normalizeRFC3339 renders the matched groups with an explicit seconds field

@@ -9,6 +9,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +26,26 @@ import (
 type EnvValue struct {
 	Value     string `json:"value,omitempty"`
 	SecretRef string `json:"secretRef,omitempty"`
+}
+
+// UnmarshalJSON also accepts the pre-#96 legacy shape, where each env entry
+// was a bare string ("OCTO_BOT_ID": "foo_bot") rather than a {value,secretRef}
+// object. Without this, every operator whose config predates the refactor
+// crashes the daemon on first launch of the new build. The encoder is
+// unchanged, so the next configstore write silently migrates the file to the
+// new shape.
+func (v *EnvValue) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		return json.Unmarshal(trimmed, &v.Value)
+	}
+	type raw EnvValue
+	var r raw
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	*v = EnvValue(r)
+	return nil
 }
 
 // AgentConfig is the on-disk "agent" block: the model and the model-gateway

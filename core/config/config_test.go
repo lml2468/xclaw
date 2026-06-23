@@ -349,3 +349,44 @@ func TestGatingFieldsResolution(t *testing.T) {
 		t.Fatalf("custom botBlocklist = %v, want [bad2 bad3]", custom.BotBlocklist)
 	}
 }
+
+// Pre-#96 configs serialized env values as bare strings:
+//
+//	"env": {"OCTO_BOT_ID": "foo_bot"}
+//
+// The refactor switched env to map[string]{value,secretRef}. EnvValue's custom
+// UnmarshalJSON keeps the legacy string shape readable so existing
+// ~/.xclaw/config.json files don't crash the daemon on first launch of the
+// new build.
+func TestEnvValueAcceptsLegacyString(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	writeFile(t, cfg, `{"bots":[{"id":"alpha","apiUrl":"https://octo.example","agent":{"env":{
+		"LEGACY":  "legacy-value",
+		"MODERN":  {"value": "modern-value"},
+		"SECRET":  {"secretRef": "env/SECRET"}
+	}}}]}`)
+	bots, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	env := bots[0].Agent.Env
+	if got, want := env["LEGACY"], (EnvValue{Value: "legacy-value"}); got != want {
+		t.Errorf("LEGACY = %+v, want %+v", got, want)
+	}
+	if got, want := env["MODERN"], (EnvValue{Value: "modern-value"}); got != want {
+		t.Errorf("MODERN = %+v, want %+v", got, want)
+	}
+	if got, want := env["SECRET"], (EnvValue{SecretRef: "env/SECRET"}); got != want {
+		t.Errorf("SECRET = %+v, want %+v", got, want)
+	}
+}
+
+// A non-string, non-object env payload (e.g. a number) must still surface a
+// JSON type error rather than being silently coerced.
+func TestEnvValueRejectsUnsupportedJSONType(t *testing.T) {
+	var v EnvValue
+	if err := json.Unmarshal([]byte(`42`), &v); err == nil {
+		t.Fatal("expected error for numeric env value, got nil")
+	}
+}

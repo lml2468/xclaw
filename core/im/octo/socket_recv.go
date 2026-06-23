@@ -61,7 +61,19 @@ func (s *socketConn) onRecv(body []byte) {
 	}
 	delete(s.decryptFails, idStr)
 	_ = s.writeRaw(encodeRecvack(messageID, messageSeq))
+	s.dispatchRecvMessage(idStr, messageSeq, fromUID, channelID, channelType, timestamp, payload, setting)
+}
 
+func (s *socketConn) dispatchRecvMessage(
+	idStr string,
+	messageSeq uint32,
+	fromUID string,
+	channelID string,
+	channelType byte,
+	timestamp uint32,
+	payload MessagePayload,
+	setting byte,
+) {
 	if s.onMessage != nil {
 		s.onMessage(BotMessage{
 			MessageID:   idStr,

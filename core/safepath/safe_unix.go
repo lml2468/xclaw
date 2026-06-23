@@ -213,41 +213,13 @@ func SafeWrite(root, rel string, data []byte, perm os.FileMode) error {
 
 	// Refuse to write through a leaf symlink (the invariant). AT_SYMLINK_
 	// NOFOLLOW makes fstatat report the symlink itself rather than its target.
-	var st unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), leaf, &st, unix.AT_SYMLINK_NOFOLLOW); err == nil {
-		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
-			return pathErrSymlink(rel)
-		}
-	} else if !errors.Is(err, unix.ENOENT) {
+	if err := refuseLeafSymlink(parent, leaf, rel); err != nil {
 		return err
 	}
 
-	tmpName, err := randomTmpName(leaf)
+	tmpName, err := writeTempFile(parent, leaf, data, perm)
 	if err != nil {
 		return err
-	}
-	// O_CREAT|O_EXCL so a same-name pre-create races us cleanly (we error
-	// out instead of clobbering); O_NOFOLLOW for symmetry with the rest of
-	// the walk; perm sanitized by the kernel's umask.
-	tmpFD, err := unix.Openat(int(parent.Fd()), tmpName,
-		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(perm))
-	if err != nil {
-		return err
-	}
-	tmp := os.NewFile(uintptr(tmpFD), tmpName)
-	if _, werr := tmp.Write(data); werr != nil {
-		tmp.Close()
-		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
-		return werr
-	}
-	if serr := tmp.Sync(); serr != nil {
-		tmp.Close()
-		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
-		return serr
-	}
-	if cerr := tmp.Close(); cerr != nil {
-		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
-		return cerr
 	}
 	// Renameat replaces the destination atomically; both ends use the same
 	// verified dirfd so neither path is re-traversed via the VFS.
@@ -256,6 +228,49 @@ func SafeWrite(root, rel string, data []byte, perm os.FileMode) error {
 		return rerr
 	}
 	return nil
+}
+
+func refuseLeafSymlink(parent *os.File, leaf, rel string) error {
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), leaf, &st, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
+			return pathErrSymlink(rel)
+		}
+	} else if !errors.Is(err, unix.ENOENT) {
+		return err
+	}
+	return nil
+}
+
+func writeTempFile(parent *os.File, leaf string, data []byte, perm os.FileMode) (string, error) {
+	tmpName, err := randomTmpName(leaf)
+	if err != nil {
+		return "", err
+	}
+	// O_CREAT|O_EXCL so a same-name pre-create races us cleanly (we error
+	// out instead of clobbering); O_NOFOLLOW for symmetry with the rest of
+	// the walk; perm sanitized by the kernel's umask.
+	tmpFD, err := unix.Openat(int(parent.Fd()), tmpName,
+		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(perm))
+	if err != nil {
+		return "", err
+	}
+	tmp := os.NewFile(uintptr(tmpFD), tmpName)
+	if _, werr := tmp.Write(data); werr != nil {
+		tmp.Close()
+		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
+		return "", werr
+	}
+	if serr := tmp.Sync(); serr != nil {
+		tmp.Close()
+		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
+		return "", serr
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		_ = unix.Unlinkat(int(parent.Fd()), tmpName, 0)
+		return "", cerr
+	}
+	return tmpName, nil
 }
 
 // SafeReadDir lists entries directly under <root>/<rel> (rel may be empty for

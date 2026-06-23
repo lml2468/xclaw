@@ -168,22 +168,44 @@ func Open(path string) (*Store, error) {
 // the RENAME-then-rollback path isn't always atomic for DDL.
 func migrateAgentSessions(db *sql.DB) error {
 	// 1. Does the table exist at all? (Fresh DB → skip; schema below creates it.)
+	hasTable, err := hasAgentSessionsTable(db)
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	// 2. Already composite? Ask SQLite which columns are PK members via
+	// PRAGMA table_info — the `pk` column is 0 for non-PK, 1+ for PK members
+	// in order. Composite = >= 2 PK columns; legacy = exactly 1.
+	pkCols, err := agentSessionsPKColumnCount(db)
+	if err != nil {
+		return err
+	}
+	if pkCols >= 2 {
+		return nil // already composite
+	}
+	return rebuildAgentSessions(db)
+}
+
+func hasAgentSessionsTable(db *sql.DB) (bool, error) {
 	var hasTable int
 	err := db.QueryRow(
 		`SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions'`,
 	).Scan(&hasTable)
 	if err == sql.ErrNoRows {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("agent_sessions detect: %w", err)
+		return false, fmt.Errorf("agent_sessions detect: %w", err)
 	}
-	// 2. Already composite? Ask SQLite which columns are PK members via
-	// PRAGMA table_info — the `pk` column is 0 for non-PK, 1+ for PK members
-	// in order. Composite = >= 2 PK columns; legacy = exactly 1.
+	return true, nil
+}
+
+func agentSessionsPKColumnCount(db *sql.DB) (int, error) {
 	rows, err := db.Query(`PRAGMA table_info(agent_sessions)`)
 	if err != nil {
-		return fmt.Errorf("agent_sessions table_info: %w", err)
+		return 0, fmt.Errorf("agent_sessions table_info: %w", err)
 	}
 	pkCols := 0
 	for rows.Next() {
@@ -194,7 +216,7 @@ func migrateAgentSessions(db *sql.DB) error {
 		)
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
 			rows.Close()
-			return fmt.Errorf("agent_sessions table_info scan: %w", err)
+			return 0, fmt.Errorf("agent_sessions table_info scan: %w", err)
 		}
 		if pk > 0 {
 			pkCols++
@@ -202,12 +224,13 @@ func migrateAgentSessions(db *sql.DB) error {
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("agent_sessions table_info rows: %w", err)
+		return 0, fmt.Errorf("agent_sessions table_info rows: %w", err)
 	}
 	rows.Close()
-	if pkCols >= 2 {
-		return nil // already composite
-	}
+	return pkCols, nil
+}
+
+func rebuildAgentSessions(db *sql.DB) error {
 	// 3. Legacy shape — rebuild. Wrap in a tx so a crash mid-migration can't
 	// orphan the data.
 	tx, err := db.Begin()

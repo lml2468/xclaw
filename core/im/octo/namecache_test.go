@@ -28,6 +28,66 @@ func TestRESTGetUserInfo(t *testing.T) {
 	}
 }
 
+// TestNameCacheResolvedHookFiresOnLazyFetch proves the resolved hook fires when
+// a background fetch lands a non-empty name — the signal the daemon uses to
+// re-broadcast session.upserted so a sidebar row that first painted with the
+// bare id updates to the resolved name without waiting for a turn. The hook
+// must carry the kind (user vs channel), the key, and the resolved name.
+func TestNameCacheResolvedHookFiresOnLazyFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"uid":"u1","name":"Alice"}`))
+	}))
+	defer srv.Close()
+	nc := newNameCache(NewRESTClient(srv.URL, func() string { return "tk" }))
+
+	type ev struct {
+		kind NameKind
+		key  string
+		name string
+	}
+	got := make(chan ev, 4)
+	nc.SetResolvedHook(func(kind NameKind, key, name string) { got <- ev{kind, key, name} })
+
+	// Cold miss returns "" and kicks the background fetch.
+	if v := nc.ResolveUser("u1"); v != "" {
+		t.Fatalf("first ResolveUser = %q, want empty (lazy fetch)", v)
+	}
+	select {
+	case e := <-got:
+		if e.kind != NameKindUser || e.key != "u1" || e.name != "Alice" {
+			t.Fatalf("hook fired with %+v, want {NameKindUser u1 Alice}", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolved hook never fired after lazy fetch")
+	}
+}
+
+// TestNameCacheResolvedHookSkipsKnownAndEmpty proves the hook does NOT fire when
+// the name didn't change: a LearnUser-seeded value re-confirmed by a fetch (no
+// new info), and a 404→"" result (which must not clobber a row back to its id
+// nor spam a broadcast). Notifying only on a real change keeps a sessions.list
+// prewarm burst from re-broadcasting rows whose names were already known.
+func TestNameCacheResolvedHookSkipsKnownAndEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound) // empty-name result
+	}))
+	defer srv.Close()
+	nc := newNameCache(NewRESTClient(srv.URL, func() string { return "tk" }))
+
+	var fired int32
+	nc.SetResolvedHook(func(NameKind, string, string) { atomic.AddInt32(&fired, 1) })
+
+	// A 404 fetch lands "" — must not fire the hook.
+	nc.fetchUser("ghost")
+	// A name already known via free-feed, re-stored with the same value — no change.
+	nc.LearnUser("u2", "Bob")
+	nc.storeName(NameKindUser, "u2", nc.users, "u:u2", "Bob")
+
+	if n := atomic.LoadInt32(&fired); n != 0 {
+		t.Fatalf("hook fired %d times for empty/unchanged names, want 0", n)
+	}
+}
+
 // TestRESTGetUserInfo404 proves the documented 404→"" soft-degrade — a missing
 // uid is a normal not-found, not an error to log.
 func TestRESTGetUserInfo404(t *testing.T) {

@@ -298,6 +298,17 @@ func (c *Connector) BotUID() string { return c.uid() }
 // so most uids never trigger a network call.
 func (c *Connector) UserName(uid string) string { return c.names.ResolveUser(uid) }
 
+// SetNameResolvedHook registers a callback fired when a background name fetch
+// resolves a DM peer (NameKindUser) or group/thread (NameKindChannel) to a new
+// non-empty display name. The daemon wires it to re-broadcast session.upserted
+// so a sidebar row that first painted with the bare id updates to the resolved
+// name without waiting for the next turn (sessions.list's prewarm waits only a
+// short budget while the fetch itself runs on a longer deadline). Set during
+// bot setup, before Connect.
+func (c *Connector) SetNameResolvedHook(fn func(kind NameKind, key, name string)) {
+	c.names.SetResolvedHook(fn)
+}
+
 // ChannelName returns the cached display name for a channel id, or "" if
 // unknown. For a bare group id it's the group's name; for a thread compound
 // "<g>____<s>" it's the THREAD's own name (the parent group's name is a

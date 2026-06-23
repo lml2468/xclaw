@@ -326,6 +326,10 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 		WithMediaAuth(connector.MediaAuth())
 	if srv != nil {
 		gw = gw.WithSessionTouchNotifier(sessionTouchBroadcaster(srv, cfg.BotID, st, connector))
+		// Push a fresh session.upserted when a late name fetch resolves, so a
+		// sidebar row that first painted with the bare id (DM peer / group name
+		// not yet cached at sessions.list time) updates without a turn.
+		connector.SetNameResolvedHook(nameResolvedBroadcaster(srv, cfg.BotID, st, connector))
 	}
 	connector.SetGateway(gw)
 

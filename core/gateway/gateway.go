@@ -849,11 +849,21 @@ func (g *Gateway) buildSystemPrompt(msg router.InboundMessage, rosterPrefix stri
 	if rosterPrefix != "" {
 		parts = append(parts, safety.TrustedText(rosterPrefix))
 	}
+	parts = g.appendGroupInstructions(parts, msg)
+	parts = g.appendPersonaInstructions(parts)
+	return joinSystemPromptParts(parts)
+}
+
+func (g *Gateway) appendGroupInstructions(parts []safety.SafeText, msg router.InboundMessage) []safety.SafeText {
 	if g.groupMD != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
 		if instr, ok := g.groupMD.Load(msg.ChannelID); ok {
 			parts = append(parts, safety.TrustedText("[Group instructions]\n"+instr))
 		}
 	}
+	return parts
+}
+
+func (g *Gateway) appendPersonaInstructions(parts []safety.SafeText) []safety.SafeText {
 	if g.persona.Configured() {
 		if p := g.persona.BuildGroupSystemPrompt(); p != "" {
 			parts = append(parts, safety.TrustedText(p))
@@ -862,6 +872,10 @@ func (g *Gateway) buildSystemPrompt(msg router.InboundMessage, rosterPrefix stri
 			parts = append(parts, safety.TrustedText(h))
 		}
 	}
+	return parts
+}
+
+func joinSystemPromptParts(parts []safety.SafeText) string {
 	var b strings.Builder
 	for i, p := range parts {
 		if i > 0 {

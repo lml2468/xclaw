@@ -15,16 +15,42 @@ import (
 // --- resolveMentions: structured @[uid:name] ---------------------------------
 
 func TestResolveStructuredMentions(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        string
-		memberMap    map[string]string
-		isValidUid   func(string) bool
-		wantContent  string
-		wantEntities []MentionEntity
-		wantUids     []string
-		wantAll      bool
-	}{
+	for _, tt := range structuredMentionCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveMentions(tt.input, tt.memberMap, tt.isValidUid)
+			if res.finalContent != tt.wantContent {
+				t.Errorf("content = %q, want %q", res.finalContent, tt.wantContent)
+			}
+			if !reflect.DeepEqual(res.mentionEntries, tt.wantEntities) {
+				t.Errorf("entities = %+v, want %+v", res.mentionEntries, tt.wantEntities)
+			}
+			if !reflect.DeepEqual(res.mentionUids, tt.wantUids) {
+				t.Errorf("uids = %+v, want %+v", res.mentionUids, tt.wantUids)
+			}
+			if res.mentionAll != tt.wantAll {
+				t.Errorf("mentionAll = %v, want %v", res.mentionAll, tt.wantAll)
+			}
+		})
+	}
+}
+
+type structuredMentionCase struct {
+	name         string
+	input        string
+	memberMap    map[string]string
+	isValidUid   func(string) bool
+	wantContent  string
+	wantEntities []MentionEntity
+	wantUids     []string
+	wantAll      bool
+}
+
+func structuredMentionCases() []structuredMentionCase {
+	return append(structuredMentionBasicCases(), structuredMentionValidationCases()...)
+}
+
+func structuredMentionBasicCases() []structuredMentionCase {
+	return []structuredMentionCase{
 		{
 			name:        "single structured mention",
 			input:       "hey @[u1:Alice] welcome",
@@ -45,6 +71,21 @@ func TestResolveStructuredMentions(t *testing.T) {
 			wantUids: []string{"u1", "u2"},
 		},
 		{
+			name:        "CJK display name UTF-16 offsets",
+			input:       "嗨 @[u1:小明] 你好",
+			wantContent: "嗨 @小明 你好",
+			// "嗨 " = 2 UTF-16 units, "@小明" = 3 units.
+			wantEntities: []MentionEntity{
+				{UID: "u1", Offset: 2, Length: 3},
+			},
+			wantUids: []string{"u1"},
+		},
+	}
+}
+
+func structuredMentionValidationCases() []structuredMentionCase {
+	return []structuredMentionCase{
+		{
 			name:         "hallucinated uid downgraded to plain text when isValidUid fails",
 			input:        "ping @[ghost:Nobody] please",
 			isValidUid:   func(uid string) bool { return uid == "real" },
@@ -63,16 +104,6 @@ func TestResolveStructuredMentions(t *testing.T) {
 			wantUids: []string{"real"},
 		},
 		{
-			name:        "CJK display name UTF-16 offsets",
-			input:       "嗨 @[u1:小明] 你好",
-			wantContent: "嗨 @小明 你好",
-			// "嗨 " = 2 UTF-16 units, "@小明" = 3 units.
-			wantEntities: []MentionEntity{
-				{UID: "u1", Offset: 2, Length: 3},
-			},
-			wantUids: []string{"u1"},
-		},
-		{
 			name:        "astral (emoji) before mention shifts UTF-16 offset by 2",
 			input:       "😀@[u1:A]",
 			wantContent: "😀@A",
@@ -82,24 +113,6 @@ func TestResolveStructuredMentions(t *testing.T) {
 			},
 			wantUids: []string{"u1"},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			res := resolveMentions(tt.input, tt.memberMap, tt.isValidUid)
-			if res.finalContent != tt.wantContent {
-				t.Errorf("content = %q, want %q", res.finalContent, tt.wantContent)
-			}
-			if !reflect.DeepEqual(res.mentionEntries, tt.wantEntities) {
-				t.Errorf("entities = %+v, want %+v", res.mentionEntries, tt.wantEntities)
-			}
-			if !reflect.DeepEqual(res.mentionUids, tt.wantUids) {
-				t.Errorf("uids = %+v, want %+v", res.mentionUids, tt.wantUids)
-			}
-			if res.mentionAll != tt.wantAll {
-				t.Errorf("mentionAll = %v, want %v", res.mentionAll, tt.wantAll)
-			}
-		})
 	}
 }
 
@@ -111,12 +124,28 @@ func TestResolvePlainFallback(t *testing.T) {
 		"Bob":        "u2",
 		"John Smith": "u3", // name with space — longest-prefix
 	}
-	tests := []struct {
-		name         string
-		input        string
-		wantContent  string
-		wantEntities []MentionEntity
-	}{
+	for _, tt := range plainFallbackCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveMentions(tt.input, members, nil)
+			if res.finalContent != tt.wantContent {
+				t.Errorf("content = %q, want %q", res.finalContent, tt.wantContent)
+			}
+			if !reflect.DeepEqual(res.mentionEntries, tt.wantEntities) {
+				t.Errorf("entities = %+v, want %+v", res.mentionEntries, tt.wantEntities)
+			}
+		})
+	}
+}
+
+type plainFallbackCase struct {
+	name         string
+	input        string
+	wantContent  string
+	wantEntities []MentionEntity
+}
+
+func plainFallbackCases() []plainFallbackCase {
+	return []plainFallbackCase{
 		{
 			name:        "simple @name resolves",
 			input:       "hi @Alice",
@@ -153,17 +182,6 @@ func TestResolvePlainFallback(t *testing.T) {
 				{UID: "u1", Offset: 0, Length: 6},
 			},
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			res := resolveMentions(tt.input, members, nil)
-			if res.finalContent != tt.wantContent {
-				t.Errorf("content = %q, want %q", res.finalContent, tt.wantContent)
-			}
-			if !reflect.DeepEqual(res.mentionEntries, tt.wantEntities) {
-				t.Errorf("entities = %+v, want %+v", res.mentionEntries, tt.wantEntities)
-			}
-		})
 	}
 }
 
@@ -232,32 +250,36 @@ func TestSplitProtectedRebase(t *testing.T) {
 		t.Fatalf("expected multiple segments, got %d: %+v", len(segs), segs)
 	}
 
-	// Reassemble and check the mention lands wholly in one segment, with a
-	// correctly rebased local offset.
-	var reassembled string
-	found := false
-	for _, seg := range segs {
-		segStart := seg.start
-		segEnd := segStart + utf16Len(seg.text)
-		reassembled += seg.text
-		for _, e := range res.mentionEntries {
-			if e.Offset >= segStart && e.Offset+e.Length <= segEnd {
-				local := e.Offset - segStart
-				localUnits := utf16.Encode([]rune(seg.text))
-				got := decodeUTF16(localUnits[local : local+e.Length])
-				if got != "@Carl" {
-					t.Errorf("rebased slice = %q, want %q", got, "@Carl")
-				}
-				found = true
-			}
-		}
-	}
+	reassembled, found := assertRebasedMention(t, segs, res.mentionEntries, "@Carl")
 	if !found {
 		t.Error("mention entity not found wholly within any segment")
 	}
 	if reassembled != res.finalContent {
 		t.Errorf("reassembled = %q, want %q", reassembled, res.finalContent)
 	}
+}
+
+func assertRebasedMention(t *testing.T, segs []segment, entries []MentionEntity, want string) (string, bool) {
+	t.Helper()
+	var reassembled string
+	found := false
+	for _, seg := range segs {
+		segStart := seg.start
+		segEnd := segStart + utf16Len(seg.text)
+		reassembled += seg.text
+		for _, e := range entries {
+			if e.Offset >= segStart && e.Offset+e.Length <= segEnd {
+				local := e.Offset - segStart
+				localUnits := utf16.Encode([]rune(seg.text))
+				got := decodeUTF16(localUnits[local : local+e.Length])
+				if got != want {
+					t.Errorf("rebased slice = %q, want %q", got, want)
+				}
+				found = true
+			}
+		}
+	}
+	return reassembled, found
 }
 
 func TestSplitProtectedKeepsSpacedNameWhole(t *testing.T) {

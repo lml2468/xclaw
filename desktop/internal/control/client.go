@@ -24,6 +24,7 @@ type (
 	Kind                = wire.Kind
 	AuthBody            = wire.AuthBody
 	SessionSendBody     = wire.SessionSendBody
+	SessionAttachment   = wire.SessionAttachment
 	SessionHistoryBody  = wire.SessionHistoryBody
 	SessionsListBody    = wire.SessionsListBody
 	SessionSummary      = wire.SessionSummary

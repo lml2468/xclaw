@@ -214,3 +214,59 @@ export enum Kind {
      */
     KindEvent = "event",
 };
+
+/**
+ * SessionAttachment is one Composer-side attachment on a session.send.
+ * Daemon-side caps mirror gateway/media constants (MaxImageBytes /
+ * MaxFileBytes / MaxImagesPerSend) — over-cap entries are rejected at
+ * write time, not silently truncated.
+ */
+export class SessionAttachment {
+    /**
+     * Name is the operator-visible filename (sanitized client-side for
+     * display; the daemon re-sanitizes for the on-disk leaf).
+     */
+    "name": string;
+
+    /**
+     * Kind picks the prompt-fragment template: "image" routes through the
+     * image writer + image-Read hint, "file" through the file writer +
+     * inline-or-download branch.
+     */
+    "kind": string;
+
+    /**
+     * Mime is the client-detected content type, advisory. For images the
+     * daemon uses it to pick the extension (PNG/JPEG/GIF/WebP); for files
+     * it's ignored.
+     */
+    "mime"?: string;
+
+    /**
+     * Data is the base64-encoded file bytes.
+     */
+    "data": string;
+
+    /** Creates a new SessionAttachment instance. */
+    constructor($$source: Partial<SessionAttachment> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("data" in $$source)) {
+            this["data"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SessionAttachment instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SessionAttachment {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SessionAttachment($$parsedSource as Partial<SessionAttachment>);
+    }
+}

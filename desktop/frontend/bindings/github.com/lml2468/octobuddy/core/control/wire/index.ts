@@ -5,5 +5,6 @@ export {
     CronCreateBody,
     CronUpdateBody,
     Envelope,
-    Kind
+    Kind,
+    SessionAttachment
 } from "./models.js";

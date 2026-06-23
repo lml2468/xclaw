@@ -490,6 +490,23 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 	return b.String()
 }
 
+// SessionCwd resolves the on-disk sandbox cwd for a session — the directory
+// the agent will run inside, and where Composer-side attachments should land
+// so they share the IM-inbound .octobuddy-media/ layout. Returns ("", nil)
+// when the gateway has no sandbox configured (REPL / unit tests). Public so
+// control-bus handlers can prepare a turn's sandbox before calling Handle.
+func (g *Gateway) SessionCwd(channelType router.ChannelType, sessionKey string) (string, error) {
+	if g.cwdBase == "" {
+		return "", nil
+	}
+	sctx := sandbox.SessionCtx{Kind: kindFor(channelType), SessionKey: sessionKey}
+	cwd, err := sandbox.ResolveSessionCwd(g.cwdBase, sctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve sandbox cwd: %w", err)
+	}
+	return cwd, nil
+}
+
 // resolveSandbox resolves the per-session sandbox (cwd + memory dir). Returns
 // ("", "", nil) when the sandbox is disabled. A non-nil error means the cwd
 // could not be built — the caller MUST abort the turn rather than fall back to
@@ -497,15 +514,12 @@ func (g *Gateway) buildGroupPrompt(sessionKey string, msg router.InboundMessage)
 // auto-loaded by the CLI from CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude/),
 // not symlinked in per-turn — see CLAUDE.md.
 func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (cwd, memDir string, err error) {
-	if g.cwdBase == "" {
-		return "", "", nil
-	}
-	sctx := sandbox.SessionCtx{Kind: kindFor(msg.ChannelType), SessionKey: sessionKey}
-	cwd, err = sandbox.ResolveSessionCwd(g.cwdBase, sctx)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve sandbox cwd: %w", err)
+	cwd, err = g.SessionCwd(msg.ChannelType, sessionKey)
+	if err != nil || cwd == "" {
+		return "", "", err
 	}
 	if g.memoryBase != "" {
+		sctx := sandbox.SessionCtx{Kind: kindFor(msg.ChannelType), SessionKey: sessionKey}
 		memDir = sandbox.ResolveMemoryDir(g.memoryBase, sctx)
 	}
 	return cwd, memDir, nil

@@ -287,8 +287,11 @@ func (x *OctoBuddyService) Health() error { return x.send("health", nil) }
 func (x *OctoBuddyService) BotsList() error { return x.send("bots.list", nil) }
 
 // Send routes a DM message to a bot (botID may be empty for the default bot).
-func (x *OctoBuddyService) Send(botID, uid, text string) error {
-	return x.send("session.send", control.SessionSendBody{BotID: botID, UID: uid, Text: text})
+// attachments are optional Composer-side files (image / file) that the daemon
+// materializes into the session sandbox and folds into the agent prompt; nil
+// or empty preserves the text-only send path.
+func (x *OctoBuddyService) Send(botID, uid, text string, attachments []control.SessionAttachment) error {
+	return x.send("session.send", control.SessionSendBody{BotID: botID, UID: uid, Text: text, Attachments: attachments})
 }
 
 // Reset clears a session's resume mapping (start fresh).

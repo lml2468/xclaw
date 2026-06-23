@@ -298,9 +298,12 @@ export function SaveConfig(bots: configstore$0.BotConfig[], removedIDs: string[]
 
 /**
  * Send routes a DM message to a bot (botID may be empty for the default bot).
+ * attachments are optional Composer-side files (image / file) that the daemon
+ * materializes into the session sandbox and folds into the agent prompt; nil
+ * or empty preserves the text-only send path.
  */
-export function Send(botID: string, uid: string, text: string): $CancellablePromise<void> {
-    return $Call.ByID(34397910, botID, uid, text);
+export function Send(botID: string, uid: string, text: string, attachments: control$0.SessionAttachment[]): $CancellablePromise<void> {
+    return $Call.ByID(34397910, botID, uid, text, attachments);
 }
 
 /**

@@ -8,6 +8,11 @@
   const isUser = $derived(message.role === "user");
   const isTool = $derived(message.role === "tool");
   const html = $derived(!isUser && !isTool ? renderMarkdown(message.text) : "");
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
  // senderLabel resolves the human author of a user-role bubble. Fallback
  // chain: name (resolved via the daemon's nameCache for IM senders) → uid
  // (when name is unknown) → "You" (Console messages have neither). Group
@@ -103,7 +108,25 @@
         <span class="cron-tag" aria-label="定时任务">cron</span>
       {/if}
       {#if isUser}
-        <span class="plain">{message.text}</span>
+        {#if message.text}
+          <span class="plain">{message.text}</span>
+        {/if}
+        {#if message.attachments && message.attachments.length}
+          <div class="atts" aria-label="附件">
+            {#each message.attachments as a}
+              <span class="att" title="{a.name} · {fmtBytes(a.size)}">
+                <span class="ic" aria-hidden="true">
+                  {#if a.kind === "image"}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                  {:else}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  {/if}
+                </span>
+                <span class="name">{a.name}</span>
+              </span>
+            {/each}
+          </div>
+        {/if}
       {:else}
         <div class="md" onclick={onMarkdownCopyClick} role="presentation">{@html html}</div>
       {/if}
@@ -189,6 +212,22 @@
   }
   .bubble.user .plain { color: #fff; }
   .plain { white-space: pre-wrap; word-break: break-word; }
+ /* Attachment chips inside a user bubble — small filename row showing
+    what the operator sent alongside the text. Mirrors the Composer's
+    pending-attachment chips so the visual story is consistent: chip
+    appears in the Composer, chip lands in the bubble. */
+  .atts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .plain + .atts { margin-top: 8px; }
+  .att {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px 2px 6px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    font-size: 11px; line-height: 1.4;
+    color: #fff; max-width: 200px;
+  }
+  .att .ic { display: inline-flex; opacity: 0.85; }
+  .att .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
  /* "定时任务" corner badge — overlays the bubble's top-left corner,
     sticking outside by a few pixels so it reads as a stamp/postmark on
     the message rather than as content. Translucent green accent against

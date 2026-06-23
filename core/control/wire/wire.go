@@ -102,6 +102,33 @@ type SessionSendBody struct {
 	// UID is the DM uid; the server routes it as a DM inbound for the MVP.
 	UID  string `json:"uid"`
 	Text string `json:"text"`
+	// Attachments are Composer-side files (image / file) attached to this send.
+	// Bytes arrive base64-encoded over the control bus; the daemon writes them
+	// to the session sandbox via gateway/media's writers and appends the
+	// matching prompt fragment (same shape as IM-inbound media) to Text before
+	// driver.Query — so the agent sees identical structure regardless of
+	// whether a file came from an IM peer or the operator's desktop.
+	Attachments []SessionAttachment `json:"attachments,omitempty"`
+}
+
+// SessionAttachment is one Composer-side attachment on a session.send.
+// Daemon-side caps mirror gateway/media constants (MaxImageBytes /
+// MaxFileBytes / MaxImagesPerSend) — over-cap entries are rejected at
+// write time, not silently truncated.
+type SessionAttachment struct {
+	// Name is the operator-visible filename (sanitized client-side for
+	// display; the daemon re-sanitizes for the on-disk leaf).
+	Name string `json:"name"`
+	// Kind picks the prompt-fragment template: "image" routes through the
+	// image writer + image-Read hint, "file" through the file writer +
+	// inline-or-download branch.
+	Kind string `json:"kind"`
+	// Mime is the client-detected content type, advisory. For images the
+	// daemon uses it to pick the extension (PNG/JPEG/GIF/WebP); for files
+	// it's ignored.
+	Mime string `json:"mime,omitempty"`
+	// Data is the base64-encoded file bytes.
+	Data string `json:"data"`
 }
 
 type SessionHistoryBody struct {

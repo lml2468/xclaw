@@ -754,28 +754,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return nil
 	}
 
-	// Terminal agent error: treat like the timeout path. Do NOT persist the
-	// partial reply as the assistant turn and do NOT advance the resume id —
-	// otherwise an errored turn silently commits a truncated answer and skips
-	// forward, corrupting continuity. Signal the user and release the lock. An
-	// upstream rate-limit / overload gets a distinct "服务繁忙" reply (with the
-	// reset window when the agent reported one) so it reads as capacity, not a bug.
-	if termErr != "" {
-		if termTransient {
-			fmt.Fprintf(os.Stderr, "[gateway] transient upstream error (session=%s): %s\n", sessionKey, termErr)
-			reply := busyReply
-			if termHint != "" {
-				reply = busyReply + "（" + termHint + " 后恢复）"
-			}
-			turnDelivered = true // bot saw the message and we told the user the upstream is busy
-			g.sink.OnReply(sessionKey, reply)
-			return nil
-		}
-		// Non-transient terminal agent error: leave turnDelivered=false so the
-		// deferred RewindCursor lets the message reappear in the next [Recent
-		// group messages] delta — the bot didn't usefully process this turn.
-		fmt.Fprintf(os.Stderr, "[gateway] terminal agent error (session=%s): %s\n", sessionKey, termErr)
-		g.sink.OnReply(sessionKey, errorReply)
+	if handled := g.handleTerminalAgentError(sessionKey, termErr, termTransient, termHint, &turnDelivered); handled {
 		return nil
 	}
 
@@ -783,6 +762,25 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 	g.completeSuccessfulTurn(sessionKey, msg, newResume, text)
 	turnDelivered = true
 	return nil
+}
+
+func (g *Gateway) handleTerminalAgentError(sessionKey, termErr string, transient bool, hint string, delivered *bool) bool {
+	if termErr == "" {
+		return false
+	}
+	if transient {
+		fmt.Fprintf(os.Stderr, "[gateway] transient upstream error (session=%s): %s\n", sessionKey, termErr)
+		reply := busyReply
+		if hint != "" {
+			reply = busyReply + "（" + hint + " 后恢复）"
+		}
+		*delivered = true
+		g.sink.OnReply(sessionKey, reply)
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "[gateway] terminal agent error (session=%s): %s\n", sessionKey, termErr)
+	g.sink.OnReply(sessionKey, errorReply)
+	return true
 }
 
 func (g *Gateway) completeSuccessfulTurn(sessionKey string, msg router.InboundMessage, newResume, text string) {

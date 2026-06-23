@@ -59,375 +59,357 @@ type handlerDeps struct {
 // daemon shutdown cancels the in-flight agent subprocess) and reports a
 // non-accept decision or error back as an event.
 func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
+	d := controlCommandDispatcher{ctx: ctx, deps: deps}
+	handlers := map[string]func(json.RawMessage) (any, error){
+		"health":          func(json.RawMessage) (any, error) { return d.health(), nil },
+		"bots.list":       func(json.RawMessage) (any, error) { return d.deps.list(), nil },
+		"secret.inject":   d.secretInject,
+		"session.send":    d.sessionSend,
+		"session.history": d.sessionHistory,
+		"sessions.list":   d.sessionsList,
+		"usage.stats":     d.usageStats,
+		"session.reset":   d.sessionReset,
+		"cron.create":     d.cronCreate,
+		"cron.list":       d.cronList,
+		"cron.delete":     d.cronDelete,
+		"cron.update":     d.cronUpdate,
+	}
 	return func(cmdType string, body json.RawMessage) (any, error) {
-		switch cmdType {
-		case "health":
-			return control.HealthBody{
-				Uptime: int64(time.Since(deps.started).Seconds()),
-				Driver: deps.driver,
-				Bots:   deps.botCount(),
-			}, nil
-
-		case "bots.list":
-			return deps.list(), nil
-
-		case "secret.inject":
-			var b control.SecretInjectBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			// Never log b.Value, and never bubble the underlying secret-store
-			// error verbatim to the control bus — a future keyring lib that
-			// includes the value in its error message would otherwise leak
-			// the secret to the connected GUI. Log the real cause server-side
-			// only; return a neutral error to the caller.
-			if b.Clear {
-				if err := t.secrets.Clear(b.Kind); err != nil {
-					log.Printf("[secret] clear %s/%s: %v", b.BotID, b.Kind, err)
-					return nil, fmt.Errorf("secret.inject clear failed for %s/%s", b.BotID, b.Kind)
-				}
-			} else if err := t.secrets.Set(b.Kind, b.Value); err != nil {
-				log.Printf("[secret] set %s/%s: %v", b.BotID, b.Kind, err)
-				return nil, fmt.Errorf("secret.inject set failed for %s/%s", b.BotID, b.Kind)
-			}
-			return control.OKBody{OK: true}, nil
-
-		case "session.send":
-			var b control.SessionSendBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			if b.UID == "" {
-				return nil, fmt.Errorf("uid required")
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			text := b.Text
-			if len(b.Attachments) > 0 {
-				extra, err := materializeComposerAttachments(t.gateway, b.UID, b.Attachments)
-				if err != nil {
-					return nil, err
-				}
-				if extra != "" {
-					if text != "" {
-						text += "\n\n"
-					}
-					text += extra
-				}
-			}
-			t.turnsWG.Add(1)
-			go func() {
-				defer t.turnsWG.Done()
-				d, herr := t.gateway.Handle(ctx, router.InboundMessage{
-					ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: text,
-				})
-				if deps.broadcast == nil {
-					return
-				}
-				switch {
-				case herr != nil:
-					deps.broadcast("error", control.ErrorBody{
-						BotID: b.BotID, Scope: "turn", Message: herr.Error()})
-				case d != router.Accepted:
-					deps.broadcast("error", control.ErrorBody{
-						BotID: b.BotID, Scope: "turn",
-						Message: "message dropped: " + d.String(), Recoverable: true})
-				}
-			}()
-			return control.OKBody{OK: true}, nil
-
-		case "session.history":
-			var b control.SessionHistoryBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			limit := b.Limit
-			if limit <= 0 {
-				limit = 40
-			}
-			msgs, err := t.store.RecentMessages(b.SessionKey, limit)
-			if err != nil {
-				return nil, err
-			}
-			// Echo botId + key so the client routes the rows to the right session
-			// even if the user switched sessions while this fetch was in flight.
-			return control.HistoryResponse{
-				BotID:    b.BotID,
-				Key:      b.SessionKey,
-				Messages: historyFromMessages(msgs),
-			}, nil
-
-		case "sessions.list":
-			var b control.SessionsListBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			sums, err := t.store.ListSessions()
-			if err != nil {
-				return nil, err
-			}
-			// Prewarm the name cache before projecting summaries so the first
-			// sidebar paint shows names instead of bare ids. Channel names need
-			// a REST fetch; DM peer names usually free-feed from inbound, but
-			// a peer who hasn't spoken since restart needs an explicit lookup.
-			// Both prewarms run in parallel under a single 1.5s wall-clock cap.
-			if t.connector != nil {
-				prewarmNamesForSessions(t.connector, sums, 1500*time.Millisecond)
-			}
-			// Echo botId so the client never folds these rows into the wrong bot.
-			return control.SessionsListResponse{
-				BotID:    b.BotID,
-				Sessions: summariesFromSessions(sums, t.connector),
-			}, nil
-
-		case "usage.stats":
-			var b control.UsageStatsBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			// Since == 0 means all time; otherwise sum day buckets at or after it.
-			var u store.TokenUsage
-			if b.Since > 0 {
-				u, err = t.store.UsageSince(b.Since)
-			} else {
-				u, err = t.store.Usage()
-			}
-			if err != nil {
-				return nil, err
-			}
-			return control.UsageStats{
-				BotID:            b.BotID,
-				Since:            b.Since,
-				InputTokens:      u.InputTokens,
-				OutputTokens:     u.OutputTokens,
-				CachedTokens:     u.CachedTokens,
-				CacheWriteTokens: u.CacheWriteTokens,
-				CostUSD:          u.CostUSD,
-				Turns:            u.Turns,
-			}, nil
-
-		case "session.reset":
-			var b control.SessionSendBody // reuse {uid}
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			if b.UID == "" {
-				return nil, fmt.Errorf("uid required")
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			// Resume state is keyed by the router-derived sessionKey, not the raw
-			// uid — derive it the same way session.send does so reset actually
-			// clears the right entry (a control-bus DM has no space, so this is
-			// the uid today, but stays correct if a space is ever introduced).
-			key, err := router.InboundMessage{ChannelType: router.ChannelDM, FromUID: b.UID}.SessionKey()
-			if err != nil {
-				return nil, err
-			}
-			_ = t.store.ClearResume(key)
-			return control.OKBody{OK: true}, nil
-
-		case "cron.create":
-			var b control.CronCreateBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			if t.cron == nil {
-				return nil, fmt.Errorf("cron is not enabled for this bot")
-			}
-			// The requester identity is the SERVER-resolved owner uid, never the
-			// body uid. cron reaches the bus via an agent-controlled CLI, so a
-			// body uid is a forgeable claim (a prompt-injected agent could assert
-			// the owner's uid); the resolved owner is trusted server state. An
-			// unregistered bot has no owner yet → reject.
-			owner := t.cron.OwnerUID()
-			if owner == "" {
-				return nil, fmt.Errorf("bot owner not resolved yet; cannot create scheduled tasks")
-			}
-			// FromUID resolution branches by channel type:
-			//   - Console → cron.ConsoleUID (must match the renderer's
-			//     CONSOLE_UID so router.SessionKey hits the same session
-			//     the desktop Console view watches; stamping the owner
-			//     uid here would route fired replies to a phantom session)
-			//   - DM      → body.FromUID (the peer the task targets);
-			//     empty is a validation error at create time
-			//   - Group   → owner (the bot identifies as itself in the group)
-			// FromName follows the same sanitize-at-the-boundary rule —
-			// store sees only the safe form (Sec L2 defense in depth;
-			// the prompt path already sanitizes via groupctx, but the
-			// on-disk task shouldn't carry the unsafe form forward).
-			chType := channelTypeFor(b.ChannelType, b.ChannelID)
-			fromUID, err := resolveFromUID(chType, b.FromUID, owner)
-			if err != nil {
-				return nil, err
-			}
-			coords := cron.SessionCoords{
-				ChannelID:   b.ChannelID,
-				ChannelType: cron.ChannelKind(chType),
-				FromUID:     fromUID,
-				FromName:    safety.SanitizeDisplayName(b.FromName, owner),
-			}
-			task, err := t.cron.Create(cron.CreateParams{
-				Schedule:   b.Schedule,
-				Prompt:     b.Prompt,
-				Recurring:  b.Recurring,
-				Coords:     coords,
-				RequestUID: owner,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return cronTaskInfo(task), nil
-
-		case "cron.list":
-			var b control.CronListBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			if t.cron == nil {
-				return nil, fmt.Errorf("cron is not enabled for this bot")
-			}
-			tasks, err := t.cron.List()
-			if err != nil {
-				return nil, err
-			}
-			out := make([]control.CronTaskInfo, 0, len(tasks))
-			for _, task := range tasks {
-				out = append(out, cronTaskInfo(task))
-			}
-			// Wrap with the requested botId so the renderer's envelope handler
-			// can route the response to the right bot's local schedules map
-			// (the bus has no other channel for that correlation — a fast bot
-			// switch mid-fetch would otherwise misroute the tasks).
-			return control.CronListResponse{BotID: b.BotID, Tasks: out}, nil
-
-		case "cron.delete":
-			var b control.CronDeleteBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			if t.cron == nil {
-				return nil, fmt.Errorf("cron is not enabled for this bot")
-			}
-			// Gate on the verified server-resolved owner, not the body uid.
-			owner := t.cron.OwnerUID()
-			if owner == "" {
-				return nil, fmt.Errorf("bot owner not resolved yet; cannot delete scheduled tasks")
-			}
-			if err := t.cron.Delete(b.ID, owner); err != nil {
-				return nil, err
-			}
-			return control.OKBody{OK: true}, nil
-
-		case "cron.update":
-			var b control.CronUpdateBody
-			if err := json.Unmarshal(body, &b); err != nil {
-				return nil, err
-			}
-			t, err := deps.resolve(b.BotID)
-			if err != nil {
-				return nil, err
-			}
-			if t.cron == nil {
-				return nil, fmt.Errorf("cron is not enabled for this bot")
-			}
-			owner := t.cron.OwnerUID()
-			if owner == "" {
-				return nil, fmt.Errorf("bot owner not resolved yet; cannot update scheduled tasks")
-			}
-			// Detect the enabled-only fast path UP FRONT — a body that only
-			// sets Enabled (and ID) should forward zero Coords through to
-			// Manager.Update.enabledOnly, which then skips schedule
-			// validation entirely. Without this, channelTypeFor's DM
-			// default (= 1) would always make Coords.ChannelType non-zero
-			// even on a pure toggle, defeating the fast path and forcing
-			// the full-update validator that requires a Schedule.
-			bodyEnabledOnly := b.Schedule == "" && b.Prompt == "" && b.Recurring == nil &&
-				b.ChannelID == "" && b.ChannelType == 0 && b.FromUID == "" && b.FromName == "" &&
-				b.Enabled != nil
-			var coords cron.SessionCoords
-			if !bodyEnabledOnly {
-				// Full or partial-fields update: resolve FromUID by channel
-				// type. Empty body.FromUID for DM/Console targets means
-				// "preserve the existing binding" (the GUI's edit modal
-				// sends blank to honor the operator's "I'm only editing
-				// schedule" intent). Manager.Update's mutator interprets
-				// (ChannelID + FromUID + ChannelType all zero) as that
-				// preserve signal.
-				chType := channelTypeFor(b.ChannelType, b.ChannelID)
-				fromUID := b.FromUID
-				if chType == int(cron.ChannelConsole) {
-					// Always stamp the canonical Console uid — the
-					// renderer can't be trusted to keep this in sync and a
-					// Console task is meaningless if it can't reach the
-					// Console session.
-					fromUID = cron.ConsoleUID
-				} else if chType == int(router.ChannelGroup) {
-					// Group tasks ALWAYS run as the owner; a body.FromUID
-					// for Group is a category error and is ignored.
-					fromUID = owner
-				}
-				fromName := ""
-				if b.FromName != "" {
-					fromName = safety.SanitizeDisplayName(b.FromName, owner)
-				}
-				coords = cron.SessionCoords{
-					ChannelID:   b.ChannelID,
-					ChannelType: cron.ChannelKind(chType),
-					FromUID:     fromUID,
-					FromName:    fromName,
-				}
-			}
-			task, err := t.cron.Update(cron.UpdateParams{
-				ID:         b.ID,
-				Schedule:   b.Schedule,
-				Prompt:     b.Prompt,
-				Recurring:  b.Recurring,
-				Coords:     coords,
-				Enabled:    b.Enabled,
-				RequestUID: owner,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return cronTaskInfo(task), nil
-
-		default:
+		handler, ok := handlers[cmdType]
+		if !ok {
 			return nil, fmt.Errorf("unknown command %q", cmdType)
 		}
+		return handler(body)
 	}
+}
+
+type controlCommandDispatcher struct {
+	ctx  context.Context
+	deps handlerDeps
+}
+
+func decodeControlBody[T any](body json.RawMessage) (T, error) {
+	var b T
+	return b, json.Unmarshal(body, &b)
+}
+
+func (d controlCommandDispatcher) health() control.HealthBody {
+	return control.HealthBody{
+		Uptime: int64(time.Since(d.deps.started).Seconds()),
+		Driver: d.deps.driver,
+		Bots:   d.deps.botCount(),
+	}
+}
+
+func (d controlCommandDispatcher) secretInject(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.SecretInjectBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	if b.Clear {
+		if err := t.secrets.Clear(b.Kind); err != nil {
+			log.Printf("[secret] clear %s/%s: %v", b.BotID, b.Kind, err)
+			return nil, fmt.Errorf("secret.inject clear failed for %s/%s", b.BotID, b.Kind)
+		}
+	} else if err := t.secrets.Set(b.Kind, b.Value); err != nil {
+		log.Printf("[secret] set %s/%s: %v", b.BotID, b.Kind, err)
+		return nil, fmt.Errorf("secret.inject set failed for %s/%s", b.BotID, b.Kind)
+	}
+	return control.OKBody{OK: true}, nil
+}
+
+func (d controlCommandDispatcher) sessionSend(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.SessionSendBody](body)
+	if err != nil {
+		return nil, err
+	}
+	if b.UID == "" {
+		return nil, fmt.Errorf("uid required")
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	text, err := composerText(t.gateway, b)
+	if err != nil {
+		return nil, err
+	}
+	t.turnsWG.Add(1)
+	go d.runControlTurn(t, b, text)
+	return control.OKBody{OK: true}, nil
+}
+
+func composerText(gw *gateway.Gateway, b control.SessionSendBody) (string, error) {
+	text := b.Text
+	if len(b.Attachments) == 0 {
+		return text, nil
+	}
+	extra, err := materializeComposerAttachments(gw, b.UID, b.Attachments)
+	if err != nil {
+		return "", err
+	}
+	if extra == "" {
+		return text, nil
+	}
+	if text != "" {
+		text += "\n\n"
+	}
+	return text + extra, nil
+}
+
+func (d controlCommandDispatcher) runControlTurn(t *botTarget, b control.SessionSendBody, text string) {
+	defer t.turnsWG.Done()
+	decision, err := t.gateway.Handle(d.ctx, router.InboundMessage{
+		ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: text,
+	})
+	if d.deps.broadcast == nil {
+		return
+	}
+	if err != nil {
+		d.deps.broadcast("error", control.ErrorBody{BotID: b.BotID, Scope: "turn", Message: err.Error()})
+		return
+	}
+	if decision != router.Accepted {
+		d.deps.broadcast("error", control.ErrorBody{
+			BotID: b.BotID, Scope: "turn",
+			Message: "message dropped: " + decision.String(), Recoverable: true,
+		})
+	}
+}
+
+func (d controlCommandDispatcher) sessionHistory(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.SessionHistoryBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	limit := b.Limit
+	if limit <= 0 {
+		limit = 40
+	}
+	msgs, err := t.store.RecentMessages(b.SessionKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	return control.HistoryResponse{
+		BotID: b.BotID, Key: b.SessionKey, Messages: historyFromMessages(msgs),
+	}, nil
+}
+
+func (d controlCommandDispatcher) sessionsList(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.SessionsListBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	sums, err := t.store.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+	if t.connector != nil {
+		prewarmNamesForSessions(t.connector, sums, 1500*time.Millisecond)
+	}
+	return control.SessionsListResponse{
+		BotID: b.BotID, Sessions: summariesFromSessions(sums, t.connector),
+	}, nil
+}
+
+func (d controlCommandDispatcher) usageStats(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.UsageStatsBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	u, err := usageForRequest(t.store, b.Since)
+	if err != nil {
+		return nil, err
+	}
+	return control.UsageStats{
+		BotID: b.BotID, Since: b.Since, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
+		CachedTokens: u.CachedTokens, CacheWriteTokens: u.CacheWriteTokens, CostUSD: u.CostUSD, Turns: u.Turns,
+	}, nil
+}
+
+func usageForRequest(st *store.Store, since int64) (store.TokenUsage, error) {
+	if since > 0 {
+		return st.UsageSince(since)
+	}
+	return st.Usage()
+}
+
+func (d controlCommandDispatcher) sessionReset(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.SessionSendBody](body)
+	if err != nil {
+		return nil, err
+	}
+	if b.UID == "" {
+		return nil, fmt.Errorf("uid required")
+	}
+	t, err := d.deps.resolve(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	key, err := (router.InboundMessage{ChannelType: router.ChannelDM, FromUID: b.UID}).SessionKey()
+	if err != nil {
+		return nil, err
+	}
+	_ = t.store.ClearResume(key)
+	return control.OKBody{OK: true}, nil
+}
+
+func (d controlCommandDispatcher) cronCreate(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.CronCreateBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, owner, err := d.cronTarget(b.BotID, "create")
+	if err != nil {
+		return nil, err
+	}
+	coords, err := cronCreateCoords(b, owner)
+	if err != nil {
+		return nil, err
+	}
+	task, err := t.cron.Create(cron.CreateParams{
+		Schedule: b.Schedule, Prompt: b.Prompt, Recurring: b.Recurring, Coords: coords, RequestUID: owner,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cronTaskInfo(task), nil
+}
+
+func (d controlCommandDispatcher) cronTarget(botID, action string) (*botTarget, string, error) {
+	t, err := d.deps.resolve(botID)
+	if err != nil {
+		return nil, "", err
+	}
+	if t.cron == nil {
+		return nil, "", fmt.Errorf("cron is not enabled for this bot")
+	}
+	owner := t.cron.OwnerUID()
+	if owner == "" {
+		return nil, "", fmt.Errorf("bot owner not resolved yet; cannot %s scheduled tasks", action)
+	}
+	return t, owner, nil
+}
+
+func cronCreateCoords(b control.CronCreateBody, owner string) (cron.SessionCoords, error) {
+	chType := channelTypeFor(b.ChannelType, b.ChannelID)
+	fromUID, err := resolveFromUID(chType, b.FromUID, owner)
+	if err != nil {
+		return cron.SessionCoords{}, err
+	}
+	return cron.SessionCoords{
+		ChannelID:   b.ChannelID,
+		ChannelType: cron.ChannelKind(chType),
+		FromUID:     fromUID,
+		FromName:    safety.SanitizeDisplayName(b.FromName, owner),
+	}, nil
+}
+
+func (d controlCommandDispatcher) cronList(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.CronListBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, err := d.cronListTarget(b.BotID)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := t.cron.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]control.CronTaskInfo, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, cronTaskInfo(task))
+	}
+	return control.CronListResponse{BotID: b.BotID, Tasks: out}, nil
+}
+
+func (d controlCommandDispatcher) cronListTarget(botID string) (*botTarget, error) {
+	t, err := d.deps.resolve(botID)
+	if err != nil {
+		return nil, err
+	}
+	if t.cron == nil {
+		return nil, fmt.Errorf("cron is not enabled for this bot")
+	}
+	return t, nil
+}
+
+func (d controlCommandDispatcher) cronDelete(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.CronDeleteBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, owner, err := d.cronTarget(b.BotID, "delete")
+	if err != nil {
+		return nil, err
+	}
+	if err := t.cron.Delete(b.ID, owner); err != nil {
+		return nil, err
+	}
+	return control.OKBody{OK: true}, nil
+}
+
+func (d controlCommandDispatcher) cronUpdate(body json.RawMessage) (any, error) {
+	b, err := decodeControlBody[control.CronUpdateBody](body)
+	if err != nil {
+		return nil, err
+	}
+	t, owner, err := d.cronTarget(b.BotID, "update")
+	if err != nil {
+		return nil, err
+	}
+	task, err := t.cron.Update(cron.UpdateParams{
+		ID: b.ID, Schedule: b.Schedule, Prompt: b.Prompt, Recurring: b.Recurring,
+		Coords: cronUpdateCoords(b, owner), Enabled: b.Enabled, RequestUID: owner,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cronTaskInfo(task), nil
+}
+
+func cronUpdateCoords(b control.CronUpdateBody, owner string) cron.SessionCoords {
+	if cronUpdateEnabledOnly(b) {
+		return cron.SessionCoords{}
+	}
+	chType := channelTypeFor(b.ChannelType, b.ChannelID)
+	fromUID := b.FromUID
+	if chType == int(cron.ChannelConsole) {
+		fromUID = cron.ConsoleUID
+	} else if chType == int(router.ChannelGroup) {
+		fromUID = owner
+	}
+	fromName := ""
+	if b.FromName != "" {
+		fromName = safety.SanitizeDisplayName(b.FromName, owner)
+	}
+	return cron.SessionCoords{
+		ChannelID: b.ChannelID, ChannelType: cron.ChannelKind(chType), FromUID: fromUID, FromName: fromName,
+	}
+}
+
+func cronUpdateEnabledOnly(b control.CronUpdateBody) bool {
+	return b.Schedule == "" && b.Prompt == "" && b.Recurring == nil &&
+		b.ChannelID == "" && b.ChannelType == 0 && b.FromUID == "" && b.FromName == "" &&
+		b.Enabled != nil
 }
 
 // historyFromMessages projects store messages onto the wire history type.

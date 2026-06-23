@@ -145,6 +145,9 @@ func TestOnReplyEmptyFallback(t *testing.T) {
 	if _, hasMention := payload["mention"]; hasMention {
 		t.Error("fallback message must carry no mention object")
 	}
+
+	c.targets["normal"] = replyTarget{channelID: "ch", channelType: ChannelDM}
+	c.OnReply("normal", "hello @[u_carl:Carl] @all")
 }
 
 func TestOnReplyNoTargetSilent(t *testing.T) {

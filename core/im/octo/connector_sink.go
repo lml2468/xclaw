@@ -127,39 +127,54 @@ func (c *Connector) OnReply(sessionKey string, text string) {
 		return
 	}
 
-	// Resolve mentions against the channel roster. Plain @name resolution and the
-	// member-validity downgrade only apply to group channels (DMs have no
-	// roster); for DMs memberMap is nil and structured uids are trusted
-	// (isValidUid=nil), matching cc-channel-octo's "omit memberMap/isValidUid in
-	// DMs" path.
-	var memberMap map[string]string
-	var isValidUid func(string) bool
-	if tgt.channelType == ChannelGroup && c.gateway != nil {
-		memberMap = c.gateway.MemberMap(tgt.channelID)
-		channelID := tgt.channelID
-		isValidUid = func(uid string) bool { return c.gateway.IsMember(channelID, uid) }
-	}
+	memberMap, isValidUid := c.replyMentionScope(tgt)
 	res := resolveMentions(text, memberMap, isValidUid)
+	c.sendResolvedReply(sessionKey, tgt, res)
+}
 
-	// Protect each resolved @name span so splitMessageProtected won't cut through it.
-	ranges := make([]protectedRange, 0, len(res.mentionEntries))
-	for _, e := range res.mentionEntries {
+// Resolve mentions against the channel roster. Plain @name resolution and the
+// member-validity downgrade only apply to group channels (DMs have no roster);
+// for DMs memberMap is nil and structured uids are trusted (isValidUid=nil),
+// matching cc-channel-octo's "omit memberMap/isValidUid in DMs" path.
+func (c *Connector) replyMentionScope(tgt replyTarget) (map[string]string, func(string) bool) {
+	if tgt.channelType != ChannelGroup || c.gateway == nil {
+		return nil, nil
+	}
+	channelID := tgt.channelID
+	return c.gateway.MemberMap(channelID), func(uid string) bool {
+		return c.gateway.IsMember(channelID, uid)
+	}
+}
+
+func protectedRangesForMentions(entries []MentionEntity) []protectedRange {
+	ranges := make([]protectedRange, 0, len(entries))
+	for _, e := range entries {
 		ranges = append(ranges, protectedRange{start: e.Offset, end: e.Offset + e.Length})
 	}
+	return ranges
+}
 
+func mentionsInSegment(entries []MentionEntity, segStart, segEnd int) ([]MentionEntity, []string) {
+	var segEntities []MentionEntity
+	var segUids []string
+	for _, e := range entries {
+		if e.Offset >= segStart && e.Offset+e.Length <= segEnd {
+			segEntities = append(segEntities, MentionEntity{UID: e.UID, Offset: e.Offset - segStart, Length: e.Length})
+			segUids = append(segUids, e.UID)
+		}
+	}
+	return segEntities, segUids
+}
+
+func (c *Connector) sendResolvedReply(sessionKey string, tgt replyTarget, res resolveResult) {
+	// Protect each resolved @name span so splitMessageProtected won't cut through it.
+	ranges := protectedRangesForMentions(res.mentionEntries)
 	mentionAllConsumed := false
 	for _, seg := range splitMessageProtected(res.finalContent, 3500, ranges) {
 		segStart := seg.start
 		segEnd := segStart + utf16Len(seg.text)
 		// Entities fully inside this segment, rebased to segment-local offsets.
-		var segEntities []MentionEntity
-		var segUids []string
-		for _, e := range res.mentionEntries {
-			if e.Offset >= segStart && e.Offset+e.Length <= segEnd {
-				segEntities = append(segEntities, MentionEntity{UID: e.UID, Offset: e.Offset - segStart, Length: e.Length})
-				segUids = append(segUids, e.UID)
-			}
-		}
+		segEntities, segUids := mentionsInSegment(res.mentionEntries, segStart, segEnd)
 		// mentionAll applies to the FIRST segment only (stream-relay parity:
 		// avoids re-broadcasting @所有人 on every segment of a long reply).
 		useMentionAll := res.mentionAll && !mentionAllConsumed

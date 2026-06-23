@@ -566,53 +566,17 @@ func (c *Connector) onInbound(m BotMessage) {
 	if m.StreamOn {
 		return
 	}
-	c.hydrateInboundNames(&m)
 
-	// Render the payload to LLM-facing text. ResolveContent covers every type
-	// (text, media markers, location, card, RichText, MultipleForward) and
-	// sanitizes any untrusted name/body that lands in a label.
-	baseText := c.resolveInboundText(m.Payload)
-	if baseText == "" {
-		return // nothing renderable (e.g. an empty/unknown payload)
-	}
-
-	// OBO v2 detection (openclaw inbound.ts ~L2102-2116). The grantor relays a
-	// fan-out message carrying an origin-channel hint so the clone replies in the
-	// origin group. SECURITY: only trust OBO fields when the message is sent by
-	// the configured grantor — otherwise any user could forge a reply-as-someone.
-	oboV2 := c.isTrustedOBORelay(m)
-
-	// OBO v2 relevance filter (openclaw inbound.ts ~L2122-2160): drop pure @AI
-	// fan-out that does not address the grantor BEFORE recording any reply target
-	// or session state, so an irrelevant message never leaks into the clone's
-	// session.
-	if oboV2 && !c.persona.Relevant(m.PersonaMention()) {
-		c.logf("OBO v2 skipped — message not relevant to persona")
+	inbound, key, tgt, ok := c.prepareInboundTurn(m, uid)
+	if !ok {
 		return
 	}
-
-	inbound := c.buildInboundMessage(m, uid, baseText)
-	key, err := inbound.SessionKey()
-	if err != nil {
-		return // unroutable
-	}
-
-	// Resolve where (and as whom) the reply goes (openclaw inbound.ts
-	// ~L2301-2337). OBO v2: reply to the origin channel as the grantor. Group
-	// persona trigger-as-grantor: reply in the same group as the grantor.
-	tgt := c.inboundReplyTarget(m, uid, inbound.ChannelType, oboV2)
 	// Per-turn target travels with the queued turn so drainTurns can set
 	// c.targets[key] AT pop-time — the prior contract had onInbound write the
 	// global map directly here, which raced cron's RegisterReplyTarget. The
 	// reroute is computed once here so it isn't recomputed on every target
 	// read.
-	if tgt.channelType != ChannelDM {
-		if rerouted, did := RerouteTarget(key, tgt.channelID); did {
-			c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", key, tgt.channelID, rerouted)
-			tgt.channelID = rerouted
-			tgt.channelType = ChannelCommunityTopic
-		}
-	}
+	tgt = c.rerouteInboundReplyTarget(key, tgt)
 	// NB: also wrote c.targets[key] here "for the persona tests" —
 	// that put the race back, just for inbound-during-a-mid-flight-turn
 	// instead of cron-vs-inbound. If the gateway's in-flight Handle for a
@@ -624,6 +588,51 @@ func (c *Connector) onInbound(m BotMessage) {
 	// Acknowledge receipt (fire-and-forget) once we've decided to process it.
 	c.sendReadReceipt(m)
 
+	c.observeOrEnqueueInboundTurn(key, inbound, tgt, m.ChannelID, m.Payload.Reply)
+}
+
+func (c *Connector) prepareInboundTurn(m BotMessage, botUID string) (router.InboundMessage, string, replyTarget, bool) {
+	c.hydrateInboundNames(&m)
+
+	// ResolveContent covers every type and sanitizes untrusted names/bodies that
+	// land in labels.
+	baseText := c.resolveInboundText(m.Payload)
+	if baseText == "" {
+		return router.InboundMessage{}, "", replyTarget{}, false
+	}
+
+	// Only trust OBO fields when the message is sent by the configured grantor.
+	oboV2 := c.isTrustedOBORelay(m)
+	if oboV2 && !c.persona.Relevant(m.PersonaMention()) {
+		c.logf("OBO v2 skipped — message not relevant to persona")
+		return router.InboundMessage{}, "", replyTarget{}, false
+	}
+
+	inbound := c.buildInboundMessage(m, botUID, baseText)
+	key, err := inbound.SessionKey()
+	if err != nil {
+		return router.InboundMessage{}, "", replyTarget{}, false
+	}
+
+	// OBO v2 replies to the origin channel as the grantor. Group persona
+	// trigger-as-grantor replies in the same group as the grantor.
+	tgt := c.inboundReplyTarget(m, botUID, inbound.ChannelType, oboV2)
+	return inbound, key, tgt, true
+}
+
+func (c *Connector) rerouteInboundReplyTarget(key string, tgt replyTarget) replyTarget {
+	if tgt.channelType == ChannelDM {
+		return tgt
+	}
+	if rerouted, did := RerouteTarget(key, tgt.channelID); did {
+		c.logf("reroute reply for thread session %s: target %q -> %q (issue #98)", key, tgt.channelID, rerouted)
+		tgt.channelID = rerouted
+		tgt.channelType = ChannelCommunityTopic
+	}
+	return tgt
+}
+
+func (c *Connector) observeOrEnqueueInboundTurn(key string, inbound router.InboundMessage, tgt replyTarget, channelID string, reply *ReplyPayload) {
 	// A group message that doesn't trigger the bot is background context, not a
 	// turn: observe it so it becomes a later @-mention's delta. (The router
 	// would drop it anyway; observing first preserves group context.) Background
@@ -634,7 +643,7 @@ func (c *Connector) onInbound(m BotMessage) {
 	// Exception (G12): in a mention-free channel an unmentioned message IS a turn
 	// — hand it to the gateway so the router applies the mention-free + bot-loop
 	// policy. runTurn caches it into group context itself, so do NOT also Observe.
-	if c.shouldObserveBackground(inbound, m.ChannelID) {
+	if c.shouldObserveBackground(inbound, channelID) {
 		if c.gateway != nil {
 			c.gateway.Observe(inbound)
 		}
@@ -643,7 +652,7 @@ func (c *Connector) onInbound(m BotMessage) {
 	// Prepend the quoted-reply context to the CURRENT turn only (never stored
 	// history): the sender quoted a prior message, so give the agent that
 	// context fenced ahead of the real request (inbound.ts quotePrefix).
-	c.applyQuotePrefix(&inbound, m.Payload.Reply)
+	c.applyQuotePrefix(&inbound, reply)
 	// Dispatch the turn on the per-key worker so the WS read loop is not blocked
 	// for the whole (possibly multi-minute) turn. The router still serializes
 	// same-session turns; the per-key queue guarantees they reach the router in

@@ -163,9 +163,36 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 	if len(atts) == 0 {
 		return ""
 	}
+	doImage := imageMaterializationPlan(cwd, atts)
+	results := make([]attachmentMaterializationResult, len(atts))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, mediaConcurrency)
+	for i, att := range atts {
+		if !shouldMaterializeAttachment(att, doImage[i]) {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, att router.Attachment) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			results[i] = g.materializeOneAttachment(ctx, cwd, att)
+		}(i, att)
+	}
+	wg.Wait()
+	return renderMaterializedAttachments(results)
+}
 
-	// Honor maxImagesPerMessage deterministically by attachment order, decided
-	// up front so concurrency doesn't make the cutoff nondeterministic.
+type attachmentMaterializationResult struct {
+	imageRel  string
+	fileBlock string
+}
+
+func imageMaterializationPlan(cwd string, atts []router.Attachment) []bool {
 	doImage := make([]bool, len(atts))
 	imageBudget := 0
 	for i, att := range atts {
@@ -174,59 +201,37 @@ func (g *Gateway) materializeAttachments(ctx context.Context, cwd string, atts [
 			imageBudget++
 		}
 	}
+	return doImage
+}
 
-	// Per-attachment result, filled concurrently and assembled in order. Each
-	// goroutine writes only its own index, so no shared-write synchronization is
-	// needed beyond the WaitGroup join.
-	type result struct {
-		imageRel  string // non-empty → a downloaded image
-		fileBlock string // non-empty → an inline/description block
+func shouldMaterializeAttachment(att router.Attachment, doImage bool) bool {
+	switch att.Kind {
+	case router.AttachmentImage:
+		return doImage
+	case router.AttachmentFile:
+		return true
+	default:
+		return false
 	}
-	results := make([]result, len(atts))
+}
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, mediaConcurrency)
-	for i, att := range atts {
-		switch att.Kind {
-		case router.AttachmentImage:
-			if !doImage[i] {
-				continue
-			}
-		case router.AttachmentFile:
-			// always handled
-		default:
-			continue
+func (g *Gateway) materializeOneAttachment(ctx context.Context, cwd string, att router.Attachment) attachmentMaterializationResult {
+	switch att.Kind {
+	case router.AttachmentImage:
+		rel, err := g.downloadImage(ctx, cwd, att.URL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[gateway] inbound image skipped: %v\n", err)
+			return attachmentMaterializationResult{}
 		}
-		wg.Add(1)
-		go func(i int, att router.Attachment) {
-			defer wg.Done()
-			// Bound by mediaConcurrency, but honor ctx so a per-turn cancel
-			// (timeout / shutdown) releases the goroutine immediately
-			// instead of waiting on a busy slot whose holder may be slow
-			// to observe cancellation itself.
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
-			}
-			switch att.Kind {
-			case router.AttachmentImage:
-				rel, err := g.downloadImage(ctx, cwd, att.URL)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "[gateway] inbound image skipped: %v\n", err)
-					return
-				}
-				results[i].imageRel = rel
-			case router.AttachmentFile:
-				results[i].fileBlock = g.resolveFile(ctx, cwd, att)
-			}
-		}(i, att)
+		return attachmentMaterializationResult{imageRel: rel}
+	case router.AttachmentFile:
+		return attachmentMaterializationResult{fileBlock: g.resolveFile(ctx, cwd, att)}
+	default:
+		return attachmentMaterializationResult{}
 	}
-	wg.Wait()
+}
 
-	// Assemble in attachment order: file blocks inline; image paths gather into a
-	// single trailing Read hint.
+func renderMaterializedAttachments(results []attachmentMaterializationResult) string {
 	var b strings.Builder
 	var imageRelPaths []string
 	for i := range results {

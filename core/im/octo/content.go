@@ -337,22 +337,13 @@ func buildRichTextPlain(blocks []richTextBlock) string {
 // resolveInnerMessageText). Leaf bodies are NOT escaped here — the caller
 // sanitizes them once (see resolveMultipleForwardText).
 func resolveInnerMessageText(p forwardPayload, apiURL string) string {
+	if text, ok := simpleInnerMessageText(p, apiURL); ok {
+		return text
+	}
 	full := buildMediaURL(p.URL, apiURL)
 	switch MessageType(p.Type) {
 	case MsgText:
 		return p.Content
-	case MsgImage:
-		return withURL("[图片]", full)
-	case MsgGIF:
-		return withURL("[GIF]", full)
-	case MsgVoice:
-		return withURL("[语音]", full)
-	case MsgVideo:
-		return withURL("[视频]", full)
-	case MsgLocation:
-		return "[位置信息]"
-	case MsgCard:
-		return "[名片]"
 	case MsgFile:
 		// payload.name is user-controlled — sanitize before it enters the label.
 		label := "[文件]"
@@ -362,8 +353,6 @@ func resolveInnerMessageText(p forwardPayload, apiURL string) string {
 			}
 		}
 		return withURL(label, full)
-	case MsgMultipleForward:
-		return "[合并转发]"
 	case MsgRichText:
 		_, text := resolveRichTextContent(p.RichContent, p.Plain, apiURL)
 		if text == "" {
@@ -375,6 +364,28 @@ func resolveInnerMessageText(p forwardPayload, apiURL string) string {
 			return p.Content
 		}
 		return "[消息]"
+	}
+}
+
+func simpleInnerMessageText(p forwardPayload, apiURL string) (string, bool) {
+	full := buildMediaURL(p.URL, apiURL)
+	switch MessageType(p.Type) {
+	case MsgImage:
+		return withURL("[图片]", full), true
+	case MsgGIF:
+		return withURL("[GIF]", full), true
+	case MsgVoice:
+		return withURL("[语音]", full), true
+	case MsgVideo:
+		return withURL("[视频]", full), true
+	case MsgLocation:
+		return "[位置信息]", true
+	case MsgCard:
+		return "[名片]", true
+	case MsgMultipleForward:
+		return "[合并转发]", true
+	default:
+		return "", false
 	}
 }
 

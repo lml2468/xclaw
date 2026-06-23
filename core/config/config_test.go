@@ -22,6 +22,14 @@ func TestSingleBotDefaults(t *testing.T) {
 	cfg := filepath.Join(dir, "config.json")
 	writeFile(t, cfg, `{"bots":[{"id":"default","apiUrl":"https://octo.example","octoToken":"bf_x"}]}`)
 
+	b := loadSingleBot(t, cfg)
+	assertSingleBotIdentity(t, b)
+	assertSingleBotDerivedDirs(t, dir, b)
+}
+
+func loadSingleBot(t *testing.T, cfg string) Resolved {
+	t.Helper()
+
 	bots, err := Load(cfg)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -29,7 +37,12 @@ func TestSingleBotDefaults(t *testing.T) {
 	if len(bots) != 1 {
 		t.Fatalf("want 1 bot, got %d", len(bots))
 	}
-	b := bots[0]
+	return bots[0]
+}
+
+func assertSingleBotIdentity(t *testing.T, b Resolved) {
+	t.Helper()
+
 	if b.BotID != "default" {
 		t.Fatalf("botID = %q", b.BotID)
 	}
@@ -40,11 +53,14 @@ func TestSingleBotDefaults(t *testing.T) {
 	if b.RateLimit.MaxPerMinute != 30 || b.Context.MaxContextChars != 6000 {
 		t.Fatalf("defaults wrong: %+v", b)
 	}
-	// derived data dir
+}
+
+func assertSingleBotDerivedDirs(t *testing.T, dir string, b Resolved) {
+	t.Helper()
+
 	if b.DataDir != filepath.Join(dir, "default", "data") {
 		t.Fatalf("derived data dir wrong: %+v", b)
 	}
-	// derived sandbox dirs
 	if b.CwdBase != filepath.Join(dir, "default", "workspace") ||
 		b.MemoryBase != filepath.Join(dir, "default", "memory") ||
 		b.ClaudeConfigDir != filepath.Join(dir, "default", ".claude") {
@@ -317,11 +333,23 @@ func TestGatingFieldsResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
+	byID := resolvedByID(bots)
+	plain, custom := byID["plain"], byID["custom"]
+
+	assertPlainGatingFields(t, plain)
+	assertCustomGatingFields(t, custom)
+}
+
+func resolvedByID(bots []Resolved) map[string]Resolved {
 	byID := map[string]Resolved{}
 	for _, b := range bots {
 		byID[b.BotID] = b
 	}
-	plain, custom := byID["plain"], byID["custom"]
+	return byID
+}
+
+func assertPlainGatingFields(t *testing.T, plain Resolved) {
+	t.Helper()
 
 	if len(plain.MentionFreeGroups) != 0 {
 		t.Fatalf("plain mentionFreeGroups = %v, want []", plain.MentionFreeGroups)
@@ -335,6 +363,10 @@ func TestGatingFieldsResolution(t *testing.T) {
 	if len(plain.BotBlocklist) != 0 {
 		t.Fatalf("plain botBlocklist = %v, want []", plain.BotBlocklist)
 	}
+}
+
+func assertCustomGatingFields(t *testing.T, custom Resolved) {
+	t.Helper()
 
 	if len(custom.MentionFreeGroups) != 1 || custom.MentionFreeGroups[0] != "g-bot" {
 		t.Fatalf("custom mentionFreeGroups = %v, want [g-bot]", custom.MentionFreeGroups)

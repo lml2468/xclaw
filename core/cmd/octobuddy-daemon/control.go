@@ -459,43 +459,70 @@ func materializeComposerAttachments(gw *gateway.Gateway, uid string, atts []cont
 		return "", fmt.Errorf("attachments require a sandbox; bot has no cwdBase configured")
 	}
 
-	var imageRels []string
+	fileBlocks, imageRels, err := collectComposerAttachmentFragments(cwd, atts)
+	if err != nil {
+		return "", err
+	}
+	return renderComposerAttachmentPrompt(fileBlocks, imageRels), nil
+}
+
+func collectComposerAttachmentFragments(cwd string, atts []control.SessionAttachment) ([]string, []string, error) {
 	var fileBlocks []string
+	var imageRels []string
 	imageBudget := 0
 	for i, att := range atts {
-		body, derr := base64.StdEncoding.DecodeString(att.Data)
-		if derr != nil {
-			return "", fmt.Errorf("attachment %d (%q): decode base64: %w", i, att.Name, derr)
-		}
-		switch att.Kind {
-		case "image":
-			if imageBudget >= gateway.MaxImagesPerSend {
-				return "", fmt.Errorf("attachment %d (%q): image budget exceeded (max %d per send)",
-					i, att.Name, gateway.MaxImagesPerSend)
-			}
-			rel, werr := gateway.WriteSandboxImage(cwd, att.Mime, body)
-			if werr != nil {
-				return "", fmt.Errorf("attachment %d (%q): %w", i, att.Name, werr)
-			}
-			imageRels = append(imageRels, rel)
-			imageBudget++
-		case "file", "":
-			// File path: inline small text-like files (mirrors IM inbound),
-			// write everything else to the sandbox + render a path hint.
-			if gateway.ShouldInlineAsText(att.Name) && len(body) <= gateway.MaxInlineFileBytes {
-				fileBlocks = append(fileBlocks, gateway.RenderInlinedFileFragment(att.Name, body))
-				continue
-			}
-			rel, werr := gateway.WriteSandboxFile(cwd, att.Name, body)
-			if werr != nil {
-				return "", fmt.Errorf("attachment %d (%q): %w", i, att.Name, werr)
-			}
-			fileBlocks = append(fileBlocks, gateway.RenderFileFragment(att.Name, rel))
-		default:
-			return "", fmt.Errorf("attachment %d (%q): unknown kind %q", i, att.Name, att.Kind)
+		if err := collectComposerAttachmentFragment(cwd, i, att, &imageBudget, &fileBlocks, &imageRels); err != nil {
+			return nil, nil, err
 		}
 	}
+	return fileBlocks, imageRels, nil
+}
 
+func collectComposerAttachmentFragment(cwd string, index int, att control.SessionAttachment, imageBudget *int, fileBlocks *[]string, imageRels *[]string) error {
+	body, derr := base64.StdEncoding.DecodeString(att.Data)
+	if derr != nil {
+		return fmt.Errorf("attachment %d (%q): decode base64: %w", index, att.Name, derr)
+	}
+	switch att.Kind {
+	case "image":
+		return collectComposerImageAttachment(cwd, index, att, body, imageBudget, imageRels)
+	case "file", "":
+		return collectComposerFileAttachment(cwd, index, att, body, fileBlocks)
+	default:
+		return fmt.Errorf("attachment %d (%q): unknown kind %q", index, att.Name, att.Kind)
+	}
+}
+
+func collectComposerImageAttachment(cwd string, index int, att control.SessionAttachment, body []byte, imageBudget *int, imageRels *[]string) error {
+	if *imageBudget >= gateway.MaxImagesPerSend {
+		return fmt.Errorf("attachment %d (%q): image budget exceeded (max %d per send)",
+			index, att.Name, gateway.MaxImagesPerSend)
+	}
+	rel, werr := gateway.WriteSandboxImage(cwd, att.Mime, body)
+	if werr != nil {
+		return fmt.Errorf("attachment %d (%q): %w", index, att.Name, werr)
+	}
+	*imageRels = append(*imageRels, rel)
+	*imageBudget = *imageBudget + 1
+	return nil
+}
+
+func collectComposerFileAttachment(cwd string, index int, att control.SessionAttachment, body []byte, fileBlocks *[]string) error {
+	// File path: inline small text-like files (mirrors IM inbound), write
+	// everything else to the sandbox + render a path hint.
+	if gateway.ShouldInlineAsText(att.Name) && len(body) <= gateway.MaxInlineFileBytes {
+		*fileBlocks = append(*fileBlocks, gateway.RenderInlinedFileFragment(att.Name, body))
+		return nil
+	}
+	rel, werr := gateway.WriteSandboxFile(cwd, att.Name, body)
+	if werr != nil {
+		return fmt.Errorf("attachment %d (%q): %w", index, att.Name, werr)
+	}
+	*fileBlocks = append(*fileBlocks, gateway.RenderFileFragment(att.Name, rel))
+	return nil
+}
+
+func renderComposerAttachmentPrompt(fileBlocks, imageRels []string) string {
 	var b strings.Builder
 	for _, blk := range fileBlocks {
 		if b.Len() > 0 {
@@ -509,7 +536,7 @@ func materializeComposerAttachments(gw *gateway.Gateway, uid string, atts []cont
 		}
 		b.WriteString(img)
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // summariesFromSessions projects store session summaries onto the wire type,

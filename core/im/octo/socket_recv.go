@@ -35,9 +35,7 @@ func (s *socketConn) onRecv(body []byte) {
 	}
 	messageSeq, _ := d.readInt32()
 	timestamp, _ := d.readInt32()
-	if settingTopic(setting) {
-		_, _ = d.readString() // topic (unused)
-	}
+	readTopicIfPresent(d, setting)
 	encrypted := d.readRemaining()
 
 	// A truncated/short frame leaves channelID empty (decoder returns errShort +
@@ -75,6 +73,12 @@ func (s *socketConn) onRecv(body []byte) {
 			Payload:     payload,
 			StreamOn:    settingStreamOn(setting),
 		})
+	}
+}
+
+func readTopicIfPresent(d *decoder, setting byte) {
+	if settingTopic(setting) {
+		_, _ = d.readString() // topic (unused)
 	}
 }
 

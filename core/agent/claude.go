@@ -127,42 +127,30 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 	}
 
 	out := make(chan AgentEvent, 64)
-
-	// Two readers feed `out`; a WaitGroup joins them so the channel is closed
-	// exactly once, AFTER both have finished. Closing from a single reader (e.g.
-	// stdout) while the other (stderr) is still sending would panic on a send to
-	// a closed channel — and calling cmd.Wait before both pipes are fully drained
-	// violates the exec contract.
 	var wg sync.WaitGroup
 	wg.Add(2)
-
-	// sawTurnDone records whether claude emitted a turn-final `result` line. It
-	// gates how we treat a non-zero process exit below: a turn's terminal signal
-	// is the `result` (is_error), NOT the exit code. claude can stream a complete,
-	// successful reply + result and THEN exit non-zero for an unrelated reason
-	// (post-run hook/telemetry failure, a broken stderr pipe, a node warning
-	// escalating the exit status). The WaitGroup join gives a happens-before edge
-	// from the stdout reader's stores to the cmd.Wait reader's load.
 	var sawTurnDone atomic.Bool
+	d.startReaders(ctx, stdout, stderr, req.SessionID, out, &wg, &sawTurnDone)
+	waitAndClose(ctx, cmd, out, &wg, &sawTurnDone)
+	return out, nil
+}
 
+func (d *ClaudeDriver) startReaders(ctx context.Context, stdout, stderr io.Reader, sessionID string, out chan<- AgentEvent, wg *sync.WaitGroup, sawTurnDone *atomic.Bool) {
 	go func() {
 		defer wg.Done()
-		d.drainStderr(ctx, stderr, req.SessionID, out)
+		d.drainStderr(ctx, stderr, sessionID, out)
 	}()
-
 	go func() {
 		defer wg.Done()
-		d.drainStdout(ctx, stdout, out, &sawTurnDone)
+		d.drainStdout(ctx, stdout, out, sawTurnDone)
 	}()
+}
 
+func waitAndClose(ctx context.Context, cmd *exec.Cmd, out chan AgentEvent, wg *sync.WaitGroup, sawTurnDone *atomic.Bool) {
 	go func() {
 		defer close(out)
 		wg.Wait()
 		if err := cmd.Wait(); err != nil {
-			// A non-zero exit AFTER a completed turn is not a turn failure: the
-			// reply + result already streamed, so surface it as recoverable
-			// (informational) and let the assembled reply stand. Only an exit
-			// with NO prior result is terminal — claude died before answering.
 			emitAgentEvent(ctx, out, AgentEvent{
 				Kind:        KindError,
 				Err:         fmt.Sprintf("claude exited: %v", err),
@@ -171,8 +159,6 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 			})
 		}
 	}()
-
-	return out, nil
 }
 
 func (d *ClaudeDriver) drainStderr(ctx context.Context, stderr io.Reader, sessionID string, out chan<- AgentEvent) {

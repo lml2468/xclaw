@@ -28,10 +28,11 @@ import (
 // driver.Query: exec: claude: executable file not found in $PATH" reports.
 //
 // Precedence (first wins after dedup): ~/.xclaw/bin (octo-cli companion) →
-// the user's login-shell PATH (darwin/linux only — captures whatever the user
-// actually configured) → a static list of well-known install dirs (belt-and-
-// suspenders for the common cases) → the PATH we inherited. Windows GUI apps
-// already inherit the full user+machine PATH from the registry, so there it just
+// the user's interactive login-shell PATH (darwin/linux only — captures
+// whatever the user actually configured, including nvm/asdf/volta-managed
+// dirs) → a static list of well-known install dirs (belt-and-suspenders for
+// the common cases) → whatever PATH we inherited. Windows GUI apps already
+// inherit the full user+machine PATH from the registry, so there it just
 // prepends ~/.xclaw/bin (+ %APPDATA%\npm for npm-global installs).
 //
 // Note: Go's exec.Command resolves a bare binary name against the *parent*
@@ -115,15 +116,25 @@ func wellKnownBinDirs(home string) []string {
 	}
 }
 
-// loginShellPath returns PATH as the user's login shell sees it, or "" on any
-// failure or on Windows (no $SHELL there). A GUI-launched daemon gets a
-// truncated PATH; the login shell sources the user's profile, so its PATH
-// matches what a terminal would have (Homebrew, nvm, asdf, npm-global, …).
+// loginShellPath returns PATH as the user's interactive login shell sees it, or
+// "" on any failure or on Windows (no $SHELL there). A GUI-launched daemon gets
+// a truncated PATH; the user's shell sources their profile + rc, so its PATH
+// matches what a terminal would have (Homebrew, nvm, asdf, volta, npm-global, …).
 //
-// The shell runs as a login shell (-l) but NOT interactive — interactive rc
-// files can block on prompts/input and hang the spawn. The value is fenced
-// between markers so a profile that prints a banner to stdout can't corrupt it,
-// and the whole probe is bounded by a short timeout.
+// The shell runs as both interactive (-i) and login (-l) so it sources the login
+// profile (.zprofile/.bash_profile — Homebrew) AND the interactive rc
+// (.zshrc/.bashrc — where nvm/asdf/volta typically put the agent on PATH). The
+// value is fenced between markers so prompt/banner output printed around it by
+// an rc file is stripped. stdin is the null device (os/exec's default for a nil
+// Stdin) so the interactive shell can't block reading input, and a timeout bounds
+// a slow or hostile rc.
+//
+// An interactive shell frequently exits non-zero (job-control noise, a non-zero
+// last rc command) while still having printed the fenced PATH — so the marker is
+// extracted from stdout regardless of the exit status; only a missing marker is
+// treated as failure. Assumes a bash/zsh-family $SHELL (fish's list-valued $PATH
+// would not round-trip through the %s format); an unrecognized shell just yields
+// "" and the static well-known dirs carry the load.
 func loginShellPath() string {
 	if runtime.GOOS == "windows" {
 		return ""
@@ -133,13 +144,12 @@ func loginShellPath() string {
 		return ""
 	}
 	const marker = "__XCLAW_PATH__"
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, shell, "-l", "-c",
+	// Interactive shells often exit non-zero yet still print the fenced value, so
+	// the error is intentionally ignored — marker presence is the success signal.
+	out, _ := exec.CommandContext(ctx, shell, "-i", "-l", "-c",
 		"printf '"+marker+"%s"+marker+"' \"$PATH\"").Output()
-	if err != nil {
-		return ""
-	}
 	s := string(out)
 	i := strings.Index(s, marker)
 	if i < 0 {

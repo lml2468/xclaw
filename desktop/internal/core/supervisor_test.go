@@ -169,23 +169,25 @@ func TestEnvWithOctoBinAugmentsPath(t *testing.T) {
 	}
 }
 
-// TestLoginShellPathFencing exercises the marker-fenced login-shell probe with a
-// fake $SHELL that prints a banner around the value. Unix only (no $SHELL probe
-// on Windows).
+// TestLoginShellPathFencing exercises the marker-fenced interactive-login-shell
+// probe with a fake $SHELL that prints a banner around the value and exits
+// non-zero (as real interactive shells often do) — the fenced PATH must still be
+// extracted from stdout. Unix only (no $SHELL probe on Windows).
 func TestLoginShellPathFencing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no login-shell PATH probe on Windows")
 	}
 	// A fake shell script: emits noise on stderr + stdout, sets a sentinel PATH,
-	// then runs the command our code passes as the 3rd arg (after -l -c), which
-	// prints the marker-fenced PATH to stdout.
+	// runs the command our code passes as the 4th arg (after -i -l -c) — which
+	// prints the marker-fenced PATH to stdout — then exits non-zero.
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fakeshell.sh")
 	script := "#!/bin/sh\n" +
-		"echo 'MOTD banner' >&2\n" + // stderr noise: never captured
+		"echo 'job control noise' >&2\n" + // stderr noise: never captured
 		"echo 'login greeting'\n" + // stdout noise BEFORE the marker: stripped by fencing
 		"PATH='/fake/agent/bin:/usr/bin'\n" +
-		"eval \"$3\"\n" // argv is (-l, -c, CMD) → $3 is the printf command
+		"eval \"$4\"\n" + // argv is (-i, -l, -c, CMD) → $4 is the printf command
+		"exit 3\n" // interactive shells frequently exit non-zero; must not lose the value
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake shell: %v", err)
 	}

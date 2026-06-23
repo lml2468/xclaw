@@ -207,7 +207,26 @@ func TestSchedulerFiresDueRecurringAndAdvances(t *testing.T) {
 	// now = 10:00:30; a "*/1 * * * *" task next fires at 10:01.
 	clk := &frozenClock{t: time.Date(2026, 6, 9, 10, 0, 30, 0, time.Local)}
 	m := newManager(t, "o", clk)
+	fireCount, fireAt := captureFires(m)
 
+	task := createRecurringTask(t, m)
+
+	// Not yet due (next at 10:01, now 10:00:30).
+	m.Tick()
+	if n := fireCount(); n != 0 {
+		t.Fatalf("should not fire before due, got %d", n)
+	}
+
+	// Advance past the due minute.
+	clk.advance(time.Minute)
+	m.Tick()
+	if n := fireCount(); n != 1 {
+		t.Fatalf("expected 1 fire, got %d", n)
+	}
+	assertRecurringFire(t, fireAt(0), task, m)
+}
+
+func captureFires(m *Manager) (func() int, func(int) Fire) {
 	var mu sync.Mutex
 	var fired []Fire
 	m.OnFire(func(f Fire) {
@@ -215,6 +234,19 @@ func TestSchedulerFiresDueRecurringAndAdvances(t *testing.T) {
 		fired = append(fired, f)
 		mu.Unlock()
 	})
+	return func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(fired)
+		}, func(i int) Fire {
+			mu.Lock()
+			defer mu.Unlock()
+			return fired[i]
+		}
+}
+
+func createRecurringTask(t *testing.T, m *Manager) Task {
+	t.Helper()
 
 	task, err := m.Create(CreateParams{
 		Schedule: "* * * * *", Prompt: "tick", Coords: SessionCoords{ChannelID: "c1", ChannelType: 2, FromUID: "o"}, RequestUID: "o",
@@ -222,29 +254,15 @@ func TestSchedulerFiresDueRecurringAndAdvances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	return task
+}
 
-	// Not yet due (next at 10:01, now 10:00:30).
-	m.Tick()
-	mu.Lock()
-	n := len(fired)
-	mu.Unlock()
-	if n != 0 {
-		t.Fatalf("should not fire before due, got %d", n)
-	}
+func assertRecurringFire(t *testing.T, fire Fire, task Task, m *Manager) {
+	t.Helper()
 
-	// Advance past the due minute.
-	clk.advance(time.Minute)
-	m.Tick()
-	mu.Lock()
-	n = len(fired)
-	mu.Unlock()
-	if n != 1 {
-		t.Fatalf("expected 1 fire, got %d", n)
+	if fire.Task.Prompt != "tick" {
+		t.Errorf("fired wrong task: %+v", fire.Task)
 	}
-	if fired[0].Task.Prompt != "tick" {
-		t.Errorf("fired wrong task: %+v", fired[0].Task)
-	}
-
 	// Recurring task survives with an advanced nextRun.
 	tasks, _ := m.List()
 	if len(tasks) != 1 {

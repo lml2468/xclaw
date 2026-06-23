@@ -396,4 +396,10 @@ type SessionSummary struct {
 	UpdatedAt   int64  `json:"updatedAt"` // Unix seconds
 	Preview     string `json:"preview"`
 	LastRole    string `json:"lastRole"`
+	// ChannelName is the IM platform's display name for this session's channel
+	// (DM peer's name for a DM, group/topic name for a group/thread). Empty when
+	// the name isn't (yet) cached — the GUI falls back to the prettified key.
+	// The daemon fills this lazily; the cache populates from every inbound and
+	// from a one-shot background REST fetch on first sight.
+	ChannelName string `json:"channelName,omitempty"`
 }

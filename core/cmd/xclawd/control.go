@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/lml2468/xclaw/core/control"
 	"github.com/lml2468/xclaw/core/cron"
 	"github.com/lml2468/xclaw/core/gateway"
+	"github.com/lml2468/xclaw/core/im/octo"
 	"github.com/lml2468/xclaw/core/router"
 	"github.com/lml2468/xclaw/core/safety"
 	"github.com/lml2468/xclaw/core/store"
@@ -25,6 +27,10 @@ type botTarget struct {
 	store   *store.Store
 	secrets *secretStore
 	cron    *cron.Manager // nil when agent.cron is disabled for this bot
+	// connector is the IM-edge handle used by handlers that need name
+	// resolution (sessions.list → ChannelName). May be nil in tests and in
+	// the REPL single-bot path where no Octo connector is wired.
+	connector *octo.Connector
 
 	// turnsWG tracks every in-flight session.send goroutine so the daemon
 	// can wait for them before closing the store. The Octo connector tracks
@@ -163,7 +169,7 @@ func makeHandler(ctx context.Context, deps handlerDeps) control.CommandHandler {
 			// Echo botId so the client never folds these rows into the wrong bot.
 			return control.SessionsListResponse{
 				BotID:    b.BotID,
-				Sessions: summariesFromSessions(sums),
+				Sessions: summariesFromSessions(sums, t.connector),
 			}, nil
 
 		case "usage.stats":
@@ -411,8 +417,13 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 	return out
 }
 
-// summariesFromSessions projects store session summaries onto the wire type.
-func summariesFromSessions(sums []store.SessionSummary) []control.SessionSummary {
+// summariesFromSessions projects store session summaries onto the wire type,
+// folding in the IM connector's name cache so the GUI sidebar can show real
+// channel / DM-peer names instead of bare ids. The resolver may be nil (REPL
+// single-bot, tests) — then ChannelName is left empty and the GUI falls back
+// to the prettified key. Lookups are non-blocking: a cache miss returns ""
+// and kicks a background REST fetch the next call sees populated.
+func summariesFromSessions(sums []store.SessionSummary, conn *octo.Connector) []control.SessionSummary {
 	out := make([]control.SessionSummary, 0, len(sums))
 	for _, s := range sums {
 		out = append(out, control.SessionSummary{
@@ -421,9 +432,43 @@ func summariesFromSessions(sums []store.SessionSummary) []control.SessionSummary
 			UpdatedAt:   s.UpdatedAt,
 			Preview:     s.Preview,
 			LastRole:    string(s.LastRole),
+			ChannelName: resolveSessionName(conn, s.ChannelType, s.Key),
 		})
 	}
 	return out
+}
+
+// resolveSessionName picks the right name resolver per channel type. DM keys
+// are "<spaceId>:<uid>" or bare "<uid>" — the trailing segment is the peer's
+// uid (UserName lookup). Group keys are the channel id verbatim (ChannelName
+// lookup, which itself reduces a thread compound to its parent group_no).
+// Returns "" for unknown types or a nil connector — the GUI handles fallback.
+func resolveSessionName(conn *octo.Connector, channelType int, key string) string {
+	if conn == nil || key == "" {
+		return ""
+	}
+	switch router.ChannelType(channelType) {
+	case router.ChannelDM:
+		uid := key
+		if i := strings.LastIndexByte(key, ':'); i >= 0 {
+			uid = key[i+1:]
+		}
+		return conn.UserName(uid)
+	case router.ChannelGroup:
+		return conn.ChannelName(key)
+	}
+	return ""
+}
+
+// lastIndexByte is strings.LastIndexByte inlined to avoid the import cost (and
+// to keep the only strings.* dependency in this file local to the call site).
+func lastIndexByte(s string, c byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 // channelTypeFor resolves the router/octo channel type for a cron task: an

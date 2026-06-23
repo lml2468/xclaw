@@ -29,6 +29,11 @@ type Connector struct {
 
 	botUID string
 
+	// names resolves uid→display-name (seeded for free from inbound BotMessage)
+	// and groupNo→channel-name (one REST call per group, cached). Powers the
+	// sidebar conversation titles and chat-bubble sender labels.
+	names *nameCache
+
 	// persona, when its grantor uid is set, makes this connector a persona clone
 	// (openclaw OBO): extended trigger gate, OBO v2 relevance filter, and
 	// on_behalf_of reply routing. Set once at startup via SetPersona; read-only
@@ -217,6 +222,7 @@ func (c *Connector) SetPersona(grantor persona.Grantor) { c.persona = grantor }
 func NewConnector(rest *RESTClient) *Connector {
 	return &Connector{
 		rest:          rest,
+		names:         newNameCache(rest),
 		targets:       make(map[string]replyTarget),
 		progress:      make(map[string]*toolProgressState),
 		typers:        make(map[string]*typingTicker),
@@ -285,6 +291,20 @@ func (c *Connector) MediaAuth() gateway.MediaAuth {
 // gateway.WithGroupBackfill so cold-start backfill can filter the bot's own
 // messages once the uid is known.
 func (c *Connector) BotUID() string { return c.uid() }
+
+// UserName returns the cached display name for uid, or "" if unknown. A miss
+// kicks a background REST fetch so the next call can see a resolved value.
+// The sender-name cache is also free-seeded from every inbound BotMessage,
+// so most uids never trigger a network call.
+func (c *Connector) UserName(uid string) string { return c.names.ResolveUser(uid) }
+
+// ChannelName returns the cached display name for a group channel id, or ""
+// if unknown. Accepts bare group ids and thread compounds ("<g>____<s>");
+// thread channels resolve to the parent group's name (no per-thread name).
+// A miss kicks a background REST fetch.
+func (c *Connector) ChannelName(channelID string) string {
+	return c.names.ResolveChannel(channelID)
+}
 
 // BackfillFetch pulls recent history for cold-start backfill (cc G4), adapting
 // octo.HistoricalMessage to the IM-agnostic groupctx.BackfillMessage. limit<=0
@@ -506,6 +526,13 @@ func (c *Connector) onInbound(m BotMessage) {
 	uid := c.uid()
 	if m.FromUID == uid {
 		return // ignore our own messages
+	}
+	// Free-feed the name cache: every inbound carries the sender's display
+	// name, and for group/thread channels we also kick a lazy background
+	// fetch for the channel name so the sidebar can show it next render.
+	c.names.LearnUser(m.FromUID, m.FromName)
+	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
+		c.names.ResolveChannel(m.ChannelID)
 	}
 	// Suppress streaming partial updates (inbound.ts settingStreamOn / G21): a
 	// streamOn message is an in-progress edit; only the final (streamOn=false)

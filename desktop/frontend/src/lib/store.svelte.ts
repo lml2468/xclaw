@@ -39,6 +39,13 @@ export interface Message {
  // marker so the operator can tell at a glance that a prompt came from
  // automation. Optional / undefined for legacy non-cron messages.
   cron?: boolean;
+ // senderUid / senderName identify the human who authored a user-role
+ // message arriving from IM (a group can have N humans sharing one
+ // session — the bubble shows the name so the operator can tell speakers
+ // apart). Optional: Console messages (operator typing into the desktop)
+ // and persisted history rows have neither, and Bubble falls back to "You".
+  senderUid?: string;
+  senderName?: string;
 }
 
 // ProcStep is one process item shown in the status strip: a tool call or a
@@ -67,6 +74,11 @@ export interface Session {
   key: string;        // sessionKey (the console session is keyed on CONSOLE_UID)
   channelType: number; // router channel type: 1=DM, 2=Group, 3=Console
   title: string;
+ // channelName is the IM platform's display name for this conversation —
+ // the DM peer's name for a DM, the group/topic name for a group/thread —
+ // resolved by the daemon's nameCache (lazy REST + free-feed from inbound
+ // messages). Empty when not yet known; the sidebar falls back to `title`.
+  channelName?: string;
   messages: Message[];
   awaiting: boolean;  // a turn is in flight (show typing indicator)
  // awaitingSince is the Date.now of the most recent turnStart for this
@@ -565,7 +577,9 @@ class Store {
         if (!s) break;
         const text = env.body?.text ?? "";
         const ts = env.body?.ts ? Number(env.body.ts) : Date.now() / 1000;
-        s.messages.push({ id: newId(), role: "user", text, ts, cron });
+        const senderUid = env.body?.fromUid || undefined;
+        const senderName = env.body?.fromName || undefined;
+        s.messages.push({ id: newId(), role: "user", text, ts, cron, senderUid, senderName });
         s.awaiting = true;
         s.awaitingSince = Date.now();
         s.lastActivity = Date.now();
@@ -734,6 +748,14 @@ class Store {
       const persisted = (r.updatedAt ?? 0) * 1000;
       s.lastActivity = existed ? Math.max(s.lastActivity, persisted) : persisted;
       s.preview = r.preview ?? "";
+ // channelName lands from the daemon's name cache (sidebar shows it as the
+ // row title — see prettyTitle). First listing after start usually has it
+ // empty (cache is cold); a subsequent listing once REST resolves the name
+ // overwrites and the row re-renders with the real name.
+      if (r.channelName) {
+        s.channelName = r.channelName;
+        s.title = r.channelName;
+      }
     }
     this.loadedSessionRosters[bid] = true;
  // First roster after connect: if nothing is selected yet, open the newest

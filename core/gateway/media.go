@@ -496,39 +496,19 @@ func (g *Gateway) fetchGuarded(ctx context.Context, rawURL string) (*http.Respon
 			cancel()
 			return nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
+		resp, err := g.fetchMediaHop(ctx, client, current)
 		if err != nil {
 			cancel()
 			return nil, err
 		}
-		if g.mediaAuth != nil {
-			if h := g.mediaAuth(current); h != "" {
-				req.Header.Set("Authorization", h)
-			}
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			loc := resp.Header.Get("Location")
+		if isRedirectStatus(resp.StatusCode) {
+			next, err := nextRedirectURL(current, resp)
 			_ = resp.Body.Close()
-			if loc == "" {
+			if err != nil {
 				cancel()
-				return nil, fmt.Errorf("redirect without Location")
+				return nil, err
 			}
-			base, perr := url.Parse(current)
-			if perr != nil {
-				cancel()
-				return nil, perr
-			}
-			ref, perr := url.Parse(loc)
-			if perr != nil {
-				cancel()
-				return nil, perr
-			}
-			current = base.ResolveReference(ref).String()
+			current = next
 			continue
 		}
 		// Terminal response — wrap the body so closing it also cancels the ctx.
@@ -537,6 +517,39 @@ func (g *Gateway) fetchGuarded(ctx context.Context, rawURL string) (*http.Respon
 	}
 	cancel()
 	return nil, fmt.Errorf("too many redirects (started at %s)", rawURL)
+}
+
+func (g *Gateway) fetchMediaHop(ctx context.Context, client *http.Client, current string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
+	if err != nil {
+		return nil, err
+	}
+	if g.mediaAuth != nil {
+		if h := g.mediaAuth(current); h != "" {
+			req.Header.Set("Authorization", h)
+		}
+	}
+	return client.Do(req)
+}
+
+func isRedirectStatus(status int) bool {
+	return status >= 300 && status < 400
+}
+
+func nextRedirectURL(current string, resp *http.Response) (string, error) {
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("redirect without Location")
+	}
+	base, err := url.Parse(current)
+	if err != nil {
+		return "", err
+	}
+	ref, err := url.Parse(loc)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(ref).String(), nil
 }
 
 // cancelOnCloseBody cancels the download context when the body is closed, so the

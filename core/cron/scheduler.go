@@ -527,45 +527,64 @@ func (m *Manager) Tick() {
 	nowMS := unixMS(now)
 	var fires []Fire
 	_, err := m.store.Update(func(tasks []Task) ([]Task, bool) {
-		survivors := make([]Task, 0, len(tasks))
-		changed := false
-		for _, task := range tasks {
-			if !task.Enabled || task.NextRun == 0 || task.NextRun > nowMS {
-				survivors = append(survivors, task)
-				continue
-			}
-			changed = true
-			// Defer the actual fire until after the store write returns, so onFire
-			// (which drives a full turn) does not run while we hold the store mutex.
-			fires = append(fires, Fire{Task: task})
-			task.LastRun = nowMS
-			if task.Recurring {
-				// Compute the just-fired wall-clock key inline (not persisted —
-				// at-most-once semantics, and a restart between Update-commit and
-				// the next due Tick simply sees the already-advanced NextRun).
-				// The skip prevents computeNextRunSkipping from re-scheduling the
-				// SAME wall-clock minute on DST fall-back, where wall-clock
-				// 01:00-01:59 happens twice in absolute time.
-				firedKey := fireKey(now)
-				if next, ok := computeNextRunSkipping(task.Schedule, now, firedKey); ok {
-					task.NextRun = unixMS(next)
-					survivors = append(survivors, task)
-				} else {
-					// No future occurrence (e.g. a one-shot ISO time wrongly flagged
-					// recurring, or an unsatisfiable cron): drop it rather than keeping
-					// a dead task that never fires yet counts against MaxTasksPerBot
-					// (L27).
-					changed = true
-				}
-			}
-			// one-shot: drop (not appended to survivors)
-		}
+		survivors, dueFires, changed := collectCronFires(tasks, now, nowMS)
+		// Defer the actual fire until after the store write returns, so onFire
+		// (which drives a full turn) does not run while we hold the store mutex.
+		fires = append(fires, dueFires...)
 		return survivors, changed
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%scron: tick failed: %v\n", m.label, err)
 		return
 	}
+	m.dispatchCronFires(fires, nowMS)
+}
+
+func collectCronFires(tasks []Task, now time.Time, nowMS int64) ([]Task, []Fire, bool) {
+	survivors := make([]Task, 0, len(tasks))
+	var fires []Fire
+	changed := false
+	for _, task := range tasks {
+		if !isCronTaskDue(task, nowMS) {
+			survivors = append(survivors, task)
+			continue
+		}
+		changed = true
+		fires = append(fires, Fire{Task: task})
+		if nextTask, keep := advanceFiredCronTask(task, now, nowMS); keep {
+			survivors = append(survivors, nextTask)
+		}
+		// one-shot: drop (not appended to survivors)
+	}
+	return survivors, fires, changed
+}
+
+func isCronTaskDue(task Task, nowMS int64) bool {
+	return task.Enabled && task.NextRun != 0 && task.NextRun <= nowMS
+}
+
+func advanceFiredCronTask(task Task, now time.Time, nowMS int64) (Task, bool) {
+	task.LastRun = nowMS
+	if !task.Recurring {
+		return task, false
+	}
+	// Compute the just-fired wall-clock key inline (not persisted — at-most-once
+	// semantics, and a restart between Update-commit and the next due Tick
+	// simply sees the already-advanced NextRun). The skip prevents
+	// computeNextRunSkipping from re-scheduling the SAME wall-clock minute on DST
+	// fall-back, where wall-clock 01:00-01:59 happens twice in absolute time.
+	firedKey := fireKey(now)
+	if next, ok := computeNextRunSkipping(task.Schedule, now, firedKey); ok {
+		task.NextRun = unixMS(next)
+		return task, true
+	}
+	// No future occurrence (e.g. a one-shot ISO time wrongly flagged recurring,
+	// or an unsatisfiable cron): drop it rather than keeping a dead task that
+	// never fires yet counts against MaxTasksPerBot (L27).
+	return Task{}, false
+}
+
+func (m *Manager) dispatchCronFires(fires []Fire, nowMS int64) {
 	for _, f := range fires {
 		late := time.Duration(nowMS-f.Task.NextRun) * time.Millisecond
 		if late >= time.Minute {

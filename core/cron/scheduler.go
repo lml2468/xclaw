@@ -309,6 +309,13 @@ type UpdateParams struct {
 	RequestUID string
 }
 
+type cronUpdatePlan struct {
+	enabledOnly    bool
+	preserveCoords bool
+	recurring      bool
+	nextRun        int64
+}
+
 // Update mutates an existing task atomically. Same owner-gate model as
 // Create/Delete: requester must equal current owner AND the task's CreatedBy
 // must also equal that owner (a task left over from a previous owner uid is
@@ -329,46 +336,9 @@ func (m *Manager) Update(p UpdateParams) (Task, error) {
 	if p.ID == "" {
 		return Task{}, fmt.Errorf("task id is required")
 	}
-	enabledOnly := p.Schedule == "" && p.Prompt == "" && p.Recurring == nil && p.Enabled != nil &&
-		p.Coords.ChannelID == "" && p.Coords.FromUID == "" && p.Coords.ChannelType == 0 && p.Coords.FromName == ""
-	// Validate full-update fields BEFORE the mutator so a bad request doesn't
-	// land in the store.Update call's IO path.
-	var nextRun int64
-	var recurring bool
-	// preserveCoords: a full update with empty coords means "leave the
-	// existing target binding alone" — the GUI's edit modal sends blank
-	// channel/from fields for "I'm only editing schedule/prompt" intent.
-	// Without this the handler would silently rebind every DM task to
-	// the owner's self-DM on any unrelated edit. Detected as: ChannelID
-	// AND FromUID both empty AND ChannelType zero (= no explicit target
-	// shape in the body).
-	preserveCoords := p.Coords.ChannelID == "" && p.Coords.FromUID == "" && p.Coords.ChannelType == 0
-	if !enabledOnly {
-		oneShot := isOneShotSchedule(p.Schedule)
-		if !ValidateSchedule(p.Schedule) {
-			if oneShot {
-				return Task{}, fmt.Errorf("one-shot time is invalid: %s", p.Schedule)
-			}
-			return Task{}, fmt.Errorf("invalid cron expression: %s", p.Schedule)
-		}
-		if len(p.Prompt) == 0 {
-			return Task{}, fmt.Errorf("prompt is required")
-		}
-		if len(p.Prompt) > MaxPromptBytes {
-			return Task{}, fmt.Errorf("prompt too long (max %d bytes)", MaxPromptBytes)
-		}
-		recurring = !oneShot
-		if p.Recurring != nil {
-			recurring = *p.Recurring
-		}
-		next, ok := computeNextRun(p.Schedule, m.now())
-		if !ok {
-			if oneShot {
-				return Task{}, fmt.Errorf("one-shot time is in the past or invalid")
-			}
-			return Task{}, fmt.Errorf("schedule never matches (impossible cron): %s", p.Schedule)
-		}
-		nextRun = unixMS(next)
+	plan, err := prepareCronUpdate(p, m.now())
+	if err != nil {
+		return Task{}, err
 	}
 
 	var updated Task
@@ -378,31 +348,7 @@ func (m *Manager) Update(p UpdateParams) (Task, error) {
 		for i, t := range tasks {
 			if t.ID == p.ID && t.CreatedBy == owner {
 				found = true
-				if enabledOnly {
-					t.Enabled = *p.Enabled
-				} else {
-					t.Schedule = p.Schedule
-					t.Recurring = recurring
-					t.Prompt = p.Prompt
-					t.NextRun = nextRun
-					if !preserveCoords {
-						// Caller wants to rebind the target. Replace coords.
-						t.ChannelID = p.Coords.ChannelID
-						t.ChannelType = p.Coords.ChannelType
-						t.FromUID = p.Coords.FromUID
-					}
-					// FromName is treated as a partial-edit field on its own:
-					// empty = preserve (matches the "I'm not changing the
-					// display name" GUI default), non-empty = rewrite. Without
-					// this an edit that blanks FromName would erase the bot's
-					// display name in every future fire.
-					if p.Coords.FromName != "" {
-						t.FromName = p.Coords.FromName
-					}
-					if p.Enabled != nil {
-						t.Enabled = *p.Enabled
-					}
-				}
+				t = applyCronUpdate(t, p, plan)
 				updated = t
 			}
 			out[i] = t
@@ -415,6 +361,87 @@ func (m *Manager) Update(p UpdateParams) (Task, error) {
 		return Task{}, fmt.Errorf("no task with id %s", p.ID)
 	}
 	return updated, nil
+}
+
+func prepareCronUpdate(p UpdateParams, now time.Time) (cronUpdatePlan, error) {
+	plan := cronUpdatePlan{
+		enabledOnly:    isEnabledOnlyUpdate(p),
+		preserveCoords: shouldPreserveUpdateCoords(p.Coords),
+	}
+	// Validate full-update fields BEFORE the mutator so a bad request doesn't
+	// land in the store.Update call's IO path.
+	if plan.enabledOnly {
+		return plan, nil
+	}
+	oneShot := isOneShotSchedule(p.Schedule)
+	if !ValidateSchedule(p.Schedule) {
+		if oneShot {
+			return cronUpdatePlan{}, fmt.Errorf("one-shot time is invalid: %s", p.Schedule)
+		}
+		return cronUpdatePlan{}, fmt.Errorf("invalid cron expression: %s", p.Schedule)
+	}
+	if len(p.Prompt) == 0 {
+		return cronUpdatePlan{}, fmt.Errorf("prompt is required")
+	}
+	if len(p.Prompt) > MaxPromptBytes {
+		return cronUpdatePlan{}, fmt.Errorf("prompt too long (max %d bytes)", MaxPromptBytes)
+	}
+	plan.recurring = !oneShot
+	if p.Recurring != nil {
+		plan.recurring = *p.Recurring
+	}
+	next, ok := computeNextRun(p.Schedule, now)
+	if !ok {
+		if oneShot {
+			return cronUpdatePlan{}, fmt.Errorf("one-shot time is in the past or invalid")
+		}
+		return cronUpdatePlan{}, fmt.Errorf("schedule never matches (impossible cron): %s", p.Schedule)
+	}
+	plan.nextRun = unixMS(next)
+	return plan, nil
+}
+
+func isEnabledOnlyUpdate(p UpdateParams) bool {
+	return p.Schedule == "" && p.Prompt == "" && p.Recurring == nil && p.Enabled != nil &&
+		p.Coords.ChannelID == "" && p.Coords.FromUID == "" && p.Coords.ChannelType == 0 && p.Coords.FromName == ""
+}
+
+func shouldPreserveUpdateCoords(coords SessionCoords) bool {
+	// A full update with empty coords means "leave the existing target binding
+	// alone" — the GUI's edit modal sends blank channel/from fields for "I'm
+	// only editing schedule/prompt" intent. Without this the handler would
+	// silently rebind every DM task to the owner's self-DM on any unrelated
+	// edit. Detected as: ChannelID AND FromUID both empty AND ChannelType zero
+	// (= no explicit target shape in the body).
+	return coords.ChannelID == "" && coords.FromUID == "" && coords.ChannelType == 0
+}
+
+func applyCronUpdate(t Task, p UpdateParams, plan cronUpdatePlan) Task {
+	if plan.enabledOnly {
+		t.Enabled = *p.Enabled
+		return t
+	}
+	t.Schedule = p.Schedule
+	t.Recurring = plan.recurring
+	t.Prompt = p.Prompt
+	t.NextRun = plan.nextRun
+	if !plan.preserveCoords {
+		// Caller wants to rebind the target. Replace coords.
+		t.ChannelID = p.Coords.ChannelID
+		t.ChannelType = p.Coords.ChannelType
+		t.FromUID = p.Coords.FromUID
+	}
+	// FromName is treated as a partial-edit field on its own: empty = preserve
+	// (matches the "I'm not changing the display name" GUI default), non-empty
+	// = rewrite. Without this an edit that blanks FromName would erase the bot's
+	// display name in every future fire.
+	if p.Coords.FromName != "" {
+		t.FromName = p.Coords.FromName
+	}
+	if p.Enabled != nil {
+		t.Enabled = *p.Enabled
+	}
+	return t
 }
 
 // OnFire sets the callback invoked when a task is due (= the gateway's inbound

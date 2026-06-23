@@ -779,37 +779,28 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		return nil
 	}
 
-	// Persist resume id for continuity (only if the agent reported one). A write
-	// failure here silently breaks continuity on the next turn, so log it.
+	text := reply.String()
+	g.completeSuccessfulTurn(sessionKey, msg, newResume, text)
+	turnDelivered = true
+	return nil
+}
+
+func (g *Gateway) completeSuccessfulTurn(sessionKey string, msg router.InboundMessage, newResume, text string) {
 	if newResume != "" {
 		if err := g.store.SaveResume(sessionKey, g.driver.Name(), newResume); err != nil {
 			fmt.Fprintf(os.Stderr, "[gateway] save resume %s: %v\n", sessionKey, err)
 		}
 	}
-
-	text := reply.String()
-	// Persist the assistant turn. A write failure must NOT suppress delivery — the
-	// reply was produced, so still send it; just log the persistence loss (history
-	// will be missing this turn, but the user gets their answer).
 	if err := g.store.AppendAssistant(sessionKey, text, g.driver.Name()); err != nil {
 		fmt.Fprintf(os.Stderr, "[gateway] append assistant %s: %v\n", sessionKey, err)
 	}
 	g.notifySessionTouch(sessionKey, msg.ChannelID, msg.ChannelType)
-	turnDelivered = true
 	g.sink.OnReply(sessionKey, text)
-
-	// Advance the answered/new cursor (cc G10 / openclaw lastBotReplySeqMap): record
-	// the inbound message_seq the bot just replied to so later turns segment this
-	// message (and everything before it) as [Previously answered]. We use the
-	// inbound seq (from the IM frame), NOT the send result — the send API returns
-	// seq 0. Skip synthetic/cron fires (seq 0); the store write is monotonic and a
-	// no-op for seq<=0. Only for group turns that actually produced a reply.
 	if g.groups != nil && msg.ChannelType == router.ChannelGroup && strings.TrimSpace(text) != "" {
 		if err := g.store.SaveBotReplySeq(sessionKey, msg.MessageSeq); err != nil {
 			fmt.Fprintf(os.Stderr, "[gateway] save reply seq %s: %v\n", sessionKey, err)
 		}
 	}
-	return nil
 }
 
 func (g *Gateway) startTurn(sessionKey string, msg router.InboundMessage) (bool, error) {

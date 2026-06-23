@@ -528,20 +528,7 @@ func isPathInside(child, parent string) bool {
 // We still inject OCTO_BOT_TOKEN + OCTO_API_BASE_URL here as the fallback path
 // for any agent code that bypasses --bot-id (e.g. a one-off `octo-cli api …`).
 func (r Resolved) DriverEnv(gatewayToken, octoToken string, secretValue func(string) string) []string {
-	var out []string
-	for k, ev := range r.Agent.Env {
-		v := ev.Value
-		if ev.SecretRef != "" {
-			if secretValue == nil {
-				continue
-			}
-			v = secretValue(ev.SecretRef)
-			if v == "" {
-				continue
-			}
-		}
-		out = append(out, k+"="+v)
-	}
+	out := agentEnvEntries(r.Agent.Env, secretValue)
 	if r.Agent.GatewayBaseURL != "" {
 		out = append(out, "ANTHROPIC_BASE_URL="+r.Agent.GatewayBaseURL)
 	}
@@ -563,4 +550,26 @@ func (r Resolved) DriverEnv(gatewayToken, octoToken string, secretValue func(str
 		out = append(out, "CLAUDE_CONFIG_DIR="+r.ClaudeConfigDir)
 	}
 	return out
+}
+
+func agentEnvEntries(env map[string]EnvValue, secretValue func(string) string) []string {
+	var out []string
+	for k, ev := range env {
+		v, ok := resolveEnvValue(ev, secretValue)
+		if ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
+}
+
+func resolveEnvValue(ev EnvValue, secretValue func(string) string) (string, bool) {
+	if ev.SecretRef == "" {
+		return ev.Value, true
+	}
+	if secretValue == nil {
+		return "", false
+	}
+	v := secretValue(ev.SecretRef)
+	return v, v != ""
 }

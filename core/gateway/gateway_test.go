@@ -154,14 +154,23 @@ func TestGroupMentionGateAtGateway(t *testing.T) {
 	drv := &fakeDriver{threadID: "t", reply: "x"}
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink())
 
-	// group without mention → dropped, driver never invoked.
+	// Group without mention → connector routes to Observe (after #117 the
+	// gateway no longer pre-branches observations in Handle). The driver
+	// must not run.
+	gw.Observe(router.InboundMessage{
+		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi",
+	})
+	if len(drv.requests) != 0 {
+		t.Fatalf("Observe must not invoke driver: got %d requests", len(drv.requests))
+	}
+
+	// Precondition contract: if a future caller mis-routes a no-trigger
+	// group message into Handle (single-defense), the router silently
+	// returns DroppedInvariantBreak rather than crashing the daemon.
 	d, _ := gw.Handle(context.Background(),
 		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi"})
-	if d != router.Observed {
-		t.Fatalf("want not_mentioned, got %s", d)
-	}
-	if len(drv.requests) != 0 {
-		t.Fatalf("driver should not run for dropped message")
+	if d != router.DroppedInvariantBreak {
+		t.Fatalf("precondition-violation must yield invariant_break, got %s", d)
 	}
 }
 

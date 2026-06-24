@@ -24,7 +24,6 @@ import (
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/sandbox"
 	"github.com/lml2468/octobuddy/core/store"
-	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // Sink receives normalized agent events for one turn, plus a final assembled
@@ -131,15 +130,23 @@ type Gateway struct {
 // turn, not a long-running healthy one.
 const defaultDispatchTimeout = 20 * time.Minute
 
-// Handle routes one inbound message through the full pipeline. Reply paths
-// hold the per-session lock across the whole turn (so same-session turns
-// serialize); observation paths bypass the lock (a fast in-memory write).
-// Returns the router decision (so callers can log drops/limits).
+// Handle routes one inbound reply-warranting message through the full
+// pipeline. Holds the per-session lock across the whole turn (so same-
+// session turns serialize). Returns the router decision (so callers can
+// log drops/limits).
 //
-// Single Observe entry point (issue #105 缺陷 4): the legacy split between
-// connector pre-gate Observe and drainTurns post-gate retroactive Observe
-// is gone. Every inbound message lands here; this function decides reply
-// vs observe vs drop.
+// PRECONDITION (#117 — single-layer defense): the caller MUST only
+// invoke Handle for messages that warrant a reply. Observations and
+// OBO-irrelevant drops are filtered upstream (the connector's
+// dispatchInbound + prepareInboundTurn for the IM path; the cron / REPL
+// / control-bus dispatchers structurally produce reply-warranting
+// inputs). The previous two short-circuits here (ShouldObserve →
+// Observe; ReasonOBOIrrelevant → DroppedOBOIrrelevant) were defensive
+// duplicates of the connector's branching, and the router's defensive
+// !ShouldReply path was a third copy of the same check. Removing them
+// from this layer means there is exactly ONE remaining defense (the
+// router's silent DroppedInvariantBreak) — that is intentional: one
+// programming bug should not crash every bot in the daemon.
 //
 // Friendly drop replies (ported from cc-channel session-router.ts) are
 // emitted here, through the Sink, so every caller benefits without
@@ -147,24 +154,9 @@ const defaultDispatchTimeout = 20 * time.Minute
 // - DroppedTooLong → "消息过长，请缩短后重试"
 // - RateLimited → "请稍后再试" (deduped per rate-limit window; see router)
 //
-// Observed / DroppedOBOIrrelevant / DroppedUnroutable stay silent
-// (legitimate background, R10 leak guard, or an unroutable payload — no
-// user-facing reply).
+// DroppedUnroutable stays silent (the payload had no routable identity —
+// nothing to reply to).
 func (g *Gateway) Handle(ctx context.Context, msg router.InboundMessage) (router.Decision, error) {
-	// Observation path: bypass the router (no session lock, no rate-limit
-	// gate), record into groupctx, return.
-	if msg.ShouldObserve() {
-		g.Observe(msg)
-		return router.Observed, nil
-	}
-
-	// OBO-irrelevant drops: short-circuit before the router (the router's
-	// invariant-break path would otherwise log a misleading dispatch
-	// error for what is actually a security-domain drop).
-	if msg.Trigger != nil && msg.Trigger.Reason == trigger.ReasonOBOIrrelevant {
-		return router.DroppedOBOIrrelevant, nil
-	}
-
 	d, err := g.router.RouteAndHandle(ctx, msg, g.runTurn)
 
 	// Surface the drop reply through the sink. SessionKey is derivable for both

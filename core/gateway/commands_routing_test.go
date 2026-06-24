@@ -67,10 +67,14 @@ func TestNotMentionedAndUnroutableStaySilent(t *testing.T) {
 	sink := &recordSink{}
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), sink)
 
-	// Group without mention → silent drop.
-	if d, _ := gw.Handle(context.Background(),
-		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi"}); d != router.Observed {
-		t.Fatalf("want not_mentioned")
+	// Group without mention → connector routes to Observe directly (after
+	// #117 the gateway no longer pre-branches observations in Handle).
+	// Sink must stay empty; nothing reaches the driver.
+	gw.Observe(router.InboundMessage{
+		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi",
+	})
+	if len(drv.requests) != 0 {
+		t.Fatalf("Observe must not invoke the driver: got %d requests", len(drv.requests))
 	}
 	// Unroutable DM (no from_uid) → silent drop.
 	if d, _ := gw.Handle(context.Background(),

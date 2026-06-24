@@ -44,8 +44,9 @@ func TestSessionKeyGroupSharedAcrossUsers(t *testing.T) {
 }
 
 // TestObservationGateNotReached: observations are dispatched by the
-// gateway, not the router. Passing one to RouteAndHandle is a defensive
-// no-op that returns DroppedOBOIrrelevant.
+// gateway/connector via Observe, never via RouteAndHandle. Passing one
+// here is a programming error — router refuses silently with
+// DroppedInvariantBreak (the SINGLE defense after #117).
 func TestObservationGateNotReached(t *testing.T) {
 	r := New(Config{})
 	called := false

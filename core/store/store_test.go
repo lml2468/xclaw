@@ -81,9 +81,9 @@ func TestMessagesChronologicalAndLimited(t *testing.T) {
 	if _, err := s.GetOrCreate("g:1", "1", 2); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.AppendUser("g:1", "first", "alice", false)
+	_ = s.AppendUser("g:1", "first", "alice", SourceUser)
 	_ = s.AppendAssistant("g:1", "reply1", "bot")
-	_ = s.AppendUser("g:1", "second", "bob", false)
+	_ = s.AppendUser("g:1", "second", "bob", SourceUser)
 	_ = s.AppendAssistant("g:1", "reply2", "bot")
 
 	msgs, err := s.RecentMessages("g:1", 3)
@@ -118,14 +118,14 @@ func createListedSessions(t *testing.T, s *Store) []SessionSummary {
 	if _, err := s.GetOrCreate("a", "a", 2); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.AppendUser("a", "hi from a", "alice", false)
+	_ = s.AppendUser("a", "hi from a", "alice", SourceUser)
 	_ = s.AppendAssistant("a", "a-reply", "bot")
 
 	clk = time.Unix(2000, 0)
 	if _, err := s.GetOrCreate("b", "b", 2); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.AppendUser("b", "hi from b", "bob", false)
+	_ = s.AppendUser("b", "hi from b", "bob", SourceUser)
 
 	// "c" has no messages: preview should be empty, still listed.
 	clk = time.Unix(1500, 0)

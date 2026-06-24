@@ -6,6 +6,7 @@ import (
 	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // EventSink adapts the control Server to gateway.Sink: it projects normalized
@@ -63,13 +64,19 @@ func (s *EventSink) OnReply(sessionKey string, text string) {
 // transcript. Carries fromUid/fromName for group sessions where multiple
 // humans share one session and the GUI needs to attribute messages.
 //
-// CronFire is forwarded so the renderer can distinguish a real human
-// inbound from a scheduled-task trigger — without it, Console cron fires
-// would hit the CONSOLE_UID dedupe path (intended for Composer-typed
-// messages with an optimistic local push) and disappear from the chat
-// entirely, AND IM-rendered cron fires would look like a real human
-// suddenly @-mentioned the bot with the prompt text.
+// Source is forwarded so the renderer can distinguish a real human
+// inbound ("user") from a scheduled-task trigger ("cron") — without it,
+// Console cron fires would hit the CONSOLE_UID dedupe path (intended for
+// Composer-typed messages with an optimistic local push) and disappear
+// from the chat entirely, AND IM-rendered cron fires would look like a
+// real human suddenly @-mentioned the bot with the prompt text. The
+// default "user" source is elided so omitempty drops it from the wire,
+// keeping the legacy on-wire shape minimal for non-cron messages.
 func (s *EventSink) OnUserMessage(sessionKey string, msg router.InboundMessage) {
+	srcStr := string(msg.Source)
+	if msg.Source == "" || msg.Source == trigger.SourceUser {
+		srcStr = ""
+	}
 	s.srv.Broadcast("session.user_message", SessionUserMessageBody{
 		BotID:       s.botID,
 		SessionKey:  sessionKey,
@@ -82,6 +89,6 @@ func (s *EventSink) OnUserMessage(sessionKey string, msg router.InboundMessage) 
 		// the GUI can drop back to FromUID when nothing survives.
 		FromName: safety.SanitizeDisplayName(msg.FromName, ""),
 		Ts:       time.Now().Unix(),
-		CronFire: msg.CronFire,
+		Source:   srcStr,
 	})
 }

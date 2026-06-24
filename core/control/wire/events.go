@@ -65,14 +65,17 @@ type SessionUserMessageBody struct {
 	FromUID     string `json:"fromUid,omitempty"`
 	FromName    string `json:"fromName,omitempty"`
 	Ts          int64  `json:"ts"`
-	// CronFire is true when this user_message represents a scheduled-task
-	// trigger rather than a real human inbound. The renderer uses it to (a)
-	// override the Composer-typed dedupe — a cron Console fire shares the
-	// CONSOLE_UID sessionKey but has NO optimistic local push to dedupe
-	// against, so the existing "skip CONSOLE_UID" path would otherwise hide
-	// the prompt — and (b) badge the bubble with a "[定时任务]" prefix so the
+	// Source classifies the message origin: "user" (default human inbound;
+	// omitted on the wire), "cron" (scheduler fire), or a future origin
+	// (webhook, replay). The renderer uses it to (a) override the
+	// Composer-typed dedupe — a cron Console fire shares the CONSOLE_UID
+	// sessionKey but has NO optimistic local push to dedupe against, so
+	// the existing "skip CONSOLE_UID" path would otherwise hide the
+	// prompt — and (b) badge the bubble with a "[定时任务]" prefix so the
 	// operator can tell at a glance that a message came from the scheduler.
-	CronFire bool `json:"cronFire,omitempty"`
+	// Replaces the legacy `cronFire bool` (which collapsed every non-user
+	// origin into one bit).
+	Source string `json:"source,omitempty"`
 }
 
 type SessionActivityBody struct {
@@ -92,11 +95,11 @@ type HistoryMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 	TS      int64  `json:"ts"`
-	// Cron is true for user rows that originated from the scheduler (cron
-	// task fired). The renderer uses it to badge the bubble — preserved
-	// through persistence so a chat-window reload doesn't lose the marker
-	// on prior fires.
-	Cron bool `json:"cron,omitempty"`
+	// Source classifies the row's origin: "user" (default; omitted on the
+	// wire), "cron" (scheduler fire), "assistant" (bot reply). Preserved
+	// through persistence so a chat-window reload doesn't lose the badge
+	// on prior fires. Replaces the legacy `cron bool`.
+	Source string `json:"source,omitempty"`
 	// FromName is the IM platform's display name of the human author of a
 	// user-role row, persisted at append time. Carried so a chat-window
 	// reload of a multi-author group session can still attribute bubbles

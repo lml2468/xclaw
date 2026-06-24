@@ -607,7 +607,13 @@ class Store {
  // flag so the bubble can be badged "[定时任务]" instead of looking
  // indistinguishable from a real human inbound.
         const key = env.body?.sessionKey ?? "";
-        const cron = !!env.body?.cronFire;
+        // Source classifies the message origin: "cron" (scheduler fire) /
+        // "user" (default human inbound; omitted on the wire) / future
+        // origins. Replaces the legacy cronFire bool — fall back to the
+        // bool for one release so a stale daemon binary still badges
+        // correctly.
+        const source = env.body?.source ?? (env.body?.cronFire ? "cron" : "");
+        const cron = source === "cron";
         if (!cron && (key === CONSOLE_UID || key === "console")) break;
         const s = this.route(env);
         if (!s) break;
@@ -736,7 +742,11 @@ class Store {
  // matches when the server has acknowledged the message, otherwise
  // keeps the local copy.
     const persisted: Message[] = rows.map((r) => ({
-      id: newId(), role: r.role as Role, text: r.content, ts: r.ts, cron: !!r.cron,
+      id: newId(), role: r.role as Role, text: r.content, ts: r.ts,
+      // History row carries `source` ("cron"/"user"/"assistant"). Fall
+      // back to legacy `cron` bool for one release so a stale daemon
+      // binary's history responses still badge correctly.
+      cron: (r as any).source === "cron" || !!(r as any).cron,
       senderName: r.fromName || undefined,
     }));
     if (s.messages.length === 0) {

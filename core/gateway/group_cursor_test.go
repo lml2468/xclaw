@@ -9,6 +9,7 @@ import (
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
 	"github.com/lml2468/octobuddy/core/store"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // TestColdStartBackfillRunsOnce verifies the gateway seeds an empty group window
@@ -32,7 +33,7 @@ func TestColdStartBackfillRunsOnce(t *testing.T) {
 	// First mention turn: window is empty -> backfill seeds it.
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "current question", Mentioned: true, MessageSeq: 20,
+		Text: "current question", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser}, MessageSeq: 20,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +49,7 @@ func TestColdStartBackfillRunsOnce(t *testing.T) {
 	// Second mention turn: window now warm -> no re-fetch.
 	_, err = gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "another question", Mentioned: true, MessageSeq: 21,
+		Text: "another question", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser}, MessageSeq: 21,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +72,7 @@ func TestReplyCursorAdvancesAndSegments(t *testing.T) {
 	// Turn 1: bob asks; bot replies. Inbound seq 100 becomes the answered cutoff.
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "first-question", Mentioned: true, MessageSeq: 100,
+		Text: "first-question", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser}, MessageSeq: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestReplyCursorAdvancesAndSegments(t *testing.T) {
 	// your last reply]; the current message must not be echoed.
 	_, err = gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "carol", FromName: "carol",
-		Text: "second-question", Mentioned: true, MessageSeq: 200,
+		Text: "second-question", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser}, MessageSeq: 200,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestReplyCursorNotAdvancedForCronFire(t *testing.T) {
 
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "scheduled", CronFire: true, MessageSeq: 0,
+		Text: "scheduled", Source: trigger.SourceCron, MessageSeq: 0,
 	})
 	if err != nil {
 		t.Fatal(err)

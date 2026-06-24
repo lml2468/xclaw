@@ -1,6 +1,9 @@
 package octo
 
-import "github.com/lml2468/octobuddy/core/router"
+import (
+	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/trigger"
+)
 
 // EnqueueCron enqueues a cron-fired turn onto the per-session worker so it
 // serializes with real inbound on the same key. The
@@ -17,15 +20,38 @@ import "github.com/lml2468/octobuddy/core/router"
 // Persona-grantor stamp: when persona is configured, the cron reply
 // speaks `on_behalf_of` the configured grantor — same identity as live
 // replies. The trust boundary is cron.SetOwnerUID's foreign-CreatedBy
-// prune: any task that survives that fence is
-// operator-authored on this bot, and the operator-configured persona is
-// allowed to speak for it. The persona is the cron's identity by design.
+// prune: any task that survives that fence is operator-authored on this
+// bot, and the operator-configured persona is allowed to speak for it.
+// The persona is the cron's identity by design.
+//
+// Caller is expected to build inbound with Source=trigger.SourceCron and
+// a Trigger=ReasonCron decision (so router.IsCron() bypasses the
+// rate-limit + mention/blocklist gates). bot_cron.go's fireCronTask does
+// this; tests may set it via NewCronTrigger below.
 func (c *Connector) EnqueueCron(sessionKey, channelID string, channelType ChannelType, inbound router.InboundMessage) {
 	tgt := replyTarget{channelID: channelID, channelType: channelType}
-	if c.persona.UID != "" {
-		tgt.onBehalfOf = c.persona.UID
+	policy, _ := c.loadPolicyAndClassifier()
+	if policy.Grantor.Configured() {
+		tgt.onBehalfOf = policy.Grantor.UID
 	}
 	c.enqueueTurn(sessionKey, inbound, tgt)
+}
+
+// NewCronTrigger is the canonical cron-fire trigger decision: ReasonCron +
+// SourceCron + persona-aware on_behalf_of routing. Used by bot_cron.go
+// (and any future cron-fire source) so the wire shape stays consistent
+// across the trigger pipeline and the router gate.
+func (c *Connector) NewCronTrigger() *trigger.TriggerDecision {
+	policy, _ := c.loadPolicyAndClassifier()
+	d := &trigger.TriggerDecision{
+		Reason:       trigger.ReasonCron,
+		Source:       trigger.SourceCron,
+		MatchedRules: []string{"cron_fire"},
+	}
+	if policy.Grantor.Configured() {
+		d.ReplyRouting.OnBehalfOf = policy.Grantor.UID
+	}
+	return d
 }
 
 // turnQueue is the per-session-key serial dispatch state (guarded by Connector.mu).
@@ -84,35 +110,13 @@ func (c *Connector) enqueueTurn(key string, inbound router.InboundMessage, tgt r
 	}
 }
 
-// drainTurns runs queued turns for one session key in order, then retires the
-// queue. New arrivals during a turn are picked up before the worker exits, so a
-// burst is handled by a single worker with no lost messages.
-// WaitTurns blocks until every drainTurns goroutine spawned by this
-// connector has finished its queue. Call this on graceful shutdown AFTER
-// the Run-ctx is cancelled (which closes the WS read loop and stops new
-// turns from being enqueued) and BEFORE closing the store / gateway / driver.
-//
-// Idempotent: a connector that has never enqueued a turn returns immediately.
-//
-// Sets the `closed` flag first so any late enqueueTurn call (a cron tick
-// that landed between Run returning and the bot's cm.Stop firing) is
-// refused at the door rather than spawning a fresh drainTurns into a
-// freshly-closed store. The flag was declared + checked in but
-// never actually set (`grep 'c\.closed =' returned nothing` per the
-// Go audit) — wiring it here closes the last shutdown gap.
-func (c *Connector) WaitTurns() {
-	c.mu.Lock()
-	c.closed = true
-	c.mu.Unlock()
-	c.turnsWG.Wait()
-}
-
-func shouldObserveDroppedGroupMessage(inbound router.InboundMessage, dec router.Decision) bool {
-	return inbound.ChannelType == router.ChannelGroup &&
-		!inbound.Mentioned &&
-		(dec == router.DroppedBot || dec == router.DroppedNotMentioned)
-}
-
+// drainTurns runs queued turns for one session key in order, then retires
+// the queue. New arrivals during a turn are picked up before the worker
+// exits, so a burst is handled by a single worker with no lost messages.
+// The retroactive post-gate Observe is GONE — the trigger pipeline marks
+// observations at classification time and gw.Observe runs inline (see
+// dispatchInbound), so a "dropped" turn here is a real drop, not a
+// disguised observation.
 func (c *Connector) drainTurns(key string) {
 	defer c.turnsWG.Done()
 	for {
@@ -127,11 +131,11 @@ func (c *Connector) drainTurns(key string) {
 		}
 		item := q.pending[0]
 		q.pending = q.pending[1:]
-		// Set the per-turn target IMMEDIATELY before releasing the lock and
-		// running gw.Handle, so OnReply (which reads via c.target(key))
-		// observes exactly the target the producer attached. drainTurns is
-		// the sole writer to c.targets, so cron+inbound concurrent enqueues
-		// no longer race.
+		// Set the per-turn target IMMEDIATELY before releasing the lock
+		// and running gw.Handle, so OnReply (which reads via
+		// c.target(key)) observes exactly the target the producer
+		// attached. drainTurns is the sole writer to c.targets, so
+		// cron+inbound concurrent enqueues no longer race.
 		c.targets[key] = item.tgt
 		c.mu.Unlock()
 
@@ -140,16 +144,26 @@ func (c *Connector) drainTurns(key string) {
 		if c.gateway == nil {
 			continue
 		}
-		dec, err := c.gateway.Handle(c.ctx(), item.inbound)
-		if err != nil {
+		if _, err := c.gateway.Handle(c.ctx(), item.inbound); err != nil {
 			c.logf("handle turn for %s: %v", key, err)
 		}
-		// A mention-free unmentioned message the router declined to run (bot-loop
-		// guard, or it turned out not to be mention-free after all) is still group
-		// chatter the agent should see later — observe it as background. runTurn
-		// already cached it on the Accepted path, so only observe on these drops.
-		if shouldObserveDroppedGroupMessage(item.inbound, dec) {
-			c.gateway.Observe(item.inbound)
-		}
 	}
+}
+
+// WaitTurns blocks until every drainTurns goroutine spawned by this
+// connector has finished its queue. Call this on graceful shutdown AFTER
+// the Run-ctx is cancelled (which closes the WS read loop and stops new
+// turns from being enqueued) and BEFORE closing the store / gateway / driver.
+//
+// Idempotent: a connector that has never enqueued a turn returns immediately.
+//
+// Sets the `closed` flag first so any late enqueueTurn call (a cron tick
+// that landed between Run returning and the bot's cm.Stop firing) is
+// refused at the door rather than spawning a fresh drainTurns into a
+// freshly-closed store.
+func (c *Connector) WaitTurns() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.turnsWG.Wait()
 }

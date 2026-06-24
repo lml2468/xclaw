@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safepath"
 	"github.com/lml2468/octobuddy/core/store"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // Reaper cadence for a running bot. reapInterval is how often the sweep runs;
@@ -44,14 +46,11 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	defer st.Close()
 
 	rt := router.New(router.Config{
-		MaxPerMinute:      cfg.RateLimit.MaxPerMinute,
-		MentionFreeGroups: cfg.MentionFreeGroups,
-		KnownBotUids:      cfg.KnownBotUids,
-		AllowedBotUids:    cfg.AllowedBotUids,
-		BotBlocklist:      cfg.BotBlocklist,
+		MaxPerMinute:   cfg.RateLimit.MaxPerMinute,
+		KnownBotUids:   cfg.KnownBotUids,
+		AllowedBotUids: cfg.AllowedBotUids,
+		BotBlocklist:   cfg.BotBlocklist,
 	})
-
-	startRouterReaper(ctx, rt)
 
 	// Per-bot secret store: seed from the config file (the headless fallback),
 	// then let secret.inject (from the GUI's secret backend) override at runtime.
@@ -72,6 +71,11 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	defer drainBotRuntime(cm, connector, rtBot.target)
 	registerBotRuntime(rtBot, reg, srv)
 	startBotCron(cm, cfg.BotID)
+	// Reaper sweeps both the router lock/rate-limit maps AND the
+	// group-context channel windows (issue #105 follow-on: bound memory
+	// over the daemon's lifetime — the in-memory window used to grow
+	// unbounded across channels).
+	startRouterReaper(ctx, rt, rtBot.gateway)
 
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
 		cfg.BotID, drv.Name(), cfg.APIURL, cfg.DataDir)
@@ -130,14 +134,64 @@ func newBotConnector(cfg config.Resolved, sec *secretStore) (*octo.Connector, pe
 	// so an empty token here is allowed (the connector waits for it).
 	connector := octo.NewConnector(octo.NewRESTClient(cfg.APIURL, sec.OctoToken))
 	connector.SetToolProgress(cfg.Agent.ToolProgress)
-	connector.SetMentionFreeGroups(cfg.MentionFreeGroups)
 
-	// Persona clone (openclaw OBO): when onBehalfOf is configured, the connector
-	// widens its trigger gate + routes replies as the grantor, and the gateway
-	// injects the persona system prompt. A zero grantor is a no-op (regular bot).
+	// Persona clone (openclaw OBO): when onBehalfOf is configured, the
+	// classifier widens the trigger gate + the connector routes replies
+	// as the grantor via TriggerDecision.ReplyRouting. A zero grantor is
+	// a no-op (regular bot).
 	grantor := persona.Grantor{UID: cfg.OnBehalfOf.UID, Name: cfg.OnBehalfOf.Name}
-	connector.SetPersona(grantor)
+
+	// Trigger policy — single source of truth for "should this message
+	// reply?". The router and the connector both consult the SAME policy
+	// via the same classifier (legacy mentionFree double-copy is gone,
+	// issue #105 缺陷 2). Policy.BotUID is seeded with the config id
+	// here, but the connector overrides it with the server-registered
+	// uid at classify time (see prepareInboundTurn) — that's the uid IM
+	// @-mention payloads carry.
+	connector.SetPolicy(triggerPolicyFromConfig(cfg, grantor))
 	return connector, grantor
+}
+
+// triggerPolicyFromConfig assembles the trigger.Policy from resolved
+// config + grantor. Defaults:
+//   - AIBroadcast defaults to Deny (the bug fix from issue #105). Operators
+//     who want legacy behavior set trigger.aiBroadcast="allow" in config.
+//   - ReplyToBotEnabled defaults to true so users keep their natural
+//     "continue the thread" interaction under Deny.
+//   - MentionFreeGroups falls back to the top-level config field if the new
+//     trigger.mentionFreeGroups is empty (one-release deprecation shim).
+func triggerPolicyFromConfig(cfg config.Resolved, grantor persona.Grantor) trigger.Policy {
+	tg := cfg.Trigger
+	aib := trigger.AIBroadcastPolicy(tg.AIBroadcast)
+	if !aib.Valid() {
+		aib = trigger.AIBroadcastDeny
+		fmt.Fprintf(os.Stderr, "[%s] trigger.aiBroadcast unset/invalid; defaulting to deny (issue #105 fix)\n", cfg.BotID)
+	}
+	mentionFree := tg.MentionFreeGroups
+	if len(mentionFree) == 0 {
+		mentionFree = cfg.MentionFreeGroups
+	}
+	return trigger.Policy{
+		BotUID:               cfg.BotID,
+		Grantor:              trigger.FromPersonaGrantor(grantor),
+		MentionFreeGroups:    toBoolSet(mentionFree),
+		AIBroadcast:          aib,
+		AIBroadcastAllowlist: toBoolSet(tg.AIBroadcastAllowlist),
+		ReplyToBotEnabled:    tg.ReplyToBotEnabled == nil || *tg.ReplyToBotEnabled,
+	}
+}
+
+func toBoolSet(vals []string) map[string]bool {
+	if len(vals) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(vals))
+	for _, v := range vals {
+		if v != "" {
+			m[v] = true
+		}
+	}
+	return m
 }
 
 func newBotGateway(
@@ -189,10 +243,17 @@ func prepareBotDirs(cfg config.Resolved) error {
 	return nil
 }
 
-func startRouterReaper(ctx context.Context, rt *router.Router) {
-	// Periodic reaper: bound the router's per-session lock / rate-limit maps over
-	// the daemon's lifetime. Sessions/messages/sandboxes themselves are not expired.
-	reap := func() { rt.Reap(routerReapIdle) }
+func startRouterReaper(ctx context.Context, rt *router.Router, gw *gateway.Gateway) {
+	// Periodic reaper: bound the router's per-session lock / rate-limit
+	// maps AND the gateway's group-context channel windows over the
+	// daemon's lifetime. Sessions/messages/sandboxes themselves are not
+	// expired (persistent — only in-memory tracking maps).
+	reap := func() {
+		rt.Reap(routerReapIdle)
+		if gw != nil {
+			gw.ReapGroupContext(routerReapIdle)
+		}
+	}
 	reap()
 	go func() {
 		t := time.NewTicker(reapInterval)

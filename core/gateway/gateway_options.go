@@ -14,7 +14,13 @@ import (
 
 // New constructs a Gateway.
 func New(d agent.Driver, st *store.Store, rt *router.Router, sink Sink) *Gateway {
-	return &Gateway{driver: d, store: st, router: rt, sink: sink, dispatchTimeout: defaultDispatchTimeout}
+	return &Gateway{
+		driver:          d,
+		store:           st,
+		router:          rt,
+		sink:            sink,
+		dispatchTimeout: defaultDispatchTimeout,
+	}
 }
 
 // WithGroupContext enables group-context injection.
@@ -161,4 +167,16 @@ func kindFor(ct router.ChannelType) sandbox.Kind {
 		return sandbox.KindGroup
 	}
 	return sandbox.KindDM
+}
+
+// ReapGroupContext evicts group-context channel windows untouched for at
+// least threshold. No-op when group-context is disabled. Returns the
+// channels evicted (0 if disabled). Wired into the daemon's periodic
+// reaper alongside router.Reap so a long-quiet group doesn't accumulate
+// memory over the daemon's lifetime.
+func (g *Gateway) ReapGroupContext(threshold time.Duration) int {
+	if g.groups == nil {
+		return 0
+	}
+	return g.groups.ReapIdle(threshold)
 }

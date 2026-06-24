@@ -13,6 +13,7 @@ import (
 	"github.com/lml2468/octobuddy/core/gateway"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/store"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // runREPL reads stdin lines and feeds each as an inbound DM through the gateway.
@@ -39,6 +40,7 @@ func runREPL(ctx context.Context, gw *gateway.Gateway, st *store.Store, fromUID 
 			FromUID:     fromUID,
 			FromName:    fromUID,
 			Text:        text,
+			Source:      trigger.SourceUser,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "handle error: %v\n", err)

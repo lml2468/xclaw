@@ -114,20 +114,6 @@ func (c *Connector) BackfillFetch(channelID string, limit int) []groupctx.Backfi
 	return out
 }
 
-// SetMentionFreeGroups records the channel ids that respond without an @mention
-// (G12). In those channels an unmentioned group message is handed to the gateway
-// (the router applies the mention-free + bot-loop policy) rather than being
-// observed-only. Must be called before Run.
-func (c *Connector) SetMentionFreeGroups(channelIDs []string) {
-	if len(channelIDs) == 0 {
-		c.mentionFree = nil
-		return
-	}
-	m := make(map[string]bool, len(channelIDs))
-	for _, id := range channelIDs {
-		if id != "" {
-			m[id] = true
-		}
-	}
-	c.mentionFree = m
-}
+// (Mention-free groups are no longer a connector concern — see
+// trigger.Policy.MentionFreeGroups. The legacy SetMentionFreeGroups +
+// c.mentionFree double-copy was removed in the issue #105 refactor.)

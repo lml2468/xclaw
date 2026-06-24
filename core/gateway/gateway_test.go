@@ -10,6 +10,7 @@ import (
 	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/store"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // fakeDriver returns a scripted event stream and records the requests it saw,
@@ -156,7 +157,7 @@ func TestGroupMentionGateAtGateway(t *testing.T) {
 	// group without mention → dropped, driver never invoked.
 	d, _ := gw.Handle(context.Background(),
 		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi"})
-	if d != router.DroppedNotMentioned {
+	if d != router.Observed {
 		t.Fatalf("want not_mentioned, got %s", d)
 	}
 	if len(drv.requests) != 0 {
@@ -185,7 +186,7 @@ func TestSandboxInjectsCwdAndMemoryPerSession(t *testing.T) {
 
 	// Group turn (mentioned) → different sandbox (kind prefix scopes the hash).
 	_, err = gw.Handle(context.Background(),
-		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", FromName: "alice", Text: "hi", Mentioned: true})
+		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", FromName: "alice", Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser}})
 	if err != nil {
 		t.Fatal(err)
 	}

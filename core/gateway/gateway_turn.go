@@ -176,7 +176,7 @@ func (g *Gateway) consumeAgentError(ev agent.AgentEvent, res *agentAttemptResult
 
 func (g *Gateway) prepareAgentRequest(ctx context.Context, sessionKey string, msg router.InboundMessage) (agent.Request, error) {
 	prompt := g.buildGroupPrompt(sessionKey, msg)
-	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName, msg.CronFire); err != nil {
+	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName, string(msg.Source)); err != nil {
 		return agent.Request{}, g.failTurn(sessionKey, "store.AppendUser", err)
 	}
 	g.notifySessionTouch(sessionKey, msg.ChannelID, msg.ChannelType)

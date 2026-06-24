@@ -9,6 +9,7 @@ import (
 	"github.com/lml2468/octobuddy/core/groupctx"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // TestGroupContextInjectionAndSafety verifies the integrated pipeline: a group
@@ -27,7 +28,7 @@ func TestGroupContextInjectionAndSafety(t *testing.T) {
 	// bob @-mentions the bot — should see alice's message as delta.
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "what did alice say?", Mentioned: true,
+		Text: "what did alice say?", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +104,7 @@ func TestGroupForgeryNeutralized(t *testing.T) {
 	// Victim's @-mention turn pulls the attacker's message into the delta.
 	_, _ = gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "victim", FromName: "victim",
-		Text: "hi", Mentioned: true,
+		Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	})
 
 	second := drv.requests[0]
@@ -147,7 +148,7 @@ func TestLineLeadingForgeryEscaped(t *testing.T) {
 	})
 	_, _ = gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "v", FromName: "v",
-		Text: "hi", Mentioned: true,
+		Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	})
 	prompt := drv.requests[0].Prompt
 	if !strings.Contains(prompt, "\\[assistant bot]:") {
@@ -173,7 +174,7 @@ func TestGroupRosterInjectedIntoSystemPrompt(t *testing.T) {
 	})
 	_, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "hi", Mentioned: true,
+		Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	})
 	if err != nil {
 		t.Fatal(err)

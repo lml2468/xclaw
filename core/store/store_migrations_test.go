@@ -148,21 +148,74 @@ func saveAndAssertResume(t *testing.T, s *Store, key, agent, resumeID, saveForma
 	}
 }
 
-// AppendUser persists the cron flag and RecentMessages reads it back, so
-// the GUI's "cron" badge survives a chat-window reload (history fetch
-// replays from the store — without persistence, badges would be lost on
-// every reopen).
-func TestCronFlagRoundTrip(t *testing.T) {
+// TestMigrateMessagesPartialBackfillRecovery: simulates a pre-tx daemon
+// that committed the ALTER TABLE but crashed before the assistant
+// UPDATE — leaves assistant rows tagged with the DEFAULT 'user'. Next
+// startup must self-heal those rows back to 'assistant' (otherwise
+// chat-history reload renders the bot's replies as if they were user
+// inbound, conflating speakers in the GUI).
+func TestMigrateMessagesPartialBackfillRecovery(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "partial.db")
+	createPartialBackfillDB(t, dbPath)
+
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s.Close()
+	msgs, err := s.RecentMessages("sess", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(msgs))
+	}
+	var assistantSource string
+	for _, m := range msgs {
+		if m.Role == RoleAssistant {
+			assistantSource = m.Source
+		}
+	}
+	if assistantSource != SourceAssistant {
+		t.Fatalf("assistant row stayed mis-tagged after self-heal: got %q, want %q", assistantSource, SourceAssistant)
+	}
+}
+
+func createPartialBackfillDB(t *testing.T, dbPath string) {
+	t.Helper()
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sessions(id, channel_id, channel_type, created_at, updated_at) VALUES ('sess','ch',1,1,1)`); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	// Insert an assistant row with the wrong source tag, simulating a
+	// crashed partial migration (ALTER committed, backfill UPDATE didn't).
+	if _, err := s.db.Exec(`INSERT INTO messages(session_id, role, content, timestamp, from_name, source) VALUES ('sess','user','hi',1,'alice','user')`); err != nil {
+		t.Fatalf("seed user row: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO messages(session_id, role, content, timestamp, from_name, source) VALUES ('sess','assistant','ok',2,'bot','user')`); err != nil {
+		t.Fatalf("seed mis-tagged assistant row: %v", err)
+	}
+	s.Close()
+}
+
+// AppendUser persists the message source and RecentMessages reads it
+// back, so the GUI's "cron" badge survives a chat-window reload (history
+// fetch replays from the store — without persistence, badges would be
+// lost on every reopen).
+func TestSourceRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	_ = s.Touch("sess", "ch", 1)
-	if err := s.AppendUser("sess", "real human", "alice", false); err != nil {
+	if err := s.AppendUser("sess", "real human", "alice", SourceUser); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendUser("sess", "cron fire", "cronbot", true); err != nil {
+	if err := s.AppendUser("sess", "cron fire", "cronbot", SourceCron); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AppendAssistant("sess", "ok", "bot"); err != nil {
@@ -176,46 +229,122 @@ func TestCronFlagRoundTrip(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("got %d msgs, want 3", len(msgs))
 	}
-	if msgs[0].Cron {
-		t.Fatal("real human msg should have Cron=false")
+	if msgs[0].Source != SourceUser {
+		t.Fatalf("real human msg should have Source=user, got %q", msgs[0].Source)
 	}
-	if !msgs[1].Cron {
-		t.Fatal("cron-fire msg should have Cron=true")
+	if msgs[1].Source != SourceCron {
+		t.Fatalf("cron-fire msg should have Source=cron, got %q", msgs[1].Source)
 	}
-	if msgs[2].Cron {
-		t.Fatal("assistant msg must never have Cron=true")
+	if msgs[2].Source != SourceAssistant {
+		t.Fatalf("assistant msg should have Source=assistant, got %q", msgs[2].Source)
 	}
 }
 
-// migrateMessagesAddCron is idempotent and adds the cron column to a
-// legacy DB that predates the feature. The migration must (a) leave existing
-// rows backfilled to cron=0, (b) survive being run twice (e.g. daemon
-// restart), and (c) NOT touch a DB that already has the column.
-func TestMigrateMessagesAddCronIdempotent(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	// Stage 1: create a "legacy" DB by opening once (creates schema as-is
-	// with cron column). To simulate a true legacy DB we drop the column
-	// via a destructive table rebuild; SQLite has no DROP COLUMN in older
-	// versions but our test only needs to verify "ADD COLUMN works when
-	// missing" + "noop when present", which we exercise via two opens.
+// TestMigrateMessagesAddSourceIdempotent: opening a DB that already has
+// the new schema (which includes source) twice does not double-migrate.
+// The migration's job on a fresh DB is a no-op (source already exists from
+// CREATE TABLE); the bigger value lives in the legacy-DB rebuild covered
+// by TestMigrateMessagesLegacyCronBackfill below.
+func TestMigrateMessagesAddSourceIdempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fresh.db")
 	s, err := Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Touch("sess", "ch", 1)
-	if err := s.AppendUser("sess", "before", "u", false); err != nil {
+	if err := s.AppendUser("sess", "before", "u", SourceUser); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
 
-	// Stage 2: reopen. Migration runs again — must be noop (no error).
 	s2, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
 	defer s2.Close()
 	msgs, _ := s2.RecentMessages("sess", 10)
-	if len(msgs) != 1 || msgs[0].Cron {
-		t.Fatalf("legacy row should survive with Cron=false: %+v", msgs)
+	if len(msgs) != 1 || msgs[0].Source != SourceUser {
+		t.Fatalf("row should round-trip with Source=user: %+v", msgs)
+	}
+}
+
+// TestMigrateMessagesLegacyCronBackfill: a DB that started life with the
+// pre-source schema (cron INTEGER column) must be backfilled correctly
+// when source is added — cron=1 rows become source='cron', assistant rows
+// become source='assistant', everything else defaults to 'user'.
+func TestMigrateMessagesLegacyCronBackfill(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Stage 1: build a "legacy" DB by hand. Can't use Open because
+	// Open's migration would immediately add source; emulate the old shape
+	// directly via the modernc driver.
+	createLegacyMessagesDB(t, dbPath)
+
+	// Stage 2: reopen — migration must add source and backfill.
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s.Close()
+	msgs, err := s.RecentMessages("sess", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(msgs))
+	}
+	if msgs[0].Source != SourceUser {
+		t.Fatalf("legacy human row → user, got %q", msgs[0].Source)
+	}
+	if msgs[1].Source != SourceCron {
+		t.Fatalf("legacy cron row → cron, got %q", msgs[1].Source)
+	}
+	if msgs[2].Source != SourceAssistant {
+		t.Fatalf("legacy assistant row → assistant, got %q", msgs[2].Source)
+	}
+}
+
+func createLegacyMessagesDB(t *testing.T, dbPath string) {
+	t.Helper()
+	// Open via Open to get the rest of the schema + migrations, then
+	// destructively rebuild messages with the legacy shape and reseed.
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, stmt := range []string{
+		`DROP TABLE messages`,
+		`CREATE TABLE messages (
+		  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		  session_id TEXT NOT NULL,
+		  role       TEXT NOT NULL CHECK(role IN ('user','assistant')),
+		  content    TEXT NOT NULL,
+		  timestamp  INTEGER NOT NULL,
+		  from_name  TEXT,
+		  cron       INTEGER NOT NULL DEFAULT 0
+		)`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("rebuild legacy: %v", err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO sessions(id, channel_id, channel_type, created_at, updated_at) VALUES (?,?,?,?,?)`,
+		"sess", "ch", 1, 1, 1); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	for _, row := range []struct {
+		role, content, fromName string
+		cron                    int
+	}{
+		{"user", "real human", "alice", 0},
+		{"user", "cron fire", "cronbot", 1},
+		{"assistant", "ok", "bot", 0},
+	} {
+		if _, err := s.db.Exec(
+			`INSERT INTO messages(session_id, role, content, timestamp, from_name, cron) VALUES (?,?,?,?,?,?)`,
+			"sess", row.role, row.content, 1, row.fromName, row.cron); err != nil {
+			t.Fatalf("seed row: %v", err)
+		}
 	}
 }

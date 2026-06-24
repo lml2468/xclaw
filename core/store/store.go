@@ -17,6 +17,17 @@ const (
 	RoleAssistant Role = "assistant"
 )
 
+// SourceUser / SourceCron / SourceAssistant are the values stored in
+// messages.source. They mirror trigger.Source plus an assistant tag so
+// the badge logic can distinguish operator-typed text from scheduler fires
+// and from bot replies. Stored as TEXT to keep the migration path open
+// for future origins (webhook, replay) without further schema changes.
+const (
+	SourceUser      = "user"
+	SourceCron      = "cron"
+	SourceAssistant = "assistant"
+)
+
 // Message is one durable conversation record. This is NOT the live prompt
 // history (that lives in the agent's own resumable session); it is used for
 // first-turn/migration injection and stale-resume recovery, exactly as in
@@ -26,12 +37,14 @@ type Message struct {
 	Content   string
 	Timestamp int64
 	FromName  string
-	// Cron marks a user-row that originated from the scheduler rather than
-	// a real human inbound. Persisted so the desktop GUI's "cron" corner
-	// badge survives a reload of the chat window — without this, every
-	// reopened conversation would lose the badge on prior cron fires.
-	// Always false for assistant rows.
-	Cron bool
+	// Source classifies the row's origin. SourceUser (default human
+	// inbound), SourceCron (scheduler fire), SourceAssistant (bot reply).
+	// Persisted so the desktop GUI's "cron" corner badge survives a
+	// reload of the chat window — without this, every reopened
+	// conversation would lose the badge on prior cron fires. Replaces
+	// the legacy `Cron bool` (which collapsed every non-user-non-cron
+	// origin into one bit).
+	Source string
 }
 
 // Store is the SQLite-backed persistence layer. Pure-Go SQLite keeps the core a
@@ -74,7 +87,7 @@ func Open(path string) (*Store, error) {
 	if err := migrateTokenUsage(db); err != nil {
 		return nil, err
 	}
-	if err := migrateMessagesAddCron(db); err != nil {
+	if err := migrateMessagesAddSource(db); err != nil {
 		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
@@ -135,23 +148,22 @@ func (s *Store) GetOrCreate(id, channelID string, channelType int) (Session, err
 
 // --- messages ---
 
-func (s *Store) AppendUser(sessionID, content, fromName string, cron bool) error {
-	return s.appendMessage(sessionID, RoleUser, content, fromName, cron)
+func (s *Store) AppendUser(sessionID, content, fromName, source string) error {
+	if source == "" {
+		source = SourceUser
+	}
+	return s.appendMessage(sessionID, RoleUser, content, fromName, source)
 }
 
 func (s *Store) AppendAssistant(sessionID, content, botName string) error {
-	return s.appendMessage(sessionID, RoleAssistant, content, botName, false)
+	return s.appendMessage(sessionID, RoleAssistant, content, botName, SourceAssistant)
 }
 
-func (s *Store) appendMessage(sessionID string, role Role, content, fromName string, cron bool) error {
+func (s *Store) appendMessage(sessionID string, role Role, content, fromName, source string) error {
 	now := s.now().Unix()
-	cronVal := 0
-	if cron {
-		cronVal = 1
-	}
 	_, err := s.db.Exec(
-		`INSERT INTO messages(session_id, role, content, timestamp, from_name, cron) VALUES(?,?,?,?,?,?)`,
-		sessionID, string(role), content, now, fromName, cronVal)
+		`INSERT INTO messages(session_id, role, content, timestamp, from_name, source) VALUES(?,?,?,?,?,?)`,
+		sessionID, string(role), content, now, fromName, source)
 	if err != nil {
 		return fmt.Errorf("append %s: %w", role, err)
 	}
@@ -168,7 +180,7 @@ func (s *Store) appendMessage(sessionID string, role Role, content, fromName str
 // order (oldest first), for first-turn history injection.
 func (s *Store) RecentMessages(sessionID string, limit int) ([]Message, error) {
 	rows, err := s.db.Query(
-		`SELECT role, content, timestamp, COALESCE(from_name,''), cron
+		`SELECT role, content, timestamp, COALESCE(from_name,''), COALESCE(source,'user')
 		 FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?`,
 		sessionID, limit)
 	if err != nil {
@@ -179,12 +191,10 @@ func (s *Store) RecentMessages(sessionID string, limit int) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		var role string
-		var cron int
-		if err := rows.Scan(&role, &m.Content, &m.Timestamp, &m.FromName, &cron); err != nil {
+		if err := rows.Scan(&role, &m.Content, &m.Timestamp, &m.FromName, &m.Source); err != nil {
 			return nil, err
 		}
 		m.Role = Role(role)
-		m.Cron = cron != 0
 		out = append(out, m)
 	}
 	// reverse to chronological (oldest first)

@@ -57,9 +57,11 @@ func TestLoadCorruptedReturnsZero(t *testing.T) {
 	}
 }
 
-// withHome overrides $HOME for the test (process-wide; tests serialize on
-// this since UserHomeDir reads env). t.Setenv handles cleanup.
+// withHome overrides the home directory for the test. Sets BOTH `HOME`
+// (POSIX) and `USERPROFILE` (Windows) so os.UserHomeDir resolves into
+// the test temp dir on every supported runner. t.Setenv handles cleanup.
 func withHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }

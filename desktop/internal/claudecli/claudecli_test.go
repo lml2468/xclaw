@@ -2,6 +2,7 @@ package claudecli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -113,15 +114,7 @@ func TestUpgradeFetchesAndVerifies(t *testing.T) {
 	withHome(t, t.TempDir())
 
 	body := []byte("#!/bin/sh\necho test claude\n")
-	var arc bytes.Buffer
-	gz := gzip.NewWriter(&arc)
-	tw := tar.NewWriter(gz)
-	_ = tw.WriteHeader(&tar.Header{Name: binName(), Mode: 0o755, Size: int64(len(body))})
-	_, _ = tw.Write(body)
-	tw.Close()
-	gz.Close()
-
-	asset := arc.Bytes()
+	asset := buildFixtureArchive(t, body)
 	sums := []byte(fmt.Sprintf("%s  %s\n", sha256hex(asset), assetName()))
 	tag := "v9.9.9-test"
 
@@ -221,4 +214,34 @@ func withHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+// buildFixtureArchive returns the per-OS archive (tar.gz everywhere
+// except Windows, where assetName() asks for .zip) carrying the test
+// claude payload at the root.
+func buildFixtureArchive(t *testing.T, body []byte) []byte {
+	t.Helper()
+	if strings.HasSuffix(assetName(), ".zip") {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		f, err := zw.Create(binName())
+		if err != nil {
+			t.Fatalf("zip create: %v", err)
+		}
+		if _, err := f.Write(body); err != nil {
+			t.Fatalf("zip write: %v", err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatalf("zip close: %v", err)
+		}
+		return buf.Bytes()
+	}
+	var arc bytes.Buffer
+	gz := gzip.NewWriter(&arc)
+	tw := tar.NewWriter(gz)
+	_ = tw.WriteHeader(&tar.Header{Name: binName(), Mode: 0o755, Size: int64(len(body))})
+	_, _ = tw.Write(body)
+	tw.Close()
+	gz.Close()
+	return arc.Bytes()
 }

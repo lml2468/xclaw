@@ -1,12 +1,10 @@
-// Package gateway orchestrates the end-to-end turn pipeline, the Go analogue of
-// cc-channel's index.ts handleMessage:
+// Package gateway orchestrates the end-to-end turn pipeline:
 //
 //	inbound → router (lock + gate + rate limit) → getOrCreate session →
 //	load resume id → driver.Query → stream events → deliver to sink →
 //	persist assistant reply + resume id
 //
-// It depends only on the agent.Driver abstraction and a Sink, so it is unaware
-// of which agent runs underneath or which IM (if any) is on the other end.
+// Depends only on agent.Driver + Sink, so it is agent- and IM-agnostic.
 package gateway
 
 import (
@@ -33,16 +31,10 @@ type Sink interface {
 	OnEvent(sessionKey string, ev agent.AgentEvent)
 	// OnReply is called once with the full assembled assistant text (may be "").
 	OnReply(sessionKey string, text string)
-	// OnUserMessage is called once at the start of an accepted turn, BEFORE
-	// any agent work — its purpose is to let observer sinks (control bus →
-	// GUI) render the inbound user message in the chat transcript. The IM
-	// connector implements this as a no-op (the message originated there),
-	// the GUI's control-bus EventSink broadcasts session.user_message so a
-	// desktop attached to an IM-originated session sees what the remote
-	// human actually sent — without this, the GUI only saw the bot's reply
-	// and the transcript read like a monologue. NOT called for messages
-	// dropped/rate-limited before runTurn — those reach the user via the
-	// distinct oversized/rateLimited reply path instead.
+	// OnUserMessage fires at the start of an accepted turn so observer
+	// sinks (control bus → GUI) can render the inbound in the transcript.
+	// The IM connector implements this as a no-op (the message originated
+	// there). NOT called for messages dropped/rate-limited before runTurn.
 	OnUserMessage(sessionKey string, msg router.InboundMessage)
 }
 
@@ -60,126 +52,92 @@ type Gateway struct {
 	// set, group/thread turns get an operator-authored [Group instructions] block
 	// (from groupConfigDir/<channelId>.md) appended to the system prompt.
 	groupMD *groupmd.Loader
-	// Optional cold-start backfill fetch (set via WithGroupBackfill). Returns
-	// recent channel messages from the IM REST API to seed an empty group window
-	// the first time a channel is seen (cc G4). Kept as an IM-agnostic callback so
-	// groupctx never imports a connector. botUID lets backfill skip the bot's own
-	// replies and infer the initial answered/new cutoff.
+	// Optional cold-start backfill (set via WithGroupBackfill). Returns
+	// recent channel messages from the IM REST API to seed an empty group
+	// window the first time a channel is seen. botUID lets backfill skip
+	// the bot's own replies and infer the initial answered/new cutoff.
 	groupBackfill func(channelID string, limit int) []groupctx.BackfillMessage
 	botUID        func() string
-	// Operator-trusted system prompt (assembled from SOUL.md + AGENTS.md).
-	// Appended after the non-overridable security prefix.
+	// Operator-trusted system prompt (SOUL.md + AGENTS.md). Appended after
+	// the non-overridable security prefix.
 	systemPrompt string
-	// Persona-clone grantor (openclaw OBO). When configured, a persona
-	// instruction is injected into the system prompt so the bot replies in the
-	// grantor's voice. Zero value = a regular (non-clone) bot. personaPrompt is
-	// the optional free-form persona instruction appended after the synthesized
-	// group hint.
+	// Persona-clone grantor (OBO). When configured, a persona instruction
+	// is injected so the bot replies in the grantor's voice. Zero value =
+	// a regular bot. personaPrompt is an optional free-form persona block
+	// appended after the synthesized group hint.
 	persona       persona.Grantor
 	personaPrompt string
 	// Optional model override passed to the driver (empty = driver default).
 	model string
-	// Per-session sandbox roots (set via WithSandbox). When cwdBase is set, each
-	// turn runs in cwdBase/<hash>, with auto-memory under memoryBase/<hash>.
-	// The bot's skills + workflows are NOT linked into the sandbox: they live
-	// under the per-bot CLAUDE_CONFIG_DIR (~/.octobuddy/<id>/.claude/{skills,workflows})
-	// and the claude CLI auto-discovers them as user-scope assets — every spawn
-	// already loads them, no per-turn link work needed. Empty cwdBase = no
-	// isolation (inherit proc).
+	// Per-session sandbox roots (set via WithSandbox). Each turn runs in
+	// cwdBase/<hash>, with auto-memory under memoryBase/<hash>. Skills +
+	// workflows live under the per-bot CLAUDE_CONFIG_DIR and the claude
+	// CLI auto-discovers them; no per-turn link work needed. Empty
+	// cwdBase = no isolation (inherit proc).
 	cwdBase, memoryBase string
-	// mediaAuth, when set, supplies the Authorization header for an inbound-media
-	// download URL (scoped to the IM's apiUrl host). Set via WithMediaAuth by the
-	// IM connector; keeps the gateway IM-agnostic (it never embeds a token).
+	// mediaAuth supplies the Authorization header for inbound-media
+	// downloads (scoped to the IM's apiUrl host). Set via WithMediaAuth by
+	// the IM connector; keeps the gateway IM-agnostic.
 	mediaAuth MediaAuth
-	// assertPublic overrides the media-download SSRF guard (defaults to
-	// config.AssertPublicURL). Test seam only — production never sets it.
+	// assertPublic / mediaClient: test seams only (override the SSRF guard
+	// and the media HTTP client). Production never sets them.
 	assertPublic func(ctx context.Context, rawURL string) error
-	// mediaClient overrides the media-download HTTP client (defaults to the
-	// hardened mediaHTTPClient with the rebinding-proof dial guard). Test seam
-	// only — production never sets it; tests inject a client that permits the
-	// loopback httptest server the dial guard would otherwise reject.
-	mediaClient *http.Client
+	mediaClient  *http.Client
 
-	// dispatchTimeout bounds a single turn (#141), but as an IDLE deadline: the
-	// timer resets on every AgentEvent received from the driver, so a long-running
-	// healthy turn (multi-agent workflow, big stream, lots of tool calls) survives
-	// as long as events keep flowing — only true silence kills it. On expiry the
+	// dispatchTimeout bounds a single turn as an IDLE deadline: the timer
+	// resets on every AgentEvent, so a long-running healthy turn survives
+	// as long as events flow — only true silence kills it. On expiry the
 	// turn's context is cancelled (which kills the claude subprocess via
-	// CommandContext) and the user gets a "处理超时" apology. The session lock then
-	// releases as runTurn returns, so a wedged turn cannot block the queue forever.
-	// <=0 disables the bound. Default 20 min — long enough to cover most complex
-	// workflows between events, short enough that a truly hung turn frees up.
+	// CommandContext) and the user gets a "处理超时" apology. <=0 disables.
 	dispatchTimeout time.Duration
 
 	// Effective settings surfaced by /config (no secrets). Set via WithCommandInfo.
 	maxPerMinute int
 	contextChars int
 
-	// sessionTouch, when set, is invoked after every successful AppendUser /
-	// AppendAssistant — i.e. anything that changes a session row's preview /
-	// updatedAt / first-existence. The GUI side subscribes here to broadcast
-	// a `session.upserted` event so the sidebar reflects new/touched rows
-	// without polling. Set via WithSessionTouchNotifier; nil = no-op. The
-	// callback receives only the minimal coordinates (key, channel id,
-	// channel type) — the subscriber builds whatever projection it needs.
+	// sessionTouch fires after every AppendUser / AppendAssistant so the
+	// GUI can broadcast `session.upserted` without polling. nil = no-op.
 	sessionTouch func(sessionKey, channelID string, channelType router.ChannelType)
 }
 
-// defaultDispatchTimeout bounds a single turn as an idle deadline (#141 — config.ts
-// dispatchTimeoutMs). Reset on every AgentEvent, so it kills only a truly silent
-// turn, not a long-running healthy one.
+// defaultDispatchTimeout is the idle-deadline default — long enough for
+// most multi-tool workflows between events, short enough that a hung
+// turn frees its session lock.
 const defaultDispatchTimeout = 20 * time.Minute
 
-// Handle routes one inbound reply-warranting message through the full
-// pipeline. Holds the per-session lock across the whole turn (so same-
-// session turns serialize). Returns the router decision (so callers can
-// log drops/limits).
+// Handle routes one reply-warranting inbound through the full pipeline,
+// holding the per-session lock across the turn so same-session turns
+// serialize.
 //
-// PRECONDITION (#117 — single-layer defense): the caller MUST only
-// invoke Handle for messages that warrant a reply. Observations and
-// OBO-irrelevant drops are filtered upstream (the connector's
-// dispatchInbound + prepareInboundTurn for the IM path; the cron / REPL
-// / control-bus dispatchers structurally produce reply-warranting
-// inputs). The previous two short-circuits here (ShouldObserve →
-// Observe; ReasonOBOIrrelevant → DroppedOBOIrrelevant) were defensive
-// duplicates of the connector's branching, and the router's defensive
-// !ShouldReply path was a third copy of the same check. Removing them
-// from this layer means there is exactly ONE remaining defense (the
-// router's silent DroppedInvariantBreak) — that is intentional: one
-// programming bug should not crash every bot in the daemon.
+// PRECONDITION: msg.ShouldReply() must be true. Observations route via
+// Observe; OBO-irrelevant drops are filtered at the connector. A caller
+// violating the contract gets DroppedInvariantBreak silently dropped at
+// the router and a WARN here — chosen over panic so one bug doesn't take
+// down every bot in the daemon.
 //
-// Friendly drop replies (ported from cc-channel session-router.ts) are
-// emitted here, through the Sink, so every caller benefits without
-// re-implementing them:
-// - DroppedTooLong → "消息过长，请缩短后重试"
-// - RateLimited → "请稍后再试" (deduped per rate-limit window; see router)
+// Friendly drop replies emitted via the Sink:
+//   - DroppedTooLong → "消息过长，请缩短后重试"
+//   - RateLimited   → "请稍后再试" (deduped per rate-limit window)
 //
-// DroppedUnroutable stays silent (the payload had no routable identity —
-// nothing to reply to).
+// DroppedUnroutable stays silent (no routable identity to reply to).
 func (g *Gateway) Handle(ctx context.Context, msg router.InboundMessage) (router.Decision, error) {
 	d, err := g.router.RouteAndHandle(ctx, msg, g.runTurn)
 
-	// Surface the drop reply through the sink. SessionKey is derivable for both
-	// routable-drop cases (TooLong/RateLimited passed the routability gate).
 	switch d {
 	case router.DroppedTooLong:
 		if key, kerr := msg.SessionKey(); kerr == nil {
 			g.sink.OnReply(key, oversizedReply)
 		}
 	case router.RateLimited:
-		// First rejection of this rate-limit window — notify once. The router
-		// decided this atomically with the rejection (deduping subsequent
-		// rejections in the same window to RateLimitedSilent), so a flooder doesn't
-		// get a "请稍后再试" for every dropped message.
+		// Router decided notify-once atomically with the rejection
+		// (subsequent rejections in the same window route to
+		// RateLimitedSilent), so a flooder doesn't get one reply per drop.
 		if key, kerr := msg.SessionKey(); kerr == nil {
 			g.sink.OnReply(key, rateLimitedReply)
 		}
 	case router.DroppedInvariantBreak:
-		// The precondition contract above promises observability of any
-		// caller that mis-routes a non-reply message into Handle. Log it
-		// at WARN so the regression is visible without crashing the
-		// daemon — operators can grep "router invariant break" instead
-		// of debugging "the bot went silent for some messages".
+		// Surface caller bugs as a greppable WARN rather than letting
+		// the bot silently go mute for some messages.
 		key, _ := msg.SessionKey()
 		glog().Warn("router invariant break — caller passed non-reply msg to Handle",
 			"session", key, "channel_type", msg.ChannelType, "has_trigger", msg.Trigger != nil)
@@ -187,26 +145,21 @@ func (g *Gateway) Handle(ctx context.Context, msg router.InboundMessage) (router
 	return d, err
 }
 
-// Friendly drop-reply strings, ported verbatim from cc-channel's
-// session-router.ts (processMessage rate-limit / oversize branches).
+// Friendly drop / failure replies.
 const (
 	oversizedReply   = "消息过长，请缩短后重试"
 	rateLimitedReply = "请稍后再试"
-	// timeoutReply is sent when a turn exceeds the dispatch timeout (#141).
-	timeoutReply = "⚠️ 处理超时，请稍后重试。"
-	// errorReply is sent when a turn ends in a terminal agent error (e.g.
-	// max_turns) or the agent process fails. Like the timeout path, the partial
-	// reply is not persisted and the resume id is not advanced.
+	timeoutReply     = "⚠️ 处理超时，请稍后重试。"
+	// errorReply is sent on a terminal agent error; the partial reply is
+	// NOT persisted and the resume id is NOT advanced.
 	errorReply = "⚠️ 出错了，请稍后重试。"
-	// busyReply is sent when a turn fails on an upstream rate-limit / overload /
-	// usage-cap condition (KindError with Transient set). Distinct from the
-	// generic errorReply so the user knows it's a capacity issue, not a bug.
+	// busyReply distinguishes upstream capacity issues (HTTP 429/503/529)
+	// from generic bugs, so the user knows it's not their fault.
 	busyReply = "⏳ 服务繁忙，请稍后重试。"
 )
 
-// Observe caches a non-triggering group message into the group context so it
-// becomes background for a later @-mention turn. Call this for group messages
-// that did NOT mention the bot (which Handle would drop). No-op outside groups
+// Observe caches a non-triggering group message into group context so it
+// becomes background for a later @-mention turn. No-op outside groups
 // or when group-context is disabled.
 func (g *Gateway) Observe(msg router.InboundMessage) {
 	if g.groups == nil || msg.ChannelType != router.ChannelGroup || msg.ChannelID == "" {
@@ -218,15 +171,11 @@ func (g *Gateway) Observe(msg router.InboundMessage) {
 	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
 }
 
-// errTurnConcluded marks a turn a helper already finished — it sent the user
-// their reply (a handled command, or a failTurn apology) and the session lock
-// should release cleanly. It is swallowed at runTurn's boundary via
-// ignoreConcluded and never reaches the router.
+// errTurnConcluded marks a turn that a helper already finished (sent the
+// user their reply, or a failTurn apology). Swallowed at runTurn's
+// boundary via ignoreConcluded; never reaches the router.
 var errTurnConcluded = errors.New("gateway: turn concluded")
 
-// ignoreConcluded maps the errTurnConcluded sentinel back to nil at runTurn's
-// boundary, so a deliberately-stopped turn is not reported to the router as a
-// handler failure. Any other error propagates unchanged.
 func ignoreConcluded(err error) error {
 	if errors.Is(err, errTurnConcluded) {
 		return nil
@@ -234,11 +183,9 @@ func ignoreConcluded(err error) error {
 	return err
 }
 
-// failTurn logs an internal turn failure and sends the user a generic apology so
-// no error path is silently swallowed (which would also leave the typing
-// indicator running until it times out). It returns errTurnConcluded so any
-// caller that propagates with `if err != nil { return err }` stops the turn
-// correctly; runTurn translates the sentinel back to nil at its boundary.
+// failTurn logs an internal turn failure, sends the user a generic
+// apology (so no error is silently swallowed and the typing indicator
+// doesn't hang), and returns errTurnConcluded so propagation stops cleanly.
 func (g *Gateway) failTurn(sessionKey, stage string, err error) error {
 	glog().Error("turn failed", "stage", stage, "session", sessionKey, "err", err)
 	g.sink.OnReply(sessionKey, errorReply)

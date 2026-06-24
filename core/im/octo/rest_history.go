@@ -8,15 +8,15 @@ import (
 	"github.com/lml2468/octobuddy/core/clog"
 )
 
-// maxHistoricalPayloadBase64Len caps a base64 payload before decode (api.ts
-// MAX_HISTORICAL_PAYLOAD_BASE64_LEN). 256 KiB base64 ≈ 192 KiB decoded — well
-// above any legitimate IM payload — guards against a hostile/huge sync row.
+// maxHistoricalPayloadBase64Len caps a base64 payload before decode.
+// 256 KiB base64 ≈ 192 KiB decoded — well above any legitimate IM
+// payload, guards against a hostile / huge sync row.
 const maxHistoricalPayloadBase64Len = 256 * 1024
 
-// HistoricalMessage is one row returned by /v1/bot/messages/sync (api.ts
-// HistoricalMessage). The server ships content/type/url/name inside a
-// base64-encoded JSON payload; GetChannelMessages decodes it and prefers a
-// usable top-level field, falling back to the decoded payload (api.ts C1/P1.5).
+// HistoricalMessage is one row from /v1/bot/messages/sync. The server
+// ships content / type / url / name inside a base64-encoded JSON
+// payload; GetChannelMessages decodes it and prefers a usable top-level
+// field, falling back to the decoded payload.
 type HistoricalMessage struct {
 	FromUID    string
 	FromName   string
@@ -38,13 +38,9 @@ type channelMessageWire struct {
 	FromName  string `json:"from_name"`
 	Content   string `json:"content"`
 	Timestamp int64  `json:"timestamp"`
-	// message_id arrives as a JSON string from some octo deploys and a
-	// JSON number (uint64) from others — same drift as SendMessageResult
-	// (rest_send.go). A strict string decode used to fail the whole
-	// /v1/bot/messages/sync response, so cold-start backfill silently
-	// dropped every message. flexString accepts either shape; numeric ids
-	// keep their literal form so a uint64 doesn't round-trip through
-	// float64 and lose precision.
+	// message_id is flexString because the server returns it as a number
+	// on some deploys and a string on others; strict-string decode would
+	// fail the whole response and silently drop the cold-start backfill.
 	MessageID  flexString      `json:"message_id"`
 	MessageSeq int64           `json:"message_seq"`
 	Type       int             `json:"type"`
@@ -60,10 +56,10 @@ type historicalPayload struct {
 	Name    string `json:"name"`
 }
 
-// GetChannelMessages pulls recent messages for a channel via the WuKongIM sync
-// endpoint (api.ts getChannelMessages, used by G4 cold-start backfill). limit
-// defaults to 20 and caps the returned slice client-side (the server may return
-// more). Returns nil on any failure — the agent runs fine without history.
+// GetChannelMessages pulls recent messages for a channel via the
+// WuKongIM sync endpoint (used by cold-start backfill). limit defaults
+// to 20 and caps the returned slice client-side. Returns nil on any
+// failure — the agent runs fine without history.
 func (c *RESTClient) GetChannelMessages(ctx context.Context, channelID string, channelType ChannelType, limit int) []HistoricalMessage {
 	if limit <= 0 {
 		limit = 20

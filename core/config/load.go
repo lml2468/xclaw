@@ -160,8 +160,8 @@ func buildResolvedBot(global File, bot BotEntry, id, botRoot string) Resolved {
 		r.OnBehalfOf = *bot.OnBehalfOf
 	}
 
-	// Trigger pipeline policy (issue #105). nil block → zero TriggerConfig
-	// → bot.go's triggerPolicyFromConfig applies the safe-default policy.
+	// Trigger pipeline policy. nil block → zero TriggerConfig →
+	// triggerPolicyFromConfig applies the safe defaults.
 	if bot.Trigger != nil {
 		r.Trigger = *bot.Trigger
 	}

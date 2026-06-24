@@ -1,19 +1,8 @@
-// Package clog is the thin slog wrapper the daemon uses. It exists for
-// two reasons:
-//
-//  1. Lazy logger binding. A package-level `var log = slog.Default().With(...)`
-//     captures the default logger AT INIT TIME, before main.go has
-//     called slog.SetDefault with the operator's --debug/--log-json
-//     choice. Callers using `clog.For("gateway").Error(...)` instead
-//     pick up the live default and get the configured handler.
-//
-//  2. Consistent component tagging. Every log line carries a
-//     `component=<name>` attribute so operators can grep one subsystem
-//     out of the unified stream.
-//
-// The package adds no behavior beyond slog itself — no levels, no
-// destinations, no formatters. The handler is set up exactly once in
-// daemon main() via clog.Setup() before any package starts logging.
+// Package clog is the daemon's slog wrapper. For(component) returns a
+// fresh sub-logger from slog.Default() so callers always see whatever
+// handler Setup installed — sidesteps the package-init capture problem
+// where `var log = slog.Default().With(...)` would freeze a handler
+// before main() configured it.
 package clog
 
 import (
@@ -22,11 +11,9 @@ import (
 	"os"
 )
 
-// Setup installs the daemon's default slog handler. Call once from main()
-// BEFORE any subsystem starts emitting logs. debug=true bumps level from
-// INFO to DEBUG; json=true switches the text handler for JSON (machine
-// parsing). out=nil defaults to os.Stderr (matches the pre-slog
-// fmt.Fprintf convention).
+// Setup installs the daemon's default slog handler. Call once from
+// main() before any subsystem logs. debug=true bumps level to DEBUG;
+// json=true switches to JSON for machine parsing. out=nil → os.Stderr.
 func Setup(debug, json bool, out io.Writer) {
 	if out == nil {
 		out = os.Stderr
@@ -45,9 +32,8 @@ func Setup(debug, json bool, out io.Writer) {
 	slog.SetDefault(slog.New(h))
 }
 
-// For returns a logger tagged with the given component name. Each call
-// constructs a fresh sub-logger from the live default, so it always uses
-// the handler Setup installed.
+// For returns a logger tagged `component=<name>`, freshly bound to the
+// live slog default on every call.
 func For(component string) *slog.Logger {
 	return slog.Default().With("component", component)
 }

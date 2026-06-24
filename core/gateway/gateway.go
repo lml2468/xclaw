@@ -11,6 +11,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -194,14 +195,31 @@ func (g *Gateway) Observe(msg router.InboundMessage) {
 	g.groups.Push(msg.ChannelID, msg.FromUID, msg.FromName, msg.Text, msg.MessageSeq)
 }
 
+// errTurnConcluded marks a turn a helper already finished — it sent the user
+// their reply (a handled command, or a failTurn apology) and the session lock
+// should release cleanly. It is swallowed at runTurn's boundary via
+// ignoreConcluded and never reaches the router.
+var errTurnConcluded = errors.New("gateway: turn concluded")
+
+// ignoreConcluded maps the errTurnConcluded sentinel back to nil at runTurn's
+// boundary, so a deliberately-stopped turn is not reported to the router as a
+// handler failure. Any other error propagates unchanged.
+func ignoreConcluded(err error) error {
+	if errors.Is(err, errTurnConcluded) {
+		return nil
+	}
+	return err
+}
+
 // failTurn logs an internal turn failure and sends the user a generic apology so
 // no error path is silently swallowed (which would also leave the typing
-// indicator running until it times out). It returns nil because the user has been
-// signalled and the session lock should release cleanly; the error is for logs.
+// indicator running until it times out). It returns errTurnConcluded so any
+// caller that propagates with `if err != nil { return err }` stops the turn
+// correctly; runTurn translates the sentinel back to nil at its boundary.
 func (g *Gateway) failTurn(sessionKey, stage string, err error) error {
 	fmt.Fprintf(os.Stderr, "[gateway] turn failed at %s (session=%s): %v\n", stage, sessionKey, err)
 	g.sink.OnReply(sessionKey, errorReply)
-	return nil
+	return errTurnConcluded
 }
 
 // SessionCwd resolves the on-disk sandbox cwd for a session — the directory
@@ -239,19 +257,19 @@ func (g *Gateway) resolveSandbox(sessionKey string, msg router.InboundMessage) (
 	return cwd, memDir, nil
 }
 
-func (g *Gateway) startTurn(sessionKey string, msg router.InboundMessage) (bool, error) {
+func (g *Gateway) startTurn(sessionKey string, msg router.InboundMessage) error {
 	g.sink.OnUserMessage(sessionKey, msg)
 	if err := g.store.Touch(sessionKey, msg.ChannelID, int(msg.ChannelType)); err != nil {
-		return false, g.failTurn(sessionKey, "store.Touch", err)
+		return g.failTurn(sessionKey, "store.Touch", err)
 	}
 	reply, handled := g.handleCommand(msg.Text, sessionKey)
 	if !handled {
-		return false, nil
+		return nil
 	}
 	if reply != "" {
 		g.sink.OnReply(sessionKey, reply)
 	}
-	return true, nil
+	return errTurnConcluded
 }
 
 func (g *Gateway) rewindGroupCursorUnlessDelivered(msg router.InboundMessage, delivered *bool) func() {

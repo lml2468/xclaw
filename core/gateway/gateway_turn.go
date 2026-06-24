@@ -12,15 +12,15 @@ import (
 
 // runTurn executes one accepted turn under the session lock.
 func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.InboundMessage) error {
-	if handled, err := g.startTurn(sessionKey, msg); err != nil || handled {
-		return err
+	if err := g.startTurn(sessionKey, msg); err != nil {
+		return ignoreConcluded(err)
 	}
 
 	turnDelivered := false
 	defer g.rewindGroupCursorUnlessDelivered(msg, &turnDelivered)()
 	req, err := g.prepareAgentRequest(ctx, sessionKey, msg)
 	if err != nil {
-		return err
+		return ignoreConcluded(err)
 	}
 
 	turnCtx, idle := newIdleGuard(ctx, g.dispatchTimeout)
@@ -32,7 +32,7 @@ func (g *Gateway) runTurn(ctx context.Context, sessionKey string, msg router.Inb
 		req.SessionID = resume
 		events, err := g.driver.Query(turnCtx, req)
 		if err != nil {
-			return g.failTurn(sessionKey, "driver.Query", err)
+			return ignoreConcluded(g.failTurn(sessionKey, "driver.Query", err))
 		}
 
 		attemptResult = g.consumeAgentAttempt(sessionKey, events, idle, resume != "")

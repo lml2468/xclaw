@@ -79,6 +79,30 @@ const (
 	ReasonOBOIrrelevant Reason = "obo_irrelevant"
 )
 
+// IsAmbiguousAddressing reports whether the trigger reason represents a
+// classification where the bot cannot tell from message metadata whether
+// the sender genuinely wanted a reply. Currently only true for
+// ReasonMentionFreeGroup — the chat is on the mention-free allowlist so
+// every group message provisionally classifies as a reply candidate, but
+// the addressing intent is unknown.
+//
+// The router's group bot-loop guard (G14) consults this rather than
+// pattern-matching the specific enum value. Explicit @bot, persona,
+// reply-to-bot, and AI-broadcast are all unambiguous addressing — peer-
+// bot messages under those reasons are legitimate and must pass through
+// even when the sender uid looks bot-shaped.
+//
+// To extend (e.g. add a future webhook reason without addressing info),
+// add the constant to the switch. The router never changes.
+func (r Reason) IsAmbiguousAddressing() bool {
+	switch r {
+	case ReasonMentionFreeGroup:
+		return true
+	default:
+		return false
+	}
+}
+
 // Source classifies the message origin. The router uses it to decide whether
 // to bypass rate-limit/blocklist (only "cron" today). The wire envelope
 // carries it so the GUI can badge cron-fired bubbles. New origins

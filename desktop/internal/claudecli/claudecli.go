@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,11 +48,39 @@ var (
 	apiBase    = "https://api.github.com"
 )
 
-// installing is set while EnsureInstalled's background fetch is in
-// flight so the tray label can render "downloading…" without racing the
-// goroutine. atomic.Bool because the tray reads from the UI thread while
-// the fetch runs in its own goroutine.
+// skipInstallEnv suppresses the background fetch. Operators who manage
+// claude separately (Homebrew, npm, corporate-managed PATH install) can
+// opt out so we don't burn 200 MB of bandwidth they didn't ask for.
+const skipInstallEnv = "OCTOBUDDY_SKIP_CLAUDE_INSTALL"
+
+// installing is set while a fetch is in flight so the tray can render
+// "downloading…" without racing the goroutine.
 var installing atomic.Bool
+
+// installListeners are invoked (under installListenersMu) whenever the
+// install state transitions. The tray subscribes so its label refreshes
+// when a background fetch completes — without polling.
+var (
+	installListenersMu sync.Mutex
+	installListeners   []func()
+)
+
+// OnInstallStateChange registers a callback fired on every transition
+// of Installing(). Used by the tray to refresh its label.
+func OnInstallStateChange(fn func()) {
+	installListenersMu.Lock()
+	installListeners = append(installListeners, fn)
+	installListenersMu.Unlock()
+}
+
+func notifyInstallState() {
+	installListenersMu.Lock()
+	fns := append([]func(){}, installListeners...)
+	installListenersMu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
 
 func binName() string {
 	if runtime.GOOS == "windows" {
@@ -85,13 +114,14 @@ func InstalledVersion() string {
 	return strings.TrimSpace(string(b))
 }
 
-// Installing reports whether a background install/upgrade is running so
-// callers (e.g. the tray label) can render "downloading…" without
-// racing the goroutine.
+// Installing reports whether a background install/upgrade is running.
 func Installing() bool { return installing.Load() }
 
-func writeVersion(v string) {
-	_ = safepath.SafeWrite(Dir(), "claude.version", []byte(strings.TrimSpace(v)+"\n"), 0o644)
+// writeVersion records the install tag. Returns the error so the caller
+// can surface a failed sidecar write (which would otherwise leave the
+// tray label saying "not installed" with a usable binary on disk).
+func writeVersion(v string) error {
+	return safepath.SafeWrite(Dir(), "claude.version", []byte(strings.TrimSpace(v)+"\n"), 0o644)
 }
 
 // EnsureInstalled kicks off a background fetch when claude isn't already
@@ -99,19 +129,32 @@ func writeVersion(v string) {
 // up on PATH-installed claude (if any) while the ~200 MB download runs.
 // A second call while a fetch is in flight is a no-op.
 //
-// On a fresh install with no PATH claude either: the daemon's first
-// turn fails with the existing "claude not found" path until the
-// background fetch completes; subsequent turns pick up the installed
-// binary via the daemon's claude-bin resolver.
+// Set OCTOBUDDY_SKIP_CLAUDE_INSTALL=1 to suppress the fetch entirely
+// for operators who manage claude separately.
 func EnsureInstalled() {
+	if os.Getenv(skipInstallEnv) != "" {
+		return
+	}
 	if isFile(BinPath()) {
 		return
 	}
 	if !installing.CompareAndSwap(false, true) {
 		return // already running
 	}
+	notifyInstallState()
 	go func() {
-		defer installing.Store(false)
+		defer func() {
+			installing.Store(false)
+			notifyInstallState()
+		}()
+		// recover() so a panic in archive/tar / archive/zip / gzip /
+		// json.Decoder (all run over network-supplied bytes here) can't
+		// take down the whole desktop process. Log + clear the flag.
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "[claudecli] background install panicked: %v\n", r)
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		ver, err := install(ctx)
@@ -129,7 +172,11 @@ func Upgrade(ctx context.Context) (string, error) {
 	if !installing.CompareAndSwap(false, true) {
 		return "", fmt.Errorf("an install/upgrade is already in flight")
 	}
-	defer installing.Store(false)
+	notifyInstallState()
+	defer func() {
+		installing.Store(false)
+		notifyInstallState()
+	}()
 	return install(ctx)
 }
 
@@ -177,14 +224,23 @@ func install(ctx context.Context) (string, error) {
 	if err := safepath.SafeMkdirAll(home, ".octobuddy/bin", 0o755); err != nil {
 		return "", err
 	}
-	// Snapshot current binary as .prev so a bad upgrade rolls back.
-	if cur, rerr := safepath.SafeRead(Dir(), binName(), 256<<20); rerr == nil {
-		_ = safepath.SafeWrite(Dir(), binName()+".prev", cur, 0o700)
-	}
+	// Snapshot the current binary by RENAME — atomic, zero RAM, real
+	// rollback target. (The previous read-into-buffer-then-write pattern
+	// peaked at ~400 MiB heap per Upgrade and silently failed on a
+	// future binary >256 MiB.) os.Rename errors are non-fatal: a
+	// missing prior binary (first install) returns ENOENT; we just
+	// proceed.
+	_ = os.Rename(BinPath(), BinPath()+".prev")
 	if err := safepath.SafeWriteAbs(BinPath(), bin, 0o700); err != nil {
 		return "", err
 	}
-	writeVersion(rel.TagName)
+	if err := writeVersion(rel.TagName); err != nil {
+		// Binary IS installed but the sidecar didn't land — the tray
+		// label would lie ("not installed") and EnsureInstalled would
+		// skip on the next launch. Surface the failure so the operator
+		// can free disk and retry.
+		return rel.TagName, fmt.Errorf("claudecli: binary installed but version sidecar write failed: %w", err)
+	}
 	return rel.TagName, nil
 }
 
@@ -213,7 +269,9 @@ func latestRelease(ctx context.Context) (ghRelease, error) {
 	if resp.StatusCode != http.StatusOK {
 		return r, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	// Cap the response so a hostile or buggy upstream can't allocate
+	// unbounded memory parsing a giant assets array.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r); err != nil {
 		return r, err
 	}
 	if r.TagName == "" {
@@ -368,7 +426,24 @@ func readArchiveEntry(r io.Reader, name string) ([]byte, error) {
 	return buf, nil
 }
 
+// isFile reports whether path holds a real executable file. Lstat (not
+// Stat) so a symlinked install dir doesn't silently redirect; size > 0
+// so a 0-byte crashed-write temp doesn't masquerade as the binary;
+// executable bit (unix only — Windows doesn't gate on +x) so a
+// half-written file isn't reported as installed.
 func isFile(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	if fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	if fi.Size() == 0 {
+		return false
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	return true
 }

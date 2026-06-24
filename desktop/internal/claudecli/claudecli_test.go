@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/lml2468/octobuddy/desktop/internal/desktest"
 )
 
 func TestAssetNameFollowsAnthropicConvention(t *testing.T) {
@@ -208,12 +210,12 @@ func TestUpgradeRefusesShaMismatch(t *testing.T) {
 	}
 }
 
-// withHome redirects os.UserHomeDir into a temp dir for the test. Sets
-// both HOME (POSIX) and USERPROFILE (Windows).
+// withHome is the package-local shim around desktest.WithHome — keeps
+// the call sites concise. See desktest.WithHome for the cross-platform
+// rationale (HOME + USERPROFILE).
 func withHome(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	desktest.WithHome(t, dir)
 }
 
 // buildFixtureArchive returns the per-OS archive (tar.gz everywhere

@@ -176,10 +176,11 @@ type Request struct {
 	// claude_code mode it is appended on top of the built-in one.
 	SystemPrompt string
 
-	// AllowedTools, when non-nil, scopes the tools the agent may call.
-	// nil → driver default whitelist; empty slice → no tools at all;
-	// non-empty → exact list (the driver maps to its own flag — e.g.
-	// `--allowedTools <names>` for claude).
+	// AllowedTools scopes the tools the agent may call.
+	//   nil          → driver default whitelist
+	//   empty slice  → no tools (model has zero surface)
+	//   non-empty    → exact list
+	// The driver maps to its own flag (e.g. `--tools <names>` for claude).
 	AllowedTools []string
 }
 

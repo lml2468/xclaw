@@ -6,7 +6,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/lml2468/octobuddy/core/trigger"
 )
+
+// mention builds an InboundMessage marked as @bot-mentioned for the
+// classifier (so the router treats it as a reply-warranting decision).
+// Convenience for the gate tests — production wires the classifier; tests
+// stub the decision directly.
+func mention(reason trigger.Reason) *trigger.TriggerDecision {
+	return &trigger.TriggerDecision{Reason: reason, Source: trigger.SourceUser}
+}
 
 func TestSessionKeyDM(t *testing.T) {
 	k, err := InboundMessage{ChannelType: ChannelDM, FromUID: "u1"}.SessionKey()
@@ -33,27 +43,41 @@ func TestSessionKeyGroupSharedAcrossUsers(t *testing.T) {
 	}
 }
 
+// TestObservationGateNotReached: observations are dispatched by the
+// gateway, not the router. Passing one to RouteAndHandle is a defensive
+// no-op that returns DroppedOBOIrrelevant.
+func TestObservationGateNotReached(t *testing.T) {
+	r := New(Config{})
+	called := false
+	h := func(ctx context.Context, key string, m InboundMessage) error { called = true; return nil }
+
+	in := InboundMessage{
+		ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "u1",
+		Trigger: mention(trigger.ReasonObservation),
+	}
+	d, _ := r.RouteAndHandle(context.Background(), in, h)
+	if d != DroppedInvariantBreak || called {
+		t.Fatalf("router must not run handler for observation (programming-error path): d=%s called=%v", d, called)
+	}
+}
+
+// TestMentionGate: explicit-bot trigger reaches the handler; DM auto-replies.
+// (Group with no trigger is gateway's responsibility — router refuses
+// defensively.)
 func TestMentionGate(t *testing.T) {
 	r := New(Config{})
 	called := false
 	h := func(ctx context.Context, key string, m InboundMessage) error { called = true; return nil }
 
-	// group, not mentioned → dropped
 	d, _ := r.RouteAndHandle(context.Background(),
-		InboundMessage{ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "u1"}, h)
-	if d != DroppedNotMentioned || called {
-		t.Fatalf("want not_mentioned drop, got %s called=%v", d, called)
-	}
-
-	// group, mentioned → accepted
-	called = false
-	d, _ = r.RouteAndHandle(context.Background(),
-		InboundMessage{ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "u1", Mentioned: true}, h)
+		InboundMessage{
+			ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "u1",
+			Trigger: mention(trigger.ReasonExplicitBot),
+		}, h)
 	if d != Accepted || !called {
 		t.Fatalf("want accepted, got %s called=%v", d, called)
 	}
 
-	// DM always accepted regardless of mention
 	called = false
 	d, _ = r.RouteAndHandle(context.Background(),
 		InboundMessage{ChannelType: ChannelDM, FromUID: "u1"}, h)
@@ -102,7 +126,7 @@ func TestPerSessionSerialization(t *testing.T) {
 	}
 
 	// 10 messages to the SAME session must run strictly serially.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -137,7 +161,7 @@ func TestDifferentSessionsRunConcurrently(t *testing.T) {
 		return nil
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		uid := string(rune('a' + i))
 		wg.Add(1)
 		go func() {
@@ -161,7 +185,7 @@ func TestRateLimiting(t *testing.T) {
 	msg := InboundMessage{ChannelType: ChannelDM, FromUID: "u1"}
 
 	// 3 allowed, 4th limited (per-session bucket = 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if d, _ := r.RouteAndHandle(context.Background(), msg, h); d != Accepted {
 			t.Fatalf("msg %d should be accepted, got %s", i, d)
 		}
@@ -182,9 +206,12 @@ func TestCronFireBypassesGateAndLimit(t *testing.T) {
 	r.SetClock(func() time.Time { return time.Unix(0, 0) })
 	h := func(ctx context.Context, key string, m InboundMessage) error { return nil }
 	// group, NOT mentioned, but cron fire → accepted; and repeated beyond limit.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		d, _ := r.RouteAndHandle(context.Background(),
-			InboundMessage{ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "sys", CronFire: true}, h)
+			InboundMessage{
+				ChannelType: ChannelGroup, ChannelID: "c1", FromUID: "sys",
+				Source: trigger.SourceCron,
+			}, h)
 		if d != Accepted {
 			t.Fatalf("cron fire %d should bypass gates, got %s", i, d)
 		}

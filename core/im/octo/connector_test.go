@@ -12,6 +12,7 @@ import (
 
 	"github.com/lml2468/octobuddy/core/persona"
 	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // TestConnectorAwaitsTokenBeforeRegister proves the await-token guard: with no
@@ -43,28 +44,34 @@ func TestConnectorAwaitsTokenBeforeRegister(t *testing.T) {
 	}
 }
 
-func TestMentionsBot(t *testing.T) {
-	// explicit uid mention
-	m := BotMessage{Payload: MessagePayload{Mention: &Mention{UIDs: []string{"bot1", "x"}}}}
-	if !m.MentionsBot("bot1") {
-		t.Fatal("should match explicit uid mention")
+// TestTriggerMentionWireProjection covers the wire→trigger projection's
+// shape for the @bot / @AI / @所有人 / nil cases. The semantic "should
+// this trigger" lives in trigger.DefaultClassifier; this test only
+// asserts the wire→canonical mapping.
+func TestTriggerMentionWireProjection(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *Mention
+		want func(*trigger.MentionPayload) bool
+	}{
+		{"explicit @bot uid", &Mention{UIDs: []string{"bot1"}}, func(m *trigger.MentionPayload) bool {
+			return m != nil && len(m.UIDs) == 1 && m.UIDs[0] == "bot1"
+		}},
+		{"@ais", &Mention{AIs: float64(1)}, func(m *trigger.MentionPayload) bool {
+			return m != nil && m.AIsFlag && !m.HumansFlag && !m.AllFlag
+		}},
+		{"@all", &Mention{All: float64(1)}, func(m *trigger.MentionPayload) bool {
+			return m != nil && m.AllFlag && !m.AIsFlag
+		}},
+		{"nil", nil, func(m *trigger.MentionPayload) bool { return m == nil }},
 	}
-	if m.MentionsBot("other") {
-		t.Fatal("should not match a uid that isn't present")
-	}
-	// @ais (numbers decode as float64 from JSON, so test both)
-	mAI := BotMessage{Payload: MessagePayload{Mention: &Mention{AIs: float64(1)}}}
-	if !mAI.MentionsBot("bot1") {
-		t.Fatal("@ais should address the bot")
-	}
-	// humans-only @all must NOT trigger the bot
-	mAll := BotMessage{Payload: MessagePayload{Mention: &Mention{All: float64(1)}}}
-	if mAll.MentionsBot("bot1") {
-		t.Fatal("humans-only @all must not trigger the bot")
-	}
-	// no mention
-	if (BotMessage{}).MentionsBot("bot1") {
-		t.Fatal("no mention should be false")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := BotMessage{Payload: MessagePayload{Mention: tc.in}}.TriggerMention()
+			if !tc.want(m) {
+				t.Fatalf("TriggerMention=%+v not as expected", m)
+			}
+		})
 	}
 }
 
@@ -145,7 +152,10 @@ func TestQueuedTurnsCarryOwnTarget(t *testing.T) {
 // as the bot, never as the grantor.
 func TestEnqueueCronCarriesPersonaGrantor(t *testing.T) {
 	c := NewConnector(NewRESTClient("http://x", func() string { return "tk" }))
-	c.SetPersona(persona.Grantor{UID: "u_grantor", Name: "Admin"})
+	c.SetPolicy(trigger.Policy{
+		BotUID:  "bot1",
+		Grantor: trigger.FromPersonaGrantor(persona.Grantor{UID: "u_grantor", Name: "Admin"}),
+	})
 	const key = "dm:bot1:peer"
 	// Task authored by the bot owner (the production case): stamp onBehalfOf.
 	// taskCreatedBy is accepted for tracing but doesn't gate the stamp anymore.

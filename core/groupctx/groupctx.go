@@ -9,6 +9,7 @@ package groupctx
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lml2468/octobuddy/core/safety"
 )
@@ -48,6 +49,12 @@ type GroupContext struct {
 	nameToUID  map[string]map[string]string // channelID -> name -> uid
 	uidToName  map[string]map[string]string // channelID -> uid -> name
 	backfilled map[string]bool              // channelID -> cold-start backfill already attempted
+	// lastTouch records the last time any read/write touched the channel.
+	// Drives ReapIdle so a long-quiet channel's window can be evicted from
+	// memory (the daemon's reaper invokes it on the same cadence as the
+	// router lock reaper — see bot.go startRouterReaper).
+	lastTouch map[string]time.Time
+	now       func() time.Time
 }
 
 // New constructs a GroupContext with the given char budget (config
@@ -64,7 +71,57 @@ func New(maxContextChars int) *GroupContext {
 		nameToUID:       map[string]map[string]string{},
 		uidToName:       map[string]map[string]string{},
 		backfilled:      map[string]bool{},
+		lastTouch:       map[string]time.Time{},
+		now:             time.Now,
 	}
+}
+
+// SetClock overrides the time source (tests).
+func (g *GroupContext) SetClock(now func() time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.now = now
+}
+
+// touchLocked stamps lastTouch[channelID] = now. Caller holds g.mu.
+func (g *GroupContext) touchLocked(channelID string) {
+	if channelID == "" {
+		return
+	}
+	g.lastTouch[channelID] = g.now()
+}
+
+// ReapIdle evicts any channel that has been untouched for at least
+// threshold. Returns the number of channels evicted. Mirrors the router's
+// reaper semantics: a long-quiet channel's window is not load-bearing for
+// active turns, and dropping it bounds memory over the daemon's lifetime
+// (issue #105 follow-on — the in-memory window was previously unbounded
+// across channels). A channel re-appears with a fresh, empty window on
+// the next push.
+//
+// Idempotent; safe to call from a goroutine separate from any push/pull
+// path.
+func (g *GroupContext) ReapIdle(threshold time.Duration) int {
+	if threshold <= 0 {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	cutoff := g.now().Add(-threshold)
+	evicted := 0
+	for ch, last := range g.lastTouch {
+		if last.Before(cutoff) {
+			delete(g.windows, ch)
+			delete(g.cursors, ch)
+			delete(g.nextID, ch)
+			delete(g.nameToUID, ch)
+			delete(g.uidToName, ch)
+			delete(g.backfilled, ch)
+			delete(g.lastTouch, ch)
+			evicted++
+		}
+	}
+	return evicted
 }
 
 // BackfillMessage is one historical message returned by a cold-start fetch
@@ -105,6 +162,7 @@ func (g *GroupContext) pushLocked(channelID, fromUID, fromName, content string, 
 	}
 	g.windows[channelID] = win
 	g.learnMemberLocked(channelID, fromUID, safeName)
+	g.touchLocked(channelID)
 }
 
 // Backfill seeds an empty channel window once from a fetch callback (cc G4
@@ -159,24 +217,32 @@ func (g *GroupContext) Backfill(channelID, botUID string, fetch func() []Backfil
 	return inferredCutoff, true
 }
 
-// Cursor returns the channel's current injection cursor.
+// Cursor returns the channel's current injection cursor. Bumps lastTouch
+// so ReapIdle won't evict an actively-replied channel just because no new
+// human inbound has landed (the bot may be answering a long thread).
 func (g *GroupContext) Cursor(channelID string) int64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.touchLocked(channelID)
 	return g.cursors[channelID]
 }
 
 // MaxID returns the highest message id currently in the channel window.
+// Bumps lastTouch (same rationale as Cursor).
 func (g *GroupContext) MaxID(channelID string) int64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.touchLocked(channelID)
 	return g.nextID[channelID]
 }
 
-// SetCursor advances the cursor monotonically (never backward).
+// SetCursor advances the cursor monotonically (never backward). Bumps
+// lastTouch — a reply turn that advances the cursor is the strongest
+// possible "channel is active" signal.
 func (g *GroupContext) SetCursor(channelID string, lastID int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.touchLocked(channelID)
 	if lastID > g.cursors[channelID] {
 		g.cursors[channelID] = lastID
 	}
@@ -192,5 +258,6 @@ func (g *GroupContext) SetCursor(channelID string, lastID int64) {
 func (g *GroupContext) RewindCursor(channelID string, lastID int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.touchLocked(channelID)
 	g.cursors[channelID] = lastID
 }

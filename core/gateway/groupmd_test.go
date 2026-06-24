@@ -9,6 +9,7 @@ import (
 
 	"github.com/lml2468/octobuddy/core/groupmd"
 	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // TestGroupMDInjection verifies the [Group instructions] block from a per-channel
@@ -42,7 +43,7 @@ func assertGroupMDGroupTurn(t *testing.T, gw *Gateway, drv *fakeDriver) {
 
 	if _, err := gw.Handle(context.Background(), router.InboundMessage{
 		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", FromName: "bob",
-		Text: "hi", Mentioned: true,
+		Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestGroupMDDisabled(t *testing.T) {
 	gw := New(drv, st, router.New(router.Config{MaxPerMinute: 100}), newCaptureSink())
 
 	if _, err := gw.Handle(context.Background(), router.InboundMessage{
-		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", Text: "hi", Mentioned: true,
+		ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "bob", Text: "hi", Trigger: &trigger.TriggerDecision{Reason: trigger.ReasonExplicitBot, Source: trigger.SourceUser},
 	}); err != nil {
 		t.Fatal(err)
 	}

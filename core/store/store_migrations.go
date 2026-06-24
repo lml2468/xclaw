@@ -22,12 +22,14 @@ CREATE TABLE IF NOT EXISTS messages (
   content    TEXT NOT NULL,
   timestamp  INTEGER NOT NULL,
   from_name  TEXT,
-  -- cron marks a user-role row as a scheduler-fired prompt rather than
-  -- a real human inbound. Persisted so the desktop GUI's "cron" corner
+  -- source classifies the row's origin: 'user' (human inbound), 'cron'
+  -- (scheduler fire), 'assistant' (bot reply), or future origins
+  -- (webhook, replay). Persisted so the desktop GUI's "cron" corner
   -- badge survives a chat-window reload (history fetch replays from
   -- here — without persistence every reopened conversation would lose
   -- the badge and conflate scheduled prompts with operator-typed ones).
-  cron       INTEGER NOT NULL DEFAULT 0,
+  -- Replaces the legacy 'cron INTEGER' column; migration backfills.
+  source     TEXT NOT NULL DEFAULT 'user',
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -220,16 +222,83 @@ func migrateTokenUsage(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// migrateMessagesAddCron idempotently adds the `cron` column to the
-// messages table for DBs created before the cron-badge persistence change.
-// SQLite's IF NOT EXISTS in CREATE TABLE doesn't touch existing tables, so
-// older DBs need an explicit ADD COLUMN. PRAGMA table_info is the portable
-// way to check column presence; a successful ALTER backfills DEFAULT 0
-// against every existing row (i.e., legacy rows count as non-cron).
-func migrateMessagesAddCron(db *sql.DB) error {
+// migrateMessagesAddSource adds the messages.source column to DBs that
+// pre-date the source-string migration (i.e. carry the legacy `cron`
+// integer column instead). Wrapped in a transaction so the ALTER +
+// backfills are atomic — a crash mid-migration rolls back, and the next
+// startup re-runs cleanly without orphaning rows at the wrong source tag.
+//
+// Two-phase shape:
+//
+//  1. Schema phase (one-time): ALTER TABLE ADD COLUMN source TEXT NOT
+//     NULL DEFAULT 'user', then backfill role='assistant'→'assistant' and
+//     legacy cron=1→'cron'. Skipped if the column already exists.
+//
+//  2. Self-healing phase (every startup): re-runs the assistant backfill
+//     against any rows where role='assistant' AND source!='assistant'.
+//     This recovers from a previous partial migration that committed the
+//     ALTER but rolled back the UPDATE (cheap idempotent UPDATE; the
+//     WHERE filter is index-friendly even on large tables because legacy
+//     assistant rows are stamped to the literal 'user' default and the
+//     check is a string-compare).
+//
+// The legacy cron column is LEFT IN PLACE — SQLite's portable DROP
+// COLUMN landed in 3.35 but failing it would brick the upgrade, and
+// leaving the column is harmless (writes ignore it, reads SELECT source).
+func migrateMessagesAddSource(db *sql.DB) error {
+	hasSource, hasLegacyCron, err := messagesColumns(db)
+	if err != nil {
+		return err
+	}
+	if !hasSource {
+		if err := addSourceColumn(db, hasLegacyCron); err != nil {
+			return err
+		}
+	}
+	// Self-heal: always run a cheap assistant-source UPDATE. Covers the
+	// case where a previous run committed ALTER but a crash rolled the
+	// backfill back (pre-tx version of this code), so legacy assistant
+	// rows stayed tagged with the DEFAULT 'user'. No-op on a clean DB
+	// where every assistant row already carries 'assistant'.
+	if _, err := db.Exec(`UPDATE messages SET source='assistant' WHERE role='assistant' AND source!='assistant'`); err != nil {
+		return fmt.Errorf("migrate messages.source self-heal assistant: %w", err)
+	}
+	return nil
+}
+
+// addSourceColumn runs the ALTER + initial backfills in a transaction so
+// a mid-flight crash rolls back the column add and the next startup gets
+// a clean retry.
+func addSourceColumn(db *sql.DB, hasLegacyCron bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate messages.source tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'user'`); err != nil {
+		return fmt.Errorf("migrate messages.source add column: %w", err)
+	}
+	// Backfill assistant rows first — every assistant write now stamps
+	// 'assistant', so legacy assistant rows must too (otherwise the
+	// reload would falsely tag them as 'user' inbound).
+	if _, err := tx.Exec(`UPDATE messages SET source='assistant' WHERE role='assistant'`); err != nil {
+		return fmt.Errorf("migrate messages.source backfill assistant: %w", err)
+	}
+	// Backfill cron-fired user rows from the legacy column when present.
+	if hasLegacyCron {
+		if _, err := tx.Exec(`UPDATE messages SET source='cron' WHERE role='user' AND cron=1`); err != nil {
+			return fmt.Errorf("migrate messages.source backfill cron: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// messagesColumns reports the presence of the new `source` column and the
+// legacy `cron` column.
+func messagesColumns(db *sql.DB) (hasSource, hasLegacyCron bool, err error) {
 	rows, err := db.Query(`PRAGMA table_info(messages)`)
 	if err != nil {
-		return fmt.Errorf("migrate messages.cron check: %w", err)
+		return false, false, fmt.Errorf("migrate messages.source check: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -237,19 +306,19 @@ func migrateMessagesAddCron(db *sql.DB) error {
 		var name, ctype, dflt sql.NullString
 		var notnull, pk int
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return fmt.Errorf("migrate messages.cron scan: %w", err)
+			return false, false, fmt.Errorf("migrate messages.source scan: %w", err)
 		}
-		if name.String == "cron" {
-			return nil // already present
+		switch name.String {
+		case "source":
+			hasSource = true
+		case "cron":
+			hasLegacyCron = true
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate messages.cron rows: %w", err)
+		return false, false, fmt.Errorf("migrate messages.source rows: %w", err)
 	}
-	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN cron INTEGER NOT NULL DEFAULT 0`); err != nil {
-		return fmt.Errorf("migrate messages.cron add column: %w", err)
-	}
-	return nil
+	return hasSource, hasLegacyCron, nil
 }
 
 // dsn carries the connection pragmas in the DSN as _pragma query params so the

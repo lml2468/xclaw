@@ -9,7 +9,10 @@
 // 3. Rate limiting — three token buckets (global / per-user / per-session),
 // all must pass.
 //
-// It is agent- and IM-agnostic: the IM layer produces InboundMessage values.
+// It is agent- and IM-agnostic: the IM layer produces InboundMessage values
+// carrying a trigger.TriggerDecision pre-computed by the trigger pipeline.
+// Router does NOT classify; it consumes the decision and applies safety
+// gates (blocklist, rate-limit, size, bot-loop guard) on top of it.
 package router
 
 import (
@@ -17,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // ChannelType mirrors the IM channel kind. Only the DM/Group distinction matters
@@ -74,11 +79,22 @@ type InboundMessage struct {
 	// for synthetic/cron fires). Used by group-context answered/new segmentation
 	// to advance the bot's last-reply cursor; never used for session-key derivation.
 	MessageSeq int64
-	// Mentioned reports whether the bot was addressed (group gate). DMs ignore it.
-	Mentioned bool
-	// CronFire marks an operator-scheduled synthetic message that bypasses the
-	// mention gate and rate limiting (authenticity is the caller's concern).
-	CronFire bool
+
+	// Source classifies the message origin (trigger.SourceUser by default,
+	// trigger.SourceCron for scheduled fires). Routing reads it to decide
+	// whether to bypass rate-limit / blocklist / bot-loop gates. Replaces
+	// the legacy CronFire bool — adding a new source (webhook, replay)
+	// extends the trigger.Source enum, not this struct.
+	Source trigger.Source
+
+	// Trigger is the classifier's decision for this message — Reason,
+	// reply routing (on_behalf_of / OBO reroute), persona/OBO flags.
+	// REQUIRED for ChannelGroup; for ChannelDM the classifier always
+	// returns ReasonDM and the gateway treats nil as "DM auto-trigger".
+	// nil with ChannelGroup is treated as observation-only (a router
+	// without an IM adapter, e.g. control-bus console fires that don't
+	// set it explicitly).
+	Trigger *trigger.TriggerDecision
 }
 
 // SessionKey derives the logical session identity. Returns an error for
@@ -105,9 +121,41 @@ func (m InboundMessage) SessionKey() (string, error) {
 	}
 }
 
-// Config controls rate limiting and the bot-loop / mention-free gating ported
-// from cc-channel-octo's session-router.ts (G12 mention-free groups, G14
-// multi-bot loop guard, DM blocklist).
+// IsCron reports whether this message originated from the scheduler. Bypasses
+// rate-limit + mention/blocklist gates. Use this helper instead of comparing
+// Source strings inline so the predicate stays auditable.
+func (m InboundMessage) IsCron() bool { return m.Source == trigger.SourceCron }
+
+// ShouldReply reports whether the trigger decision is a reply-warranting one.
+// Nil Trigger on a DM = trigger; on a Group = observation-only.
+func (m InboundMessage) ShouldReply() bool {
+	if m.IsCron() {
+		return true
+	}
+	if m.Trigger != nil {
+		return m.Trigger.ShouldReply()
+	}
+	return m.ChannelType == ChannelDM
+}
+
+// ShouldObserve reports whether the trigger decision is an observation
+// (group-context background only, no reply). Cron / accepted decisions
+// return false (those reply, not observe).
+func (m InboundMessage) ShouldObserve() bool {
+	if m.IsCron() {
+		return false
+	}
+	if m.Trigger != nil {
+		return m.Trigger.ShouldObserve()
+	}
+	// Nil trigger on a group is observation-only (defensive fallback).
+	return m.ChannelType == ChannelGroup
+}
+
+// Config controls rate limiting and the bot-loop gating ported from
+// cc-channel-octo's session-router.ts (G14 multi-bot loop guard, DM blocklist).
+// Mention-free groups are no longer a Router concern — the trigger pipeline
+// owns that decision (one source of truth, see issue #105 缺陷 2).
 type Config struct {
 	MaxPerMinute   int // per-session and per-user bucket size; default 30
 	MaxContentByte int // reject longer text; default 32 KiB
@@ -116,11 +164,6 @@ type Config struct {
 	// self-message in a mention-free group can't trigger a self-loop) — mirrors
 	// session-router.ts seeding knownBotUids with robotId. May be "".
 	SelfUID string
-
-	// MentionFreeGroups (G12) lists channel ids where the bot replies WITHOUT an
-	// @mention. In those channels, unmentioned group messages are Accepted (still
-	// size-gated and rate-limited) instead of DroppedNotMentioned.
-	MentionFreeGroups []string
 
 	// KnownBotUids (G14) are uids known to be bots, in addition to the `_bot`
 	// suffix heuristic. Messages from bot-looking uids are silently dropped in DMs
@@ -161,7 +204,6 @@ type Router struct {
 	now func() time.Time
 
 	// Precomputed sets from cfg (built once in New) for O(1) gating lookups.
-	mentionFree map[string]bool // channel ids that don't require an @mention (G12)
 	knownBots   map[string]bool // uids known to be bots (incl. SelfUID) (G14)
 	allowedBots map[string]bool // bot-looking uids exempt from the loop guard (G14)
 	blocklisted map[string]bool // uids whose DMs are dropped
@@ -196,7 +238,6 @@ func New(cfg Config) *Router {
 	return &Router{
 		cfg:         cfg,
 		now:         time.Now,
-		mentionFree: toSet(cfg.MentionFreeGroups),
 		knownBots:   knownBots,
 		allowedBots: toSet(cfg.AllowedBotUids),
 		blocklisted: toSet(cfg.BotBlocklist),

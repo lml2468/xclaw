@@ -69,7 +69,7 @@ func TestNotMentionedAndUnroutableStaySilent(t *testing.T) {
 
 	// Group without mention → silent drop.
 	if d, _ := gw.Handle(context.Background(),
-		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi"}); d != router.DroppedNotMentioned {
+		router.InboundMessage{ChannelType: router.ChannelGroup, ChannelID: "c1", FromUID: "u1", Text: "hi"}); d != router.Observed {
 		t.Fatalf("want not_mentioned")
 	}
 	// Unroutable DM (no from_uid) → silent drop.

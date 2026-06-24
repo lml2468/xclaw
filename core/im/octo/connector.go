@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lml2468/octobuddy/core/gateway"
-	"github.com/lml2468/octobuddy/core/persona"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // Connector wires the Octo IM platform to the gateway: it registers the bot,
@@ -25,17 +25,17 @@ type Connector struct {
 	// sidebar conversation titles and chat-bubble sender labels.
 	names *nameCache
 
-	// persona, when its grantor uid is set, makes this connector a persona clone
-	// (openclaw OBO): extended trigger gate, OBO v2 relevance filter, and
-	// on_behalf_of reply routing. Set once at startup via SetPersona; read-only
-	// thereafter, so it needs no lock.
-	persona persona.Grantor
-
-	// mentionFree lists channel ids that respond without an @mention (G12). For
-	// those channels an unmentioned group message is routed through the gateway
-	// (the router decides) instead of being observed-only as background. Empty by
-	// default — normal groups keep the observe-on-no-mention behavior.
-	mentionFree map[string]bool
+	// policy is the trigger pipeline's configuration — bot uid, grantor,
+	// mention-free groups, AI broadcast policy, allowlist, reply-to-bot.
+	// Owned ONLY here (the legacy router/connector double-copy is gone —
+	// issue #105 缺陷 2). Set at startup via SetPolicy; read-only after
+	// (hot-reload would build a fresh Policy and call SetPolicy under
+	// c.policyMu).
+	policy   trigger.Policy
+	policyMu sync.RWMutex
+	// classifier is the rule engine. Default = trigger.DefaultClassifier.
+	// Tests can swap with SetClassifier.
+	classifier trigger.Classifier
 
 	// runCtx is the context passed to Run; the sink/inbound callbacks (which the
 	// gateway.Sink interface does not thread a context through) tie their work to
@@ -175,12 +175,35 @@ type replyTarget struct {
 	onBehalfOf string
 }
 
-// SetPersona configures this connector as a persona clone of grantor (openclaw
-// OBO). When set, the connector (a) extends the group trigger gate so an
-// @grantor / @所有人 mention triggers a turn, (b) applies the OBO v2 relevance
-// filter, and (c) routes the reply back to the origin channel with on_behalf_of.
-// A zero Grantor (no uid) leaves the connector a regular bot.
-func (c *Connector) SetPersona(grantor persona.Grantor) { c.persona = grantor }
+// SetPolicy installs/replaces the trigger policy. Must be called before
+// Run for the IM-side classifier to see correct config. Idempotent (safe
+// to call multiple times); future hot-reload paths land here.
+func (c *Connector) SetPolicy(p trigger.Policy) {
+	c.policyMu.Lock()
+	c.policy = p
+	c.policyMu.Unlock()
+}
+
+// SetClassifier installs/replaces the classifier. Production wires
+// trigger.DefaultClassifier{}; tests can inject a stub. nil restores the
+// default. Idempotent.
+func (c *Connector) SetClassifier(cl trigger.Classifier) {
+	c.policyMu.Lock()
+	if cl == nil {
+		c.classifier = trigger.DefaultClassifier{}
+	} else {
+		c.classifier = cl
+	}
+	c.policyMu.Unlock()
+}
+
+// loadPolicyAndClassifier snapshots both under the policy lock for one
+// inbound classification.
+func (c *Connector) loadPolicyAndClassifier() (trigger.Policy, trigger.Classifier) {
+	c.policyMu.RLock()
+	defer c.policyMu.RUnlock()
+	return c.policy, c.classifier
+}
 
 // NewConnector builds a connector. The gateway must be constructed with this
 // connector as its Sink (see AsSink note in package docs).
@@ -188,6 +211,7 @@ func NewConnector(rest *RESTClient) *Connector {
 	return &Connector{
 		rest:          rest,
 		names:         newNameCache(rest),
+		classifier:    trigger.DefaultClassifier{},
 		targets:       make(map[string]replyTarget),
 		progress:      make(map[string]*toolProgressState),
 		typers:        make(map[string]*typingTicker),

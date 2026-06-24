@@ -5,29 +5,39 @@ import (
 
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
-// onInbound maps a decoded BotMessage to a router.InboundMessage and feeds the
-// gateway. Drops the bot's own messages and streaming partials; every other
-// payload type is rendered to LLM-facing text by ResolveContent (content.go),
-// and image/file payloads also surface media Attachments the gateway
-// materializes into the session cwd (inbound.ts G1).
+// onInbound maps a decoded BotMessage to a router.InboundMessage and feeds
+// the gateway. Drops the bot's own messages and streaming partials; every
+// other payload type is rendered to LLM-facing text by ResolveContent
+// (content.go), and image/file payloads also surface media Attachments the
+// gateway materializes into the session cwd (inbound.ts G1).
 //
-// Persona-clone path (openclaw OBO, inbound.ts): when this connector is a
-// persona clone, the group trigger gate is widened (an @grantor / @所有人
-// mention triggers a turn), the OBO v2 relevance filter drops irrelevant @AI
-// fan-out BEFORE any session state is recorded, and the reply target carries
-// on_behalf_of so the server presents the reply as the grantor.
+// Trigger pipeline (issue #105): the connector translates the wire payload
+// to a trigger.CanonicalInbound, runs the classifier ONCE, and either
+// (a) hands the message to the per-session worker for a turn, (b) calls
+// gw.Observe inline for an observation-only message, or (c) drops silently
+// for an OBO-irrelevant fan-out. The legacy split between pre-gate
+// Observe and post-gate retroactive Observe is gone — gateway is the
+// single Observe entry point now.
 func (c *Connector) onInbound(m BotMessage) {
 	uid := c.uid()
 	if m.FromUID == uid {
 		return // ignore our own messages
 	}
-	// Suppress streaming partial updates (inbound.ts settingStreamOn / G21): a
-	// streamOn message is an in-progress edit; only the final (streamOn=false)
-	// message carries the settled content. Routing partials would feed the agent
-	// half-typed text and re-fire turns on every keystroke. Filtered FIRST so
-	// the per-message name-cache work below doesn't run on every keystroke.
+	// Drop system/metadata frames at the door: a payload with no sender
+	// uid is a WuKongIM system event (typing, read-receipt, mention-chip
+	// follow-on with detached metadata, etc.), not a user message. Without
+	// this filter they would still classify (correctly, as observation)
+	// but spam the audit stream with from="" / text="[消息]" rows that
+	// have no user-visible meaning.
+	if m.FromUID == "" {
+		return
+	}
+	// Suppress streaming partial updates (inbound.ts settingStreamOn / G21).
+	// Filtered FIRST so the per-message name-cache work below doesn't run on
+	// every keystroke.
 	if m.StreamOn {
 		return
 	}
@@ -37,52 +47,136 @@ func (c *Connector) onInbound(m BotMessage) {
 		return
 	}
 	// Per-turn target travels with the queued turn so drainTurns can set
-	// c.targets[key] AT pop-time — the prior contract had onInbound write the
-	// global map directly here, which raced cron's RegisterReplyTarget. The
-	// reroute is computed once here so it isn't recomputed on every target
-	// read.
+	// c.targets[key] AT pop-time — the prior contract had onInbound write
+	// the global map directly here, which raced cron's RegisterReplyTarget.
+	// The reroute is computed once here so it isn't recomputed on every
+	// target read.
 	tgt = c.rerouteInboundReplyTarget(key, tgt)
-	// NB: also wrote c.targets[key] here "for the persona tests" —
-	// that put the race back, just for inbound-during-a-mid-flight-turn
-	// instead of cron-vs-inbound. If the gateway's in-flight Handle for a
-	// PRIOR turn emits OnReply / onToolProgress / startTyping after this
-	// onInbound runs but before its drainTurns pop, those callbacks read
-	// the wrong target. Map writes now ONLY happen in drainTurns
-	// (sole-writer invariant); the persona tests probe the queued item.
 
 	// Acknowledge receipt (fire-and-forget) once we've decided to process it.
 	c.sendReadReceipt(m)
 
-	c.observeOrEnqueueInboundTurn(key, inbound, tgt, m.ChannelID, m.Payload.Reply)
+	c.dispatchInbound(key, inbound, tgt, m.ChannelID, m.Payload.Reply)
 }
 
+// prepareInboundTurn translates the wire payload to a trigger.CanonicalInbound,
+// classifies, and returns the router.InboundMessage to enqueue or observe.
+// Returns ok=false to drop silently (empty text, unroutable, or OBO
+// irrelevant — the openclaw R10 leak guard, BEFORE any session state).
 func (c *Connector) prepareInboundTurn(m BotMessage, botUID string) (router.InboundMessage, string, replyTarget, bool) {
 	c.hydrateInboundNames(&m)
 
-	// ResolveContent covers every type and sanitizes untrusted names/bodies that
-	// land in labels.
 	baseText := c.resolveInboundText(m.Payload)
 	if baseText == "" {
 		return router.InboundMessage{}, "", replyTarget{}, false
 	}
 
-	// Only trust OBO fields when the message is sent by the configured grantor.
-	oboV2 := c.isTrustedOBORelay(m)
-	if oboV2 && !c.persona.Relevant(m.PersonaMention()) {
-		c.logf("OBO v2 skipped — message not relevant to persona")
+	policy, classifier := c.loadPolicyAndClassifier()
+	// Policy.BotUID is seeded from cfg.BotID at startup, but the IM-side
+	// @-mention payload carries the SERVER-registered uid (set post-
+	// Register via setUID). Without this override the classifier would
+	// never match an @bot mention in production (the regression bot.go's
+	// note flagged: "policy.BotUID is the configured bot id, not the
+	// post-register uid"). Override at classify time so the live uid is
+	// always authoritative; nothing else in Policy depends on BotUID.
+	if uid := c.uid(); uid != "" {
+		policy.BotUID = uid
+	}
+	canonical := c.buildCanonicalInbound(m, baseText, botUID)
+	decision := classifier.Classify(canonical, policy)
+
+	// OBO irrelevance is the R10 leak guard: drop BEFORE any session state.
+	if decision.Reason == trigger.ReasonOBOIrrelevant {
+		c.logf("OBO v2 skipped — message not relevant to persona (channel=%s from=%s)",
+			m.ChannelID, m.FromUID)
 		return router.InboundMessage{}, "", replyTarget{}, false
 	}
 
-	inbound := c.buildInboundMessage(m, botUID, baseText)
+	inbound := c.inboundMessageFromCanonical(canonical, m, baseText, &decision)
 	key, err := inbound.SessionKey()
 	if err != nil {
 		return router.InboundMessage{}, "", replyTarget{}, false
 	}
 
-	// OBO v2 replies to the origin channel as the grantor. Group persona
-	// trigger-as-grantor replies in the same group as the grantor.
-	tgt := c.inboundReplyTarget(m, botUID, inbound.ChannelType, oboV2)
+	tgt := c.targetFromDecision(m, inbound.ChannelType, decision)
 	return inbound, key, tgt, true
+}
+
+func (c *Connector) buildCanonicalInbound(m BotMessage, baseText, botUID string) trigger.CanonicalInbound {
+	channel := trigger.ChannelDM
+	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
+		channel = trigger.ChannelGroup
+	}
+	return trigger.CanonicalInbound{
+		Source:     trigger.SourceUser,
+		Channel:    channel,
+		ChannelID:  m.ChannelID,
+		FromUID:    m.FromUID,
+		FromName:   m.FromName,
+		Text:       baseText,
+		MessageSeq: int64(m.MessageSeq),
+		Mention:    m.TriggerMention(),
+		ReplyTo:    c.replyContextFromPayload(m.Payload.Reply, botUID),
+		OBO:        m.TriggerOBO(),
+		Protocol:   "octo",
+	}
+}
+
+// replyContextFromPayload converts an Octo Reply payload to the IM-agnostic
+// trigger.ReplyContext. Nil for messages without a quote. TargetIsBot is
+// computed against the bot's own uid so the classifier never needs to.
+func (c *Connector) replyContextFromPayload(reply *ReplyPayload, botUID string) *trigger.ReplyContext {
+	if reply == nil || reply.FromUID == "" {
+		return nil
+	}
+	return &trigger.ReplyContext{
+		TargetFromUID: reply.FromUID,
+		TargetIsBot:   botUID != "" && reply.FromUID == botUID,
+	}
+}
+
+func (c *Connector) inboundMessageFromCanonical(canonical trigger.CanonicalInbound, m BotMessage, baseText string, decision *trigger.TriggerDecision) router.InboundMessage {
+	// A CommunityTopic (thread / 子区) is group-like for routing: its
+	// channel id is the compound "<groupNo>____<shortId>", so it lands in
+	// its OWN session (distinct from the parent group and sibling threads)
+	// while membership and the mention gate are inherited from the parent
+	// group. See thread.go and openclaw inbound.ts thread routing.
+	chType := router.ChannelDM
+	if canonical.Channel == trigger.ChannelGroup {
+		chType = router.ChannelGroup
+	}
+	return router.InboundMessage{
+		FromUID:     m.FromUID,
+		FromName:    m.FromName,
+		ChannelID:   m.ChannelID,
+		ChannelType: chType,
+		Text:        baseText,
+		Attachments: c.resolveAttachments(m.Payload),
+		MessageSeq:  int64(m.MessageSeq),
+		Source:      trigger.SourceUser,
+		Trigger:     decision,
+	}
+}
+
+// targetFromDecision derives the reply target from the classifier's
+// ReplyRouting plus the IM channel coords. OBO v2 reroutes redirect to the
+// origin channel; on_behalf_of stamps the grantor uid.
+func (c *Connector) targetFromDecision(m BotMessage, chType router.ChannelType, decision trigger.TriggerDecision) replyTarget {
+	tgt := replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
+	if decision.ReplyRouting.HasOBOReroute() {
+		rerouteKind := ChannelType(decision.ReplyRouting.OBORerouteKind)
+		if rerouteKind == 0 {
+			// Conservative default: origin without an explicit kind = group.
+			rerouteKind = ChannelGroup
+		}
+		tgt.channelID = decision.ReplyRouting.OBORerouteChannelID
+		tgt.channelType = rerouteKind
+	} else if chType == router.ChannelGroup && decision.PersonaOBO {
+		// Persona widening fires in a normal group (not OBO v2 relay):
+		// keep the inbound channel as the target but stamp the grantor.
+	}
+	tgt.onBehalfOf = decision.ReplyRouting.OnBehalfOf
+	return tgt
 }
 
 func (c *Connector) rerouteInboundReplyTarget(key string, tgt replyTarget) replyTarget {
@@ -97,52 +191,41 @@ func (c *Connector) rerouteInboundReplyTarget(key string, tgt replyTarget) reply
 	return tgt
 }
 
-func (c *Connector) observeOrEnqueueInboundTurn(key string, inbound router.InboundMessage, tgt replyTarget, channelID string, reply *ReplyPayload) {
-	// A group message that doesn't trigger the bot is background context, not a
-	// turn: observe it so it becomes a later @-mention's delta. (The router
-	// would drop it anyway; observing first preserves group context.) Background
-	// context is stored history, so it carries the plain resolved text WITHOUT
-	// the quoted-reply prefix. Observe is a fast in-memory cache write, so it runs
-	// inline (not worth a worker goroutine). A nil gateway (tests) skips it.
-	//
-	// Exception (G12): in a mention-free channel an unmentioned message IS a turn
-	// — hand it to the gateway so the router applies the mention-free + bot-loop
-	// policy. runTurn caches it into group context itself, so do NOT also Observe.
-	if c.shouldObserveBackground(inbound, channelID) {
+// dispatchInbound is the single dispatch entry: observation flows directly
+// to gw.Observe (no per-key queue, no session lock — observations are
+// fast in-memory writes); reply-warranting decisions enqueue. The legacy
+// retroactive post-gate Observe in drainTurns is gone.
+func (c *Connector) dispatchInbound(key string, inbound router.InboundMessage, tgt replyTarget, channelID string, reply *ReplyPayload) {
+	if inbound.ShouldObserve() {
+		// Group-context background. Stored history carries the plain
+		// resolved text WITHOUT the quoted-reply prefix.
 		if c.gateway != nil {
 			c.gateway.Observe(inbound)
 		}
 		return
 	}
-	// Prepend the quoted-reply context to the CURRENT turn only (never stored
-	// history): the sender quoted a prior message, so give the agent that
-	// context fenced ahead of the real request (inbound.ts quotePrefix).
+	// Prepend the quoted-reply context to the CURRENT turn only (never
+	// stored history): the sender quoted a prior message, so give the
+	// agent that context fenced ahead of the real request (inbound.ts
+	// quotePrefix).
 	c.applyQuotePrefix(&inbound, reply)
-	// Dispatch the turn on the per-key worker so the WS read loop is not blocked
-	// for the whole (possibly multi-minute) turn. The router still serializes
-	// same-session turns; the per-key queue guarantees they reach the router in
-	// arrival order despite running on a goroutine. drainTurns skips dispatch
-	// when gateway is nil (tests), but the queue is still populated so the
-	// persona tests can assert via peekQueuedTarget.
 	c.enqueueTurn(key, inbound, tgt)
 }
 
 func (c *Connector) hydrateInboundNames(m *BotMessage) {
 	// WuKongIM RECV packets carry only fromUid, not a display name. Kick a
-	// background fetch via the cache (non-blocking — ResolveUser returns "" on
-	// miss and the next message from the same uid sees it cached) and fall back
-	// to the cached value if it happens to be there already. The receive goroutine
-	// MUST NOT block on REST: a slow / unreachable name service would stall ALL
-	// inbound for this bot. First sight of an unseen sender lands in the chat
-	// with senderName empty (the GUI falls back to senderUid for the bubble
-	// label) — subsequent messages from the same uid carry the resolved name, and
-	// the persisted history row gets backfilled on the next history fetch via the
-	// warmed cache.
+	// background fetch via the cache (non-blocking — ResolveUser returns ""
+	// on miss and the next message from the same uid sees it cached) and
+	// fall back to the cached value if it happens to be there already. The
+	// receive goroutine MUST NOT block on REST: a slow / unreachable name
+	// service would stall ALL inbound for this bot. First sight of an
+	// unseen sender lands in the chat with senderName empty (the GUI falls
+	// back to senderUid for the bubble label) — subsequent messages from
+	// the same uid carry the resolved name, and the persisted history row
+	// gets backfilled on the next history fetch via the warmed cache.
 	if m.FromName == "" && m.FromUID != "" {
 		m.FromName = c.names.ResolveUser(m.FromUID)
 	}
-	// Free-feed the name cache (no-op if FromName is empty). Also kick the
-	// channel-name fetch for groups so the sidebar can show it next render.
 	c.names.LearnUser(m.FromUID, m.FromName)
 	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
 		c.names.ResolveChannel(m.ChannelID)
@@ -154,58 +237,10 @@ func (c *Connector) resolveInboundText(payload MessagePayload) string {
 	return strings.TrimSpace(resolved.Text)
 }
 
-func (c *Connector) isTrustedOBORelay(m BotMessage) bool {
-	return c.persona.Configured() &&
-		m.Payload.OBOOriginChannelID != "" &&
-		oboRespondAs(m.Payload) != "" &&
-		m.FromUID == c.persona.UID
-}
-
-func (c *Connector) shouldObserveBackground(inbound router.InboundMessage, channelID string) bool {
-	return inbound.ChannelType == router.ChannelGroup && !inbound.Mentioned && !c.mentionFree[channelID]
-}
-
 func (c *Connector) applyQuotePrefix(inbound *router.InboundMessage, reply *ReplyPayload) {
 	if prefix := resolveQuotePrefix(reply, c.rest.APIURL()); prefix != "" {
 		inbound.Text = prefix + inbound.Text
 	}
-}
-
-func (c *Connector) buildInboundMessage(m BotMessage, botUID, text string) router.InboundMessage {
-	// A CommunityTopic (thread / 子区) is group-like for routing: its channel id
-	// is the compound "<groupNo>____<shortId>", so it lands in its OWN session
-	// (distinct from the parent group and sibling threads) while membership and
-	// the mention gate are inherited from the parent group. See thread.go and
-	// openclaw inbound.ts thread routing.
-	chType := router.ChannelDM
-	if m.ChannelType == ChannelGroup || m.ChannelType == ChannelCommunityTopic {
-		chType = router.ChannelGroup
-	}
-
-	// Trigger gate: persona-aware for clones (an @grantor / @所有人 mention is a
-	// call to the clone); a plain @bot / @AI mention otherwise.
-	return router.InboundMessage{
-		FromUID:     m.FromUID,
-		FromName:    m.FromName,
-		ChannelID:   m.ChannelID,
-		ChannelType: chType,
-		Text:        text,
-		Attachments: c.resolveAttachments(m.Payload),
-		MessageSeq:  int64(m.MessageSeq),
-		Mentioned:   m.Triggers(botUID, c.persona),
-	}
-}
-
-func (c *Connector) inboundReplyTarget(m BotMessage, botUID string, chType router.ChannelType, oboV2 bool) replyTarget {
-	tgt := replyTarget{channelID: m.ChannelID, channelType: m.ChannelType}
-	if oboV2 {
-		return oboReplyTarget(m.Payload, c.persona.UID)
-	}
-	if chType == router.ChannelGroup &&
-		c.persona.TriggeredAsGrantor(m.PersonaMention(), m.ExplicitlyMentionsBot(botUID)) {
-		tgt.onBehalfOf = c.persona.UID
-	}
-	return tgt
 }
 
 // oboRespondAs resolves the grantor uid the payload claims to respond as,
@@ -217,29 +252,11 @@ func oboRespondAs(p MessagePayload) string {
 	return p.OBOGrantorUID
 }
 
-// oboReplyTarget derives the OBO v2 reply destination from a (grantor-trusted)
-// payload (openclaw inbound.ts ~L2305-2326). DM-relay origin → reply to the
-// original sender's uid; group/thread → reply to the origin group. The reply
-// always carries on_behalf_of=grantor (the trusted configured grantor uid, NOT
-// the payload's respond_as).
-func oboReplyTarget(p MessagePayload, grantorUID string) replyTarget {
-	chType := ChannelGroup
-	if p.OBOOriginChannelType != nil {
-		chType = ChannelType(*p.OBOOriginChannelType)
-	}
-	channelID := p.OBOOriginChannelID
-	if chType == ChannelDM && p.OBOOriginFromUID != "" {
-		// DM: the bot is only friends with the grantor; reply to the original
-		// sender via on_behalf_of=grantor, which bypasses the bot-friend gate.
-		channelID = p.OBOOriginFromUID
-	}
-	return replyTarget{channelID: channelID, channelType: chType, onBehalfOf: grantorUID}
-}
-
-// resolveAttachments extracts downloadable media/file attachments from a payload
-// (image/GIF/file). LLM-facing text rendering is handled by ResolveContent
-// (content.go); this only surfaces the URLs the gateway materializes into the
-// session cwd. Media URLs are host-validated via buildMediaURL (inbound.ts G1).
+// resolveAttachments extracts downloadable media/file attachments from a
+// payload (image/GIF/file). LLM-facing text rendering is handled by
+// ResolveContent (content.go); this only surfaces the URLs the gateway
+// materializes into the session cwd. Media URLs are host-validated via
+// buildMediaURL (inbound.ts G1).
 func (c *Connector) resolveAttachments(p MessagePayload) []router.Attachment {
 	apiURL := c.rest.APIURL()
 	switch p.Type {
@@ -250,8 +267,8 @@ func (c *Connector) resolveAttachments(p MessagePayload) []router.Attachment {
 		}
 		return []router.Attachment{{Kind: router.AttachmentImage, URL: full}}
 	case MsgFile:
-		// SECURITY: p.Name is user-controlled; sanitize before it flows into the
-		// <file_content name="…"> attribute the gateway writes.
+		// SECURITY: p.Name is user-controlled; sanitize before it flows
+		// into the <file_content name="…"> attribute the gateway writes.
 		filename := safety.SanitizeDisplayName(p.Name, "未知文件")
 		full := buildMediaURL(p.URL, apiURL)
 		if full == "" {

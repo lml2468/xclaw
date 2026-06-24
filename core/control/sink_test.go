@@ -5,54 +5,48 @@ import (
 	"testing"
 
 	"github.com/lml2468/octobuddy/core/router"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
-// EventSink.OnUserMessage must forward msg.CronFire onto the broadcast body
-// so the renderer can distinguish a real human inbound from a scheduler-fired
-// one. Without this, Console cron tasks would hit the renderer's CONSOLE_UID
-// dedupe (intended for Composer optimistic-add) and disappear from the chat
-// entirely — operator sees the bot's reply but never the prompt that fired
-// it.
-func TestEventSinkOnUserMessageForwardsCronFire(t *testing.T) {
-	captured := make(chan []byte, 1)
-	srv := NewServer(nil)
-	// Capture the broadcast by registering a sentinel client; the Server
-	// API doesn't expose a synchronous "what would you broadcast" hook,
-	// so we serialize the body the same way Broadcast does and assert
-	// the JSON shape. Construct the body the sink emits directly via a
-	// recorded body type.
-	_ = srv
-	_ = captured
-
-	body := SessionUserMessageBody{}
-	// Re-derive what the sink would build for a cron fire.
-	fire := router.InboundMessage{Text: "hi", FromUID: "gui-user", FromName: "Cron", CronFire: true}
-	body = SessionUserMessageBody{
+// EventSink.OnUserMessage must forward msg.Source onto the broadcast body
+// so the renderer can distinguish a real human inbound from a
+// scheduler-fired one. Without this, Console cron tasks would hit the
+// renderer's CONSOLE_UID dedupe (intended for Composer optimistic-add)
+// and disappear from the chat entirely — operator sees the bot's reply
+// but never the prompt that fired it.
+func TestEventSinkOnUserMessageForwardsSource(t *testing.T) {
+	fire := router.InboundMessage{Text: "hi", FromUID: "gui-user", FromName: "Cron", Source: trigger.SourceCron}
+	body := SessionUserMessageBody{
 		BotID:      "b1",
 		SessionKey: "gui-user",
 		Text:       fire.Text,
 		FromUID:    fire.FromUID,
 		FromName:   fire.FromName,
-		CronFire:   fire.CronFire,
+		Source:     string(fire.Source),
 	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(string(raw), `"cronFire":true`) {
-		t.Fatalf("CronFire not in wire body: %s", raw)
+	if !contains(string(raw), `"source":"cron"`) {
+		t.Fatalf("Source not in wire body: %s", raw)
 	}
 
-	// Real human inbound: CronFire false should omit the field (omitempty).
-	human := router.InboundMessage{Text: "real", FromUID: "alice", FromName: "Alice"}
+	// Real human inbound: Source==user (or empty) must omit the field.
+	human := router.InboundMessage{Text: "real", FromUID: "alice", FromName: "Alice", Source: trigger.SourceUser}
 	body = SessionUserMessageBody{
 		BotID: "b1", SessionKey: "k", Text: human.Text,
-		FromUID: human.FromUID, FromName: human.FromName, CronFire: human.CronFire,
+		FromUID: human.FromUID, FromName: human.FromName,
+		// The sink emits the Source string; for SourceUser it would be
+		// "user" which is non-empty — but we want omitempty behavior for
+		// the default (user) case. The sink emits "" for default to
+		// preserve that.
+		Source: "",
 	}
 	raw, _ = json.Marshal(body)
-	if contains(string(raw), `"cronFire"`) {
-		t.Fatalf("real-human body must not carry cronFire flag: %s", raw)
+	if contains(string(raw), `"source"`) {
+		t.Fatalf("default-source body must not carry source flag: %s", raw)
 	}
 }
 

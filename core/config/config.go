@@ -86,6 +86,35 @@ type ContextConfig struct {
 	MaxContextChars int `json:"maxContextChars,omitempty"`
 }
 
+// TriggerConfig governs the trigger pipeline (issue #105) — per-bot
+// policy for "should this message reply?" The defaults flip the AI
+// broadcast path closed (the bug fix), with reply-to-bot recovering the
+// natural UX. Operators that need legacy behavior set aiBroadcast="allow".
+type TriggerConfig struct {
+	// AIBroadcast governs the pure-@AI trigger path. "deny" (default for
+	// new deployments — the issue #105 fix), "allowlist" (only channels in
+	// aiBroadcastAllowlist trigger), or "allow" (legacy behavior).
+	// Unset → daemon defaults to deny with a stderr warning.
+	AIBroadcast string `json:"aiBroadcast,omitempty"`
+	// AIBroadcastAllowlist is the channel id set scoped to
+	// aiBroadcast="allowlist". Empty = no channels.
+	AIBroadcastAllowlist []string `json:"aiBroadcastAllowlist,omitempty"`
+	// ReplyToBotEnabled lifts a quote-reply to one of the bot's own
+	// messages into a trigger — recovers the natural "continue the
+	// thread" interaction lost when aiBroadcast=deny. Pointer so unset
+	// (== nil) defaults to true; false explicitly disables.
+	ReplyToBotEnabled *bool `json:"replyToBotEnabled,omitempty"`
+	// MentionFreeGroups is the canonical home for the G12 mention-free
+	// channel list (the legacy top-level field is read as fallback for
+	// one release for migration).
+	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
+}
+
+// (No AuditConfig — the audit module was removed after live verification
+// proved per-decision JSONL added more code than diagnostic value. Operators
+// rely on daemon stderr logs and the SQLite store for post-mortem
+// inspection; reinstate the audit module if a structured backend is
+// genuinely needed.)
 // OnBehalfOf marks a bot as a persona clone: it speaks for a grantor (a human
 // identity), replying in the grantor's voice when the grantor or the group is
 // @-mentioned. Ported from openclaw-channel-octo (config-schema.ts
@@ -124,10 +153,17 @@ type BotEntry struct {
 
 	// Gating policy (cc-channel-octo session-router.ts: G12 mention-free groups,
 	// G14 bot-loop guard, DM blocklist). Per-bot only in the canonical schema.
+	// MentionFreeGroups here is a one-release deprecation shim — the new home
+	// is trigger.mentionFreeGroups. Load merges the two (top-level used only
+	// when trigger.mentionFreeGroups is empty).
 	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
 	KnownBotUids      []string `json:"knownBotUids,omitempty"`
 	AllowedBotUids    []string `json:"allowedBotUids,omitempty"`
 	BotBlocklist      []string `json:"botBlocklist,omitempty"`
+
+	// Trigger is the per-bot trigger pipeline policy (issue #105).
+	// Defaults applied at Load (aiBroadcast=deny, replyToBotEnabled=true).
+	Trigger *TriggerConfig `json:"trigger,omitempty"`
 }
 
 // File is the on-disk shape of the single ~/.octobuddy/config.json. Top-level
@@ -171,6 +207,11 @@ type Resolved struct {
 	// OnBehalfOf, when its UID is set, marks this bot as a persona clone of the
 	// named grantor (openclaw OBO). nil/empty UID = a regular bot.
 	OnBehalfOf OnBehalfOf
+
+	// Trigger holds the trigger-pipeline policy for this bot (issue
+	// #105). Empty fields fall back to safe defaults (aiBroadcast=deny,
+	// replyToBotEnabled=true).
+	Trigger TriggerConfig
 
 	// Derived per-bot directories (never from file).
 	DataDir    string // ~/.octobuddy/<id>/data       — SQLite + state

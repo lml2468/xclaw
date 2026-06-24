@@ -28,6 +28,7 @@ type selectedContextLine struct {
 func (g *GroupContext) BuildContextSince(channelID string, sinceID, cutoffSeq int64) (text string, lastID int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.touchLocked(channelID)
 
 	win := g.windows[channelID]
 	delta := collectContextDelta(win, sinceID)
@@ -167,11 +168,15 @@ func (g *GroupContext) IsMember(channelID, uid string) bool {
 	return ok
 }
 
-// LearnMember records a uid↔name mapping (e.g. from a member roster refresh).
+// LearnMember records a uid↔name mapping (e.g. from a member roster
+// refresh). Bumps lastTouch so a channel kept alive by roster updates
+// is not evicted by ReapIdle just because no message has been pushed in
+// a while.
 func (g *GroupContext) LearnMember(channelID, uid, name string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.learnMemberLocked(channelID, uid, safety.SanitizeDisplayName(name, ""))
+	g.touchLocked(channelID)
 }
 
 func (g *GroupContext) learnMemberLocked(channelID, uid, name string) {

@@ -15,6 +15,7 @@ import (
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/safety"
 	"github.com/lml2468/octobuddy/core/store"
+	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // botTarget is the per-bot state a control command operates on. It abstracts
@@ -163,6 +164,7 @@ func (d controlCommandDispatcher) runControlTurn(t *botTarget, b control.Session
 	defer t.turnsWG.Done()
 	decision, err := t.gateway.Handle(d.ctx, router.InboundMessage{
 		ChannelType: router.ChannelDM, FromUID: b.UID, FromName: b.UID, Text: text,
+		Source: trigger.SourceUser,
 	})
 	if d.deps.broadcast == nil {
 		return
@@ -279,7 +281,13 @@ func (d controlCommandDispatcher) sessionReset(body json.RawMessage) (any, error
 func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 	out := make([]control.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
-		row := control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp, Cron: m.Cron}
+		// Elide the default "user" source so wire stays minimal for
+		// non-cron messages (matches OnUserMessage's elision).
+		src := m.Source
+		if src == store.SourceUser {
+			src = ""
+		}
+		row := control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp, Source: src}
 		if m.Role == store.RoleUser {
 			row.FromName = safety.SanitizeDisplayName(m.FromName, "")
 		}

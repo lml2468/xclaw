@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -185,25 +186,94 @@ func TestFullTurnSequence(t *testing.T) {
 	}
 }
 
-// TestClaudeArgsBakeHeadlessInvariants asserts the claude-only fixed flag is
-// always emitted: --permission-mode bypassPermissions (without it a headless
-// turn would hang waiting for approval). bypassPermissions grants all tools, so
-// --allowedTools must NOT be present — claude 2.1+ rejects "*" in allow rules.
-func TestClaudeArgsBakeHeadlessInvariants(t *testing.T) {
+// TestClaudeArgsMinimalMode asserts the SDK-aligned default flag set:
+// the prompt REPLACES (not appends), cwd .claude/ is silenced via
+// setting-sources=, permission-mode is `default` (not bypass), and the
+// tool whitelist + disallow lists are emitted.
+func TestClaudeArgsMinimalMode(t *testing.T) {
 	d := NewClaudeDriver("claude")
-	args := d.buildArgs(Request{Prompt: "hi"})
-	joined := ""
-	for i, a := range args {
-		joined += a
-		if i < len(args)-1 {
-			joined += " "
-		}
+	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: "you are X"})
+	if !contains(args, "--system-prompt") {
+		t.Fatalf("--system-prompt missing: %v", args)
 	}
-	if !contains(args, "--permission-mode") || !contains(args, "bypassPermissions") {
-		t.Fatalf("missing bypassPermissions: %v", args)
+	if !contains(args, "--setting-sources=") {
+		t.Fatalf("--setting-sources= missing: %v", args)
+	}
+	if !contains(args, "--permission-mode") || !contains(args, "default") {
+		t.Fatalf("--permission-mode default missing: %v", args)
+	}
+	if !contains(args, "--allowedTools") {
+		t.Fatalf("--allowedTools missing: %v", args)
+	}
+	if !contains(args, "--disallowedTools") {
+		t.Fatalf("--disallowedTools missing: %v", args)
+	}
+	if contains(args, "--append-system-prompt") {
+		t.Fatalf("minimal mode must NOT use --append-system-prompt: %v", args)
+	}
+	if contains(args, "bypassPermissions") {
+		t.Fatalf("minimal mode must NOT use bypassPermissions: %v", args)
+	}
+}
+
+// TestClaudeArgsClaudeCodeModeEscapeHatch asserts the escape hatch
+// preserves the previous behavior: append on top of the built-in prompt,
+// blanket permissions, no setting-sources / allowedTools / system-prompt
+// flags. Used by bots whose SOUL.md assumed the Claude Code preamble.
+func TestClaudeArgsClaudeCodeModeEscapeHatch(t *testing.T) {
+	d := NewClaudeDriver("claude")
+	d.Mode = PromptModeClaudeCode
+	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: "soul"})
+	if !contains(args, "--append-system-prompt") {
+		t.Fatalf("claude_code mode must use --append-system-prompt: %v", args)
+	}
+	if !contains(args, "bypassPermissions") {
+		t.Fatalf("claude_code mode must use bypassPermissions: %v", args)
+	}
+	if contains(args, "--system-prompt") {
+		t.Fatalf("claude_code mode must NOT use --system-prompt: %v", args)
+	}
+	if contains(args, "--setting-sources=") {
+		t.Fatalf("claude_code mode must NOT use --setting-sources=: %v", args)
 	}
 	if contains(args, "--allowedTools") {
-		t.Fatalf("--allowedTools must not be passed (rejected by claude 2.1+; bypassPermissions grants tools): %v", args)
+		t.Fatalf("claude_code mode must NOT use --allowedTools: %v", args)
+	}
+}
+
+// TestClaudeArgsAllowedTools pins the AllowedTools semantics:
+// nil → driver default; non-empty → exact list; empty slice → no flag.
+func TestClaudeArgsAllowedTools(t *testing.T) {
+	cases := []struct {
+		name       string
+		allowed    []string
+		wantPart   string
+		wantNoFlag bool
+	}{
+		{"nil emits default whitelist", nil, "mcp__*", false},
+		{"explicit list verbatim", []string{"Read", "Bash"}, "Read,Bash", false},
+		{"empty slice → no flag", []string{}, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewClaudeDriver("claude")
+			args := d.buildArgs(Request{Prompt: "hi", AllowedTools: tc.allowed})
+			if tc.wantNoFlag {
+				if contains(args, "--allowedTools") {
+					t.Fatalf("empty AllowedTools should not emit the flag: %v", args)
+				}
+				return
+			}
+			joined := ""
+			for i, a := range args {
+				if a == "--allowedTools" && i+1 < len(args) {
+					joined = args[i+1]
+				}
+			}
+			if !strings.Contains(joined, tc.wantPart) {
+				t.Fatalf("--allowedTools = %q, want it to contain %q", joined, tc.wantPart)
+			}
+		})
 	}
 }
 

@@ -43,7 +43,9 @@ func (d *ClaudeDriver) logSelfcheck(env []string, cwd string) {
 	}
 	writable := isDirWritable(cwd)
 	clog.For("selfcheck").Info("driver invocation environment",
-		"bot", botID, "claude", binStr, "auth", auth, "base_url", baseURL, "cwd", cwd, "writable", writable)
+		"bot", botID, "claude", binStr, "auth", auth, "base_url", baseURL,
+		"cwd", cwd, "writable", writable,
+		"mode", string(d.mode()), "allowed_tools", len(defaultHeadlessAllowedTools))
 }
 
 // maskToken returns a redacted form safe to log: "UNSET" if empty, the literal

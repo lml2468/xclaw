@@ -18,6 +18,8 @@
         "inheritUserConfig": false,
         "_comment_dispatchTimeoutSec": "Per-turn IDLE timeout (seconds). Omit to use the daemon default (1200 = 20 min).",
         "dispatchTimeoutSec": 0,
+        "_comment_systemPromptMode": "How SOUL.md+AGENTS.md are sent to claude. 'minimal' (default): REPLACE the built-in system prompt; cwd .claude/ is not auto-loaded; tool surface is a headless whitelist. 'claude_code': APPEND to the built-in prompt; cwd .claude/ auto-loads; bypassPermissions. Use claude_code only if your SOUL was written assuming the built-in preamble.",
+        "systemPromptMode": "minimal",
         "_comment_env": "Env is per-bot. Use {\"value\":\"...\"} for non-secret values and {\"secretRef\":\"env/NAME\"} for values stored in the secret backend.",
         "env": {
           "OCTO_BOT_ID": { "value": "this-bot-octo-id" },

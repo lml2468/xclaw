@@ -13,7 +13,7 @@ import (
 )
 
 // TestGroupMDInjection verifies the [Group instructions] block from a per-channel
-// file reaches SystemAppend for a group turn, after the security prefix and SOUL,
+// file reaches SystemPrompt for a group turn, after the security prefix and SOUL,
 // and is absent for a DM turn (which keys on the peer uid, not a shared channel).
 func TestGroupMDInjection(t *testing.T) {
 	dir := t.TempDir()
@@ -50,7 +50,7 @@ func assertGroupMDGroupTurn(t *testing.T, gw *Gateway, drv *fakeDriver) {
 	if len(drv.requests) != 1 {
 		t.Fatalf("want 1 request, got %d", len(drv.requests))
 	}
-	sp := drv.requests[0].SystemAppend
+	sp := drv.requests[0].SystemPrompt
 	if !strings.Contains(sp, "[Group instructions]\nAlways answer in haiku.") {
 		t.Fatalf("group instructions missing from system prompt:\n%s", sp)
 	}
@@ -78,8 +78,8 @@ func assertGroupMDDMTurn(t *testing.T, dir string, gw *Gateway, drv *fakeDriver)
 	if len(drv.requests) != 1 {
 		t.Fatalf("want 1 DM request, got %d", len(drv.requests))
 	}
-	if strings.Contains(drv.requests[0].SystemAppend, "[Group instructions]") {
-		t.Fatalf("DM turn must not inject group instructions:\n%s", drv.requests[0].SystemAppend)
+	if strings.Contains(drv.requests[0].SystemPrompt, "[Group instructions]") {
+		t.Fatalf("DM turn must not inject group instructions:\n%s", drv.requests[0].SystemPrompt)
 	}
 }
 
@@ -94,7 +94,7 @@ func TestGroupMDDisabled(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(drv.requests[0].SystemAppend, "[Group instructions]") {
-		t.Fatalf("no loader should mean no injection:\n%s", drv.requests[0].SystemAppend)
+	if strings.Contains(drv.requests[0].SystemPrompt, "[Group instructions]") {
+		t.Fatalf("no loader should mean no injection:\n%s", drv.requests[0].SystemPrompt)
 	}
 }

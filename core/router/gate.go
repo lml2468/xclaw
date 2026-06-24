@@ -2,8 +2,6 @@ package router
 
 import (
 	"context"
-
-	"github.com/lml2468/octobuddy/core/trigger"
 )
 
 // Decision is the outcome of routing a message.
@@ -147,18 +145,22 @@ func (r *Router) dmGate(msg InboundMessage) Decision {
 	return Accepted
 }
 
-// groupBotGuards applies the group-channel blocklist + (mention-free)
-// bot-loop guard. Unlike the legacy groupGate, it does NOT own the
-// mention-vs-observe decision — that lives in trigger.Classify.
+// groupBotGuards applies the group-channel blocklist + bot-loop guard.
+// Unlike the legacy groupGate, it does NOT own the mention-vs-observe
+// decision — that lives in trigger.Classify.
 //
-// The loop guard fires ONLY for ReasonMentionFreeGroup (issue #105 fix
-// after live-traffic regression: pre-refactor the legacy gate only fired
-// the loop guard inside mention-free channels; a wider "all non-explicit
-// reply reasons" gate dropped legitimate peer-bot @-grantor mentions and
-// peer-bot quote-replies in normal groups). In a normal group the
-// classifier returned ExplicitBot / PersonaGrantor / ReplyToBot — these
-// pass through. In a mention-free group, an unmentioned message classified
-// as MentionFreeGroup is still subject to the loop guard.
+// The loop guard fires only when the trigger reason is "ambiguous
+// addressing" (issue #105 fix after live-traffic regression: pre-
+// refactor the legacy gate only fired the loop guard inside mention-free
+// channels; a wider "all non-explicit reply reasons" gate dropped
+// legitimate peer-bot @-grantor mentions and peer-bot quote-replies in
+// normal groups).
+//
+// Which reasons count as ambiguous is the trigger package's call (see
+// trigger.Reason.IsAmbiguousAddressing). The router no longer pattern-
+// matches a specific Reason constant — a future addressing-ambiguous
+// reason added to the trigger pipeline (webhook with no @, scheduled-
+// mention, …) becomes loop-guarded automatically without touching gate.go.
 //
 // Blocklist runs regardless of trigger reason (operator-driven hard drop).
 func (r *Router) groupBotGuards(msg InboundMessage) Decision {
@@ -169,12 +171,9 @@ func (r *Router) groupBotGuards(msg InboundMessage) Decision {
 	if r.blocklisted[msg.FromUID] {
 		return DroppedBot
 	}
-	// Loop guard scope: ONLY mention-free triggers, matching legacy
-	// gate.go behavior. Explicit @bot, persona, reply-to-bot, @AI are all
-	// unambiguous intent in a normal mentioned group — let them through
-	// even from bot-looking senders. (G14 only fires in mention-free
-	// channels where there's no @ to tell us intent.)
-	if msg.Trigger == nil || msg.Trigger.Reason != trigger.ReasonMentionFreeGroup {
+	// Unambiguous addressing (explicit @bot, persona, reply-to-bot, @AI)
+	// is intentional engagement — let peer-bot senders through.
+	if msg.Trigger == nil || !msg.Trigger.Reason.IsAmbiguousAddressing() {
 		return Accepted
 	}
 	if r.looksLikeBot(msg.FromUID) && !r.allowedBots[msg.FromUID] {

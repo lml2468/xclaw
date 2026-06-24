@@ -24,16 +24,13 @@ const (
 	DroppedTooLong
 	// DroppedBot: blocklist or G14 bot-loop guard. Silent.
 	DroppedBot
-	// DroppedOBOIrrelevant: persona clone received an OBO v2 fan-out that
-	// did not address the grantor (openclaw R10 leak guard). Silent;
-	// does NOT record into groupctx.
-	DroppedOBOIrrelevant
 	// DroppedInvariantBreak: programming-error signal. The router was
-	// called with a message that doesn't satisfy its precondition (e.g.
-	// the gateway is supposed to dispatch observations inline but didn't).
-	// Distinct from DroppedOBOIrrelevant so audit doesn't mislabel a
-	// dispatch bug as an OBO security drop — the two have very different
-	// triage paths.
+	// called with a message that doesn't satisfy its precondition
+	// (msg.ShouldReply() must be true). After #117 this is the SINGLE
+	// remaining defensive check (the gateway no longer pre-branches
+	// observations / OBO-irrelevant — the connector does that). Silent
+	// drop rather than panic so one programming bug doesn't crash every
+	// bot in the daemon.
 	DroppedInvariantBreak
 	// RateLimited: rejected; first rejection of this window, gateway
 	// notifies the user.
@@ -57,8 +54,6 @@ func (d Decision) String() string {
 		return "too_long"
 	case DroppedBot:
 		return "bot"
-	case DroppedOBOIrrelevant:
-		return "obo_irrelevant"
 	case DroppedInvariantBreak:
 		return "invariant_break"
 	case RateLimited:
@@ -74,30 +69,27 @@ func (d Decision) String() string {
 type Handler func(ctx context.Context, sessionKey string, msg InboundMessage) error
 
 // RouteAndHandle applies all gates, then dispatches reply-warranting
-// messages to handler under the per-session lock. Observations and OBO
-// irrelevance never reach the router — the gateway handles those inline
-// (single Observe entry point, issue #105 缺陷 4). Returns the gate
+// messages to handler under the per-session lock. Returns the gate
 // decision; handler errors are returned too.
 //
 // Gate ordering: SessionKey (unroutable) → blocklist/loop guards →
 // size → rate-limit → handler under lock.
 //
-// PRECONDITION: msg.ShouldReply() must be true (cron, DM auto-trigger, or
-// a classifier decision with a reply-warranting Reason). The gateway
-// asserts this before calling RouteAndHandle; passing an observation or
-// OBO-irrelevant message here is a programming error and returns
-// DroppedInvariantBreak (NOT DroppedOBOIrrelevant — auditing a dispatch
-// bug as an OBO security drop would confuse triage).
+// PRECONDITION: msg.ShouldReply() must be true. The gateway's Handle
+// contract enforces this structurally (its callers — connector
+// dispatchInbound, cron fire, REPL, control-bus — only invoke for reply-
+// warranting messages, and after #117 the gateway no longer pre-branches
+// observations / OBO-irrelevant). The check below is the SINGLE
+// remaining defensive layer; it returns DroppedInvariantBreak silently
+// rather than panicking so one programming bug doesn't crash every bot
+// in the daemon. Observation messages are recorded into groupctx by the
+// connector / gateway.Observe inline, never through this path.
 func (r *Router) RouteAndHandle(ctx context.Context, msg InboundMessage, handler Handler) (Decision, error) {
 	key, err := msg.SessionKey()
 	if err != nil {
 		return DroppedUnroutable, nil
 	}
 	if !msg.ShouldReply() {
-		// Defensive: gateway is supposed to dispatch observations
-		// without going through here. If it doesn't, refuse silently.
-		// The dispatcher OBO-irrelevant short-circuit also lives in the
-		// gateway; OBO drops never reach this branch in normal flow.
 		return DroppedInvariantBreak, nil
 	}
 

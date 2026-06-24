@@ -40,9 +40,10 @@ func asObservation(uid string) InboundMessage {
 	}
 }
 
-// TestObservationGroupNotReplied: a classifier observation is gateway's
-// job to record into groupctx — router refuses with DroppedInvariantBreak
-// (distinct from DroppedOBOIrrelevant so audit triage isn't misled).
+// TestObservationGroupNotReplied: a classifier observation is the
+// gateway's job to dispatch via Observe — router refuses with
+// DroppedInvariantBreak (the SINGLE remaining defense after #117 retired
+// gateway.Handle's redundant ShouldObserve / OBO short-circuits).
 func TestObservationGroupNotReplied(t *testing.T) {
 	r := New(Config{MaxPerMinute: 100})
 	if d := mustRoute(t, r, asObservation("alice")); d != DroppedInvariantBreak {
@@ -174,11 +175,11 @@ func TestCronFireBypassesBotGuards(t *testing.T) {
 }
 
 // TestOBOIrrelevantNeverReachesRouter: an OBO-irrelevant decision is
-// gateway.Handle's job to short-circuit before invoking the router (the
-// R10 leak guard is a security boundary, not a routing concern). If the
-// gateway ever regressed and let one through, the router's invariant-
-// break path catches it — but the audit tag (DroppedOBOIrrelevant vs
-// DroppedInvariantBreak) is set by the gateway, NOT here.
+// filtered at the connector (R10 leak guard, BEFORE any session state).
+// After #117 the gateway no longer pre-branches it. If a future caller
+// regressed and let one through, the router's invariant-break path
+// catches it — silently, so one programming bug doesn't crash the
+// daemon.
 func TestOBOIrrelevantNeverReachesRouter(t *testing.T) {
 	r := New(Config{MaxPerMinute: 100})
 	called := false
@@ -189,7 +190,7 @@ func TestOBOIrrelevantNeverReachesRouter(t *testing.T) {
 		},
 		func(ctx context.Context, key string, m InboundMessage) error { called = true; return nil })
 	if d != DroppedInvariantBreak {
-		t.Fatalf("OBO at router is a gateway-dispatch bug; want invariant_break, got %s", d)
+		t.Fatalf("OBO at router is a connector-filter bug; want invariant_break, got %s", d)
 	}
 	if called {
 		t.Fatalf("must not invoke handler: called=%v", called)

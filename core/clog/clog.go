@@ -1,15 +1,15 @@
 // Package clog is the thin slog wrapper the daemon uses. It exists for
 // two reasons:
 //
-//   1. Lazy logger binding. A package-level `var log = slog.Default().With(...)`
-//      captures the default logger AT INIT TIME, before main.go has
-//      called slog.SetDefault with the operator's --debug/--log-json
-//      choice. Callers using `clog.For("gateway").Error(...)` instead
-//      pick up the live default and get the configured handler.
+//  1. Lazy logger binding. A package-level `var log = slog.Default().With(...)`
+//     captures the default logger AT INIT TIME, before main.go has
+//     called slog.SetDefault with the operator's --debug/--log-json
+//     choice. Callers using `clog.For("gateway").Error(...)` instead
+//     pick up the live default and get the configured handler.
 //
-//   2. Consistent component tagging. Every log line carries a
-//      `component=<name>` attribute so operators can grep one subsystem
-//      out of the unified stream.
+//  2. Consistent component tagging. Every log line carries a
+//     `component=<name>` attribute so operators can grep one subsystem
+//     out of the unified stream.
 //
 // The package adds no behavior beyond slog itself — no levels, no
 // destinations, no formatters. The handler is set up exactly once in

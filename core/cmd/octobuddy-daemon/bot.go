@@ -71,10 +71,9 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 	defer drainBotRuntime(cm, connector, rtBot.target)
 	registerBotRuntime(rtBot, reg, srv)
 	startBotCron(cm, cfg.BotID)
-	// Reaper sweeps both the router lock/rate-limit maps AND the
-	// group-context channel windows (issue #105 follow-on: bound memory
-	// over the daemon's lifetime — the in-memory window used to grow
-	// unbounded across channels).
+	// Reaper sweeps router lock/rate-limit maps + group-context channel
+	// windows so the in-memory state stays bounded over the daemon's
+	// lifetime.
 	startRouterReaper(ctx, rt, rtBot.gateway)
 
 	fmt.Printf("[%s] started — driver=%s api=%s data=%s\n",
@@ -109,9 +108,9 @@ func assembleBotRuntime(
 	// per-bot session.send goroutines use.
 	target := &botTarget{id: cfg.BotID, gateway: gw, store: st, secrets: sec, connector: connector}
 
-	// Cron scheduler (#115): when enabled, load <dataDir>/cron.json and fire due
-	// tasks through the gateway as synthetic CronFire messages. The owner uid that
-	// gates create/delete is resolved from the bot registration (owner_uid).
+	// Cron scheduler: when enabled, load <dataDir>/cron.json and fire due
+	// tasks through the gateway as synthetic cron messages. The owner uid
+	// that gates create/delete is resolved from the bot registration.
 	// Declared at this scope so the post-Run shutdown chain below can Wait on it,
 	// and so it can be wired into botRuntime/target BEFORE reg.add — that way
 	// the resolve handler doesn't have to lock-free write `bot.target.cron`
@@ -142,28 +141,21 @@ func newBotConnector(cfg config.Resolved, sec *secretStore) (*octo.Connector, pe
 	grantor := persona.Grantor{UID: cfg.OnBehalfOf.UID, Name: cfg.OnBehalfOf.Name}
 
 	// Trigger policy — single source of truth for "should this message
-	// reply?". The router and the connector both consult the SAME policy
-	// via the same classifier (legacy mentionFree double-copy is gone,
-	// issue #105 缺陷 2). Policy.BotUID is seeded with the config id
-	// here, but the connector overrides it with the server-registered
-	// uid at classify time (see prepareInboundTurn) — that's the uid IM
-	// @-mention payloads carry.
+	// reply?". Policy.BotUID is seeded with the config id; the connector
+	// rewrites it with the server-registered uid at register time.
 	connector.SetPolicy(triggerPolicyFromConfig(cfg, grantor))
 	return connector, grantor
 }
 
-// triggerPolicyFromConfig assembles the trigger.Policy from resolved
-// config + grantor. Defaults:
-//   - AIBroadcast defaults to Deny (the bug fix from issue #105). Operators
-//     who want legacy behavior set trigger.aiBroadcast="allow" in config.
-//   - ReplyToBotEnabled defaults to true so users keep their natural
-//     "continue the thread" interaction under Deny.
+// triggerPolicyFromConfig assembles trigger.Policy from resolved config.
+// AIBroadcast defaults to Deny if unset/invalid; ReplyToBotEnabled
+// defaults to true so users keep the "continue the thread" UX.
 func triggerPolicyFromConfig(cfg config.Resolved, grantor persona.Grantor) trigger.Policy {
 	tg := cfg.Trigger
 	aib := trigger.AIBroadcastPolicy(tg.AIBroadcast)
 	if !aib.Valid() {
 		aib = trigger.AIBroadcastDeny
-		clog.For("config").Warn("trigger.aiBroadcast unset/invalid; defaulting to deny (issue #105 fix)", "bot", cfg.BotID)
+		clog.For("config").Warn("trigger.aiBroadcast unset/invalid; defaulting to deny", "bot", cfg.BotID)
 	}
 	return trigger.Policy{
 		BotUID:               cfg.BotID,

@@ -2,31 +2,20 @@ package trigger
 
 import "testing"
 
-// TestReasonIsAmbiguousAddressing pins the closed enum behind the bot-loop
-// guard's scoping decision. Router/gate consults this method instead of
-// pattern-matching the enum value; flipping a reason between ambiguous
-// and unambiguous (or adding a new one) must be a one-line change here
-// and gate.go remains untouched.
-//
-// Why this test exists: the bot-loop guard regressed once during the
-// #105 refactor (a wider gate dropped legitimate peer-bot @-grantor
-// mentions) and the fix bolted on a hard-coded `Reason ==
-// ReasonMentionFreeGroup` check. #118 lifted that decision back to the
-// trigger pkg — this test is the gate.
+// TestReasonIsAmbiguousAddressing pins the closed-enum partition behind
+// the router's bot-loop-guard scope. Adding a new Reason without
+// classifying it here fails loudly instead of silently defaulting
+// through IsAmbiguousAddressing's `default: return false` branch.
 func TestReasonIsAmbiguousAddressing(t *testing.T) {
-	// Ambiguous: classifier flagged this as a reply candidate but message
-	// metadata can't tell us if the sender meant to address the bot.
 	ambiguous := map[Reason]bool{ReasonMentionFreeGroup: true}
 	for r := range ambiguous {
 		if !r.IsAmbiguousAddressing() {
 			t.Errorf("%q must be ambiguous-addressing (loop guard applies)", r)
 		}
 	}
-	// Unambiguous: addressing intent is clear, peer-bot senders must
-	// pass through. Includes ReasonNone (no classification → no scope
-	// for the loop guard) and the post-classifier non-reply reasons
-	// (observation / obo_irrelevant) which the router never sees but
-	// must stay safely on the unambiguous side of any future caller.
+	// Unambiguous covers the reply-warranting reasons + the post-
+	// classifier non-reply reasons that never reach the router but must
+	// stay safely classified.
 	unambiguous := map[Reason]bool{
 		ReasonNone:           true,
 		ReasonDM:             true,
@@ -46,11 +35,7 @@ func TestReasonIsAmbiguousAddressing(t *testing.T) {
 	}
 
 	// Coverage closure: every Reason in AllReasons must appear in
-	// exactly one of the two partitions. A new constant added to types.go
-	// but forgotten here (or vice versa) fails loudly instead of
-	// silently defaulting through IsAmbiguousAddressing's `default:
-	// return false` branch. This catches the failure mode the test
-	// previously couldn't: enum drift.
+	// exactly one partition.
 	for _, r := range AllReasons {
 		inA := ambiguous[r]
 		inU := unambiguous[r]

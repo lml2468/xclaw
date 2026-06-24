@@ -223,28 +223,20 @@ func migrateTokenUsage(db *sql.DB) error {
 }
 
 // migrateMessagesAddSource adds the messages.source column to DBs that
-// pre-date the source-string migration (i.e. carry the legacy `cron`
-// integer column instead). Wrapped in a transaction so the ALTER +
-// backfills are atomic — a crash mid-migration rolls back, and the next
-// startup re-runs cleanly without orphaning rows at the wrong source tag.
+// pre-date the source-string migration (carry a legacy `cron` integer
+// column instead).
 //
-// Two-phase shape:
+// Two phases:
+//  1. One-time: ALTER + backfill (assistant rows → 'assistant', legacy
+//     cron=1 rows → 'cron'), wrapped in a tx so a crash rolls back cleanly.
+//  2. Self-heal: an EXISTS-guarded UPDATE re-stamps any stray assistant
+//     rows. On a healthy DB SQLite short-circuits at the first match and
+//     the UPDATE never fires — so a clean startup pays one cheap probe,
+//     not a full table scan.
 //
-//  1. Schema phase (one-time): ALTER TABLE ADD COLUMN source TEXT NOT
-//     NULL DEFAULT 'user', then backfill role='assistant'→'assistant' and
-//     legacy cron=1→'cron'. Skipped if the column already exists.
-//
-//  2. Self-healing phase (every startup): re-runs the assistant backfill
-//     against any rows where role='assistant' AND source!='assistant'.
-//     This recovers from a previous partial migration that committed the
-//     ALTER but rolled back the UPDATE (cheap idempotent UPDATE; the
-//     WHERE filter is index-friendly even on large tables because legacy
-//     assistant rows are stamped to the literal 'user' default and the
-//     check is a string-compare).
-//
-// The legacy cron column is LEFT IN PLACE — SQLite's portable DROP
-// COLUMN landed in 3.35 but failing it would brick the upgrade, and
-// leaving the column is harmless (writes ignore it, reads SELECT source).
+// The legacy `cron` column is left in place: SQLite's portable DROP
+// COLUMN landed in 3.35 but a failing drop would brick the upgrade, and
+// leaving the column is harmless (writes ignore it, reads use source).
 func migrateMessagesAddSource(db *sql.DB) error {
 	hasSource, hasLegacyCron, err := messagesColumns(db)
 	if err != nil {
@@ -255,14 +247,6 @@ func migrateMessagesAddSource(db *sql.DB) error {
 			return err
 		}
 	}
-	// Self-heal: cover the case where a previous run committed ALTER but
-	// a crash rolled the backfill back (pre-tx version of this code), so
-	// legacy assistant rows stayed tagged with the DEFAULT 'user'.
-	// EXISTS-guard the UPDATE first — on a clean DB (the overwhelmingly
-	// common case after the migration ran once) SQLite short-circuits at
-	// the first matching row and the UPDATE doesn't fire, avoiding the
-	// full table scan on every startup. On stale DBs the UPDATE still
-	// runs and fixes the drift.
 	var dirty bool
 	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM messages WHERE role='assistant' AND source!='assistant' LIMIT 1)`).Scan(&dirty); err != nil {
 		return fmt.Errorf("migrate messages.source self-heal probe: %w", err)
@@ -275,9 +259,8 @@ func migrateMessagesAddSource(db *sql.DB) error {
 	return nil
 }
 
-// addSourceColumn runs the ALTER + initial backfills in a transaction so
-// a mid-flight crash rolls back the column add and the next startup gets
-// a clean retry.
+// addSourceColumn runs the ALTER + backfills in a transaction so a
+// mid-flight crash rolls back cleanly and the next startup retries.
 func addSourceColumn(db *sql.DB, hasLegacyCron bool) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -287,13 +270,12 @@ func addSourceColumn(db *sql.DB, hasLegacyCron bool) error {
 	if _, err := tx.Exec(`ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'user'`); err != nil {
 		return fmt.Errorf("migrate messages.source add column: %w", err)
 	}
-	// Backfill assistant rows first — every assistant write now stamps
-	// 'assistant', so legacy assistant rows must too (otherwise the
-	// reload would falsely tag them as 'user' inbound).
+	// Assistant rows MUST be re-stamped: every new assistant write
+	// records source='assistant', so legacy rows left at the 'user'
+	// default would reload as inbound and break role attribution.
 	if _, err := tx.Exec(`UPDATE messages SET source='assistant' WHERE role='assistant'`); err != nil {
 		return fmt.Errorf("migrate messages.source backfill assistant: %w", err)
 	}
-	// Backfill cron-fired user rows from the legacy column when present.
 	if hasLegacyCron {
 		if _, err := tx.Exec(`UPDATE messages SET source='cron' WHERE role='user' AND cron=1`); err != nil {
 			return fmt.Errorf("migrate messages.source backfill cron: %w", err)

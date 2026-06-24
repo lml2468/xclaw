@@ -92,15 +92,11 @@ func (g *GroupContext) touchLocked(channelID string) {
 }
 
 // ReapIdle evicts any channel that has been untouched for at least
-// threshold. Returns the number of channels evicted. Mirrors the router's
-// reaper semantics: a long-quiet channel's window is not load-bearing for
-// active turns, and dropping it bounds memory over the daemon's lifetime
-// (issue #105 follow-on — the in-memory window was previously unbounded
-// across channels). A channel re-appears with a fresh, empty window on
-// the next push.
-//
-// Idempotent; safe to call from a goroutine separate from any push/pull
-// path.
+// threshold. Returns the number of channels evicted. Same semantics as
+// the router's reaper: a long-quiet channel's window isn't load-bearing
+// for active turns and dropping it bounds memory over the daemon's
+// lifetime. A channel re-appears with a fresh empty window on next push.
+// Idempotent; safe to call from any goroutine.
 func (g *GroupContext) ReapIdle(threshold time.Duration) int {
 	if threshold <= 0 {
 		return 0

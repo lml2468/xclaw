@@ -1,15 +1,7 @@
-// Package windowstate persists the console window's last known
-// position+size so a relaunch restores it instead of always opening at
-// the default 1040×720 top-left. macOS users expect window state memory;
-// Linux/Windows users tolerate its absence but appreciate it.
-//
-// Storage: ~/.octobuddy/window.json (one JSON object). Bounded to a
-// single small file so the package can use safepath.SafeReadAbs /
-// SafeWriteAbs unconditionally (no symlink leaf attack surface).
-//
-// Failure mode: Load returns a zero State on any error (missing file,
-// corrupted JSON, unreachable home dir). Save logs to stderr and
-// swallows — window-state loss is a UX regression, not a correctness bug.
+// Package windowstate persists the console window's last bounds in
+// ~/.octobuddy/window.json so a relaunch restores it. Failures are
+// best-effort: Load returns a zero State on any error; Save logs and
+// swallows. Window state loss is a UX regression, not a correctness bug.
 package windowstate
 
 import (
@@ -23,8 +15,8 @@ import (
 	"github.com/lml2468/octobuddy/desktop/internal/configstore"
 )
 
-// State captures the bounds we care about restoring. Negative or zero
-// values are interpreted as "use default" by the caller.
+// State captures the bounds we restore. Negative or zero values mean
+// "use default" to the caller.
 type State struct {
 	X      int `json:"x"`
 	Y      int `json:"y"`
@@ -32,21 +24,12 @@ type State struct {
 	Height int `json:"height"`
 }
 
-// IsZero reports whether the state carries no usable bounds (e.g. fresh
-// install or a Load that fell back to the zero value).
-func (s State) IsZero() bool {
-	return s == State{}
-}
+func (s State) IsZero() bool { return s == State{} }
 
-// filePath returns ~/.octobuddy/window.json, or an error when HOME is
-// unset. Resolves the daemon-state directory through configstore.Dir()
-// so the root layout has a single source of truth — if it ever moves
-// (e.g. macOS Application Support), windowstate moves with it for free.
-//
-// configstore.Dir() returns a path even when os.UserHomeDir fails (it
-// swallows the error and Joins with "", yielding the RELATIVE string
-// ".octobuddy"); reject anything non-absolute so we don't silently write
-// state into the daemon's CWD on a HOME-unset launchd / container.
+// filePath returns ~/.octobuddy/window.json. configstore.Dir() returns
+// a path even when os.UserHomeDir fails (swallowed error → Join with ""
+// → ".octobuddy"); reject a non-absolute result so we don't write state
+// into the daemon's CWD on a HOME-unset launchd / container.
 func filePath() (string, error) {
 	dir := configstore.Dir()
 	if !filepath.IsAbs(dir) {
@@ -55,16 +38,15 @@ func filePath() (string, error) {
 	return filepath.Join(dir, "window.json"), nil
 }
 
-// Load returns the persisted window state, or (zero, nil) when the file
-// doesn't exist yet. Corrupted JSON is logged via the returned error and
-// treated as "use default" by callers (they typically `state, _ := Load()`
-// and check IsZero).
+// Load returns the persisted state, or (zero, nil) when the file
+// doesn't exist. Corrupted JSON returns (zero, err); callers treat that
+// as "use default" via IsZero.
 func Load() (State, error) {
 	path, err := filePath()
 	if err != nil {
 		return State{}, err
 	}
-	data, err := safepath.SafeReadAbs(path, 4<<10) // 4 KiB is plenty for {x,y,w,h}
+	data, err := safepath.SafeReadAbs(path, 4<<10)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return State{}, nil
@@ -78,9 +60,7 @@ func Load() (State, error) {
 	return s, nil
 }
 
-// Save persists the state to ~/.octobuddy/window.json. Creates the
-// parent directory if needed. Best-effort — the caller is expected to
-// log+swallow on error (window state loss is non-critical).
+// Save persists the state, creating the parent dir if needed.
 func Save(s State) error {
 	path, err := filePath()
 	if err != nil {

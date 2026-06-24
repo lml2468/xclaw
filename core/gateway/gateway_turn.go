@@ -225,11 +225,10 @@ func (g *Gateway) handleTerminalAgentError(sessionKey, termErr string, transient
 		return true
 	}
 	glog().Error("terminal agent error", "session", sessionKey, "err", termErr)
-	// MUST mirror the transient branch's *delivered=true above. Without
-	// it, rewindGroupCursorUnlessDelivered treats errorReply as
-	// undelivered and rewinds the group cursor — the user's message
-	// resurfaces in [Recent group messages] on the next turn and the
-	// agent sees its own error-pinged question replayed verbatim.
+	// Must mirror the transient branch's *delivered=true so the deferred
+	// rewindGroupCursorUnlessDelivered doesn't rewind the group cursor —
+	// otherwise the user's message resurfaces in [Recent group messages]
+	// on the next turn.
 	*delivered = true
 	g.sink.OnReply(sessionKey, errorReply)
 	return true

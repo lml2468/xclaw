@@ -1,16 +1,11 @@
 // Package safehttp builds HTTP clients with a dial-time guard against
-// SSRF / DNS rebinding. The guard refuses TCP connects to private/
-// loopback/link-local/CGN addresses (per core/config's allowlist), so a
-// poisoned DNS or compromised mirror cannot redirect a public URL to
-// 169.254.169.254 (cloud metadata) or an internal address. Used by
-// every outbound HTTP from the desktop helper (octocli download +
-// octoapi wizard provisioning); promoted from the per-package copies
-// that lived in octocli and octoapi.
+// SSRF / DNS rebinding: the guard refuses TCP connects to private,
+// loopback, link-local and CGN addresses so a poisoned DNS or
+// compromised mirror can't redirect a public URL to internal targets
+// (cloud metadata at 169.254.169.254, an RFC-1918 host, etc.).
 //
-// Two policies: strict (refuse all private/local — for download CDNs
-// that should never reach a private network) and loopback-tolerant
-// (allow 127.0.0.1 / ::1 when the operator configured an http://
-// localhost endpoint for dev — for the wizard's API URL).
+// Two policies — strict for download CDNs, loopback-tolerant for the
+// wizard's API URL when an operator points at http://localhost.
 package safehttp
 
 import (
@@ -23,20 +18,17 @@ import (
 	"github.com/lml2468/octobuddy/core/config"
 )
 
-// Options controls the dial guard's policy.
+// Options controls the dial guard.
 type Options struct {
-	// AllowLoopback permits 127.0.0.1 / ::1 connects (otherwise refused
-	// like any other private address). Set when the caller has knowingly
-	// pointed at a localhost dev endpoint and the URL scheme is http://.
+	// AllowLoopback permits 127.0.0.0/8 + ::1 connects. Set only when
+	// the caller has knowingly pointed at a localhost dev endpoint.
 	AllowLoopback bool
-	// Tag is the package name used in error messages so an operator can
-	// tell which client refused a connect ("octocli dial: ..." vs
-	// "octoapi dial: ...").
+	// Tag prefixes the dial-error message so an operator can tell which
+	// caller refused the connect ("octocli dial: …" vs "octoapi dial: …").
 	Tag string
 }
 
-// NewClient returns an http.Client whose dialer refuses connects per opts.
-// Pool sizing + timeouts mirror the prior per-package copies.
+// NewClient returns an http.Client whose dialer enforces opts.
 func NewClient(opts Options) *http.Client {
 	if opts.Tag == "" {
 		opts.Tag = "safehttp"
@@ -61,8 +53,7 @@ func NewClient(opts Options) *http.Client {
 }
 
 // Guard returns the dialer Control func for callers that want to build
-// their own http.Transport with custom sizing (octoapi sizes its pool
-// down for the one-shot wizard call).
+// their own http.Transport with custom sizing.
 func Guard(opts Options) func(network, address string, _ syscall.RawConn) error {
 	return guard(opts)
 }
@@ -75,9 +66,8 @@ func guard(opts Options) func(network, address string, _ syscall.RawConn) error 
 			return fmt.Errorf("%s dial: bad address %q: %w", tag, address, err)
 		}
 		// AllowLoopback honors all RFC1122 loopback (127.0.0.0/8 + ::1),
-		// not just literal 127.0.0.1 — devs running a local octo-server
-		// on 127.0.0.2 (multi-instance dev pattern) would otherwise see
-		// an SSRF refusal for a legitimate loopback target.
+		// not just literal 127.0.0.1 — multi-instance dev setups on
+		// 127.0.0.2 would otherwise be refused.
 		if opts.AllowLoopback {
 			if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 				return nil

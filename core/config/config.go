@@ -48,7 +48,7 @@ type AgentConfig struct {
 	GatewayBaseURL string              `json:"gatewayBaseUrl,omitempty"`
 	GatewayToken   string              `json:"gatewayToken,omitempty"`
 	Env            map[string]EnvValue `json:"env,omitempty"`
-	// Cron enables the per-bot scheduled-task scheduler (#115). Off by default;
+	// Cron enables the per-bot scheduled-task scheduler. Off by default;
 	// when true the bot loads <dataDir>/cron.json at startup and fires due tasks
 	// through the gateway. Owner-gated create/delete is exposed over the control
 	// bus (cron.create / cron.list / cron.delete).
@@ -86,34 +86,26 @@ type ContextConfig struct {
 	MaxContextChars int `json:"maxContextChars,omitempty"`
 }
 
-// TriggerConfig governs the trigger pipeline (issue #105) — per-bot
-// policy for "should this message reply?" The defaults flip the AI
-// broadcast path closed (the bug fix), with reply-to-bot recovering the
-// natural UX. Operators that need legacy behavior set aiBroadcast="allow".
+// TriggerConfig governs the trigger pipeline — per-bot policy for
+// "should this message trigger a reply?". Defaults flip the @AI
+// broadcast path closed; reply-to-bot recovers the natural
+// "continue the thread" UX.
 type TriggerConfig struct {
-	// AIBroadcast governs the pure-@AI trigger path. "deny" (default for
-	// new deployments — the issue #105 fix), "allowlist" (only channels in
-	// aiBroadcastAllowlist trigger), or "allow" (legacy behavior).
+	// AIBroadcast: "deny" (default — safest), "allowlist" (only
+	// channels listed in AIBroadcastAllowlist), or "allow" (legacy).
 	// Unset → daemon defaults to deny with a stderr warning.
 	AIBroadcast string `json:"aiBroadcast,omitempty"`
-	// AIBroadcastAllowlist is the channel id set scoped to
-	// aiBroadcast="allowlist". Empty = no channels.
+	// AIBroadcastAllowlist scopes aiBroadcast="allowlist".
 	AIBroadcastAllowlist []string `json:"aiBroadcastAllowlist,omitempty"`
 	// ReplyToBotEnabled lifts a quote-reply to one of the bot's own
-	// messages into a trigger — recovers the natural "continue the
-	// thread" interaction lost when aiBroadcast=deny. Pointer so unset
-	// (== nil) defaults to true; false explicitly disables.
+	// messages into a trigger. Pointer so unset defaults to true; set
+	// to false to disable.
 	ReplyToBotEnabled *bool `json:"replyToBotEnabled,omitempty"`
-	// MentionFreeGroups is the G12 mention-free channel list — channel
-	// ids where the bot answers even without an @-mention.
+	// MentionFreeGroups: channel ids where the bot answers without
+	// needing an @mention.
 	MentionFreeGroups []string `json:"mentionFreeGroups,omitempty"`
 }
 
-// (No AuditConfig — the audit module was removed after live verification
-// proved per-decision JSONL added more code than diagnostic value. Operators
-// rely on daemon stderr logs and the SQLite store for post-mortem
-// inspection; reinstate the audit module if a structured backend is
-// genuinely needed.)
 // OnBehalfOf marks a bot as a persona clone: it speaks for a grantor (a human
 // identity), replying in the grantor's voice when the grantor or the group is
 // @-mentioned. Ported from openclaw-channel-octo (config-schema.ts
@@ -150,17 +142,15 @@ type BotEntry struct {
 	// OnBehalfOf, when its uid is set, marks this bot a persona clone (openclaw OBO).
 	OnBehalfOf *OnBehalfOf `json:"onBehalfOf,omitempty"`
 
-	// Gating policy (cc-channel-octo session-router.ts: G14 bot-loop guard,
-	// DM blocklist). Per-bot only in the canonical schema. The G12
-	// mention-free list lives under trigger.mentionFreeGroups — the
-	// top-level deprecation shim was removed in the code-review cleanup
-	// pass.
+	// Gating policy: DM blocklist + bot-loop guard. Per-bot only in the
+	// canonical schema. The mention-free list lives under
+	// trigger.mentionFreeGroups.
 	KnownBotUids   []string `json:"knownBotUids,omitempty"`
 	AllowedBotUids []string `json:"allowedBotUids,omitempty"`
 	BotBlocklist   []string `json:"botBlocklist,omitempty"`
 
-	// Trigger is the per-bot trigger pipeline policy (issue #105).
-	// Defaults applied at Load (aiBroadcast=deny, replyToBotEnabled=true).
+	// Trigger is the per-bot trigger pipeline policy. Defaults applied
+	// at Load (aiBroadcast=deny, replyToBotEnabled=true).
 	Trigger *TriggerConfig `json:"trigger,omitempty"`
 }
 
@@ -184,12 +174,10 @@ type Resolved struct {
 	RateLimit RateLimitConfig
 	Context   ContextConfig
 
-	// Gating policy ported from cc-channel-octo session-router.ts. G12
-	// mention-free groups live under trigger.MentionFreeGroups now (the
-	// top-level field was a one-release shim, removed in the code-review
-	// cleanup pass).
-	KnownBotUids   []string // uids known to be bots, for the loop guard (G14)
-	AllowedBotUids []string // bot-looking uids exempt from the loop guard (G14)
+	// Gating policy. Mention-free groups live under
+	// trigger.MentionFreeGroups.
+	KnownBotUids   []string // uids known to be bots, for the loop guard
+	AllowedBotUids []string // bot-looking uids exempt from the loop guard
 	BotBlocklist   []string // uids whose DMs are silently dropped
 
 	// SystemPrompt is the operator-trusted persona/behavior prompt, assembled
@@ -208,9 +196,8 @@ type Resolved struct {
 	// named grantor (openclaw OBO). nil/empty UID = a regular bot.
 	OnBehalfOf OnBehalfOf
 
-	// Trigger holds the trigger-pipeline policy for this bot (issue
-	// #105). Empty fields fall back to safe defaults (aiBroadcast=deny,
-	// replyToBotEnabled=true).
+	// Trigger holds the trigger-pipeline policy. Unset fields fall back
+	// to safe defaults (aiBroadcast=deny, replyToBotEnabled=true).
 	Trigger TriggerConfig
 
 	// Derived per-bot directories (never from file).

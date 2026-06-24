@@ -20,14 +20,13 @@ import (
 	"github.com/lml2468/octobuddy/core/safepath"
 )
 
-// service is the credential-store service name (shared with the legacy Swift
-// app so existing Keychain entries carry over on macOS).
+// service is the credential-store service name. Shared with the legacy
+// Swift app so existing Keychain entries carry over on macOS.
 const service = "com.mlt.octobuddy.tokens"
 
-// Kind is a token category. The account key is "<botID>/<kind>". Aliased to
-// wire.SecretKind so the desktop, the control bus, and the daemon all use one
-// canonical type (was a separate `type Kind string` that duplicated wire's
-// string literals).
+// Kind is a token category. The account key is "<botID>/<kind>".
+// Aliased to wire.SecretKind so desktop, control bus, and daemon share
+// one canonical type.
 type Kind = wire.SecretKind
 
 const (
@@ -35,13 +34,11 @@ const (
 	GatewayToken = wire.SecretKindGateway
 )
 
-// account returns the per-(botID,kind) keyring account key. It refuses any
-// botID that fails safepath.ValidSlug — without this, a caller passing an
-// attacker-supplied id like "../other" would write/read another bot's
-// credential namespace. configstore.Save validates first, but other callers
-// (control-bus secret.inject handler, future tooling) must not have to
-// re-derive this fence; validating here keeps the trust boundary local to
-// the package that mints the key.
+// account returns the per-(botID,kind) keyring account key. Refuses any
+// botID that fails safepath.ValidSlug so an attacker-supplied id like
+// "../other" can't read/write another bot's namespace — validating here
+// keeps the trust boundary local even for callers that bypass
+// configstore.Save.
 func account(botID string, kind Kind) (string, error) {
 	if !safepath.ValidSlug(botID) {
 		return "", fmt.Errorf("invalid bot id %q", botID)
@@ -53,10 +50,9 @@ type backend interface {
 	Get(botID string, kind Kind) (string, error)
 	Set(botID string, kind Kind, value string) error
 	Delete(botID string, kind Kind) error
-	// Writable reports whether Set/Delete can ever succeed. envBackend
-	// returns false; the cross-backend write-through in Set/Delete uses
-	// this to ignore the read-only error from envBackend instead of
-	// treating it as a real failure.
+	// Writable reports whether Set/Delete can ever succeed; the cross-
+	// backend write-through ignores read-only errors from non-writable
+	// backends instead of counting them as failures.
 	Writable() bool
 }
 
@@ -182,9 +178,9 @@ func (envBackend) Writable() bool { return false }
 
 var backends = []backend{keyringBackend{}, fileBackend{}, envBackend{}}
 
-// Get returns the stored token, or "" if none is set. A "not found" result and a
-// real backend failure both yield "" (callers treat that as "no token to
-// inject"), but real failures are logged so they aren't silently
+// Get returns the stored token, or "" if none is set. "Not found" and
+// real backend failures both yield "" — callers treat both as "no token
+// to inject" — but real failures are logged so they aren't silently
 // indistinguishable from "unset".
 func Get(botID string, kind Kind) string {
 	var last error
@@ -204,10 +200,9 @@ func Get(botID string, kind Kind) string {
 }
 
 // Set stores (or, with an empty value, deletes) a token. Writes through
-// to EVERY writable backend so a backend whose availability later toggles
-// (keyring access revoked/granted mid-session) can't surface a stale
-// copy via Get's read-precedence walk. envBackend is read-only and its
-// "not supported" error is not counted as a failure.
+// to every writable backend so a backend whose availability later
+// toggles (keyring access revoked/granted mid-session) can't surface a
+// stale copy via Get's read-precedence walk.
 func Set(botID string, kind Kind, value string) error {
 	if value == "" {
 		return Delete(botID, kind)
@@ -231,9 +226,8 @@ func Set(botID string, kind Kind, value string) error {
 	return last
 }
 
-// Delete removes a token from every writable backend. Returns nil if
-// any backend succeeded; missing entries are not errors. envBackend's
-// read-only error is not counted as a failure.
+// Delete removes a token from every writable backend. Missing entries
+// are not errors; returns nil if any backend succeeded.
 func Delete(botID string, kind Kind) error {
 	var last error
 	any := false

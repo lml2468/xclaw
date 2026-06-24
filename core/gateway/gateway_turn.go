@@ -196,7 +196,7 @@ func (g *Gateway) prepareAgentRequest(ctx context.Context, sessionKey string, ms
 		Cwd:          cwd,
 		MemoryDir:    memDir,
 		Model:        g.model,
-		SystemAppend: g.buildSystemPrompt(msg, g.rosterPrefix(msg)),
+		SystemPrompt: g.buildSystemPrompt(msg, g.rosterPrefix(msg)),
 	}, nil
 }
 

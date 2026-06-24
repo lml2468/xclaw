@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/lml2468/octobuddy/core/agent"
@@ -60,7 +62,8 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
-	drv := agent.NewClaudeDriver("")
+	drv := agent.NewClaudeDriver(resolveClaudeBin())
+	drv.Mode = resolvePromptMode(cfg.Agent.SystemPromptMode, cfg.BotID)
 	// Resolve the gateway token lazily per turn so an injected token takes effect.
 	drv.EnvFn = func() []string { return cfg.DriverEnv(sec.GatewayToken(), sec.OctoToken(), sec.Secret) }
 
@@ -178,6 +181,43 @@ func toBoolSet(vals []string) map[string]bool {
 		}
 	}
 	return m
+}
+
+// resolvePromptMode maps the on-disk string to ClaudeDriver's typed
+// PromptMode constant. Unset → minimal. Unknown values warn and default
+// to minimal so a typo can't silently change behavior.
+func resolvePromptMode(raw, botID string) agent.PromptMode {
+	switch raw {
+	case "", string(agent.PromptModeMinimal):
+		return agent.PromptModeMinimal
+	case string(agent.PromptModeClaudeCode):
+		return agent.PromptModeClaudeCode
+	default:
+		clog.For("config").Warn("agent.systemPromptMode unknown; defaulting to minimal",
+			"bot", botID, "got", raw)
+		return agent.PromptModeMinimal
+	}
+}
+
+// resolveClaudeBin returns the desktop-managed binary at
+// ~/.octobuddy/bin/claude when it exists, falling back to "claude" on
+// PATH otherwise. The desktop runs claudecli.EnsureInstalled on first
+// launch; until that completes (or in pure headless deployments) the
+// PATH fallback covers operators who already installed claude.
+func resolveClaudeBin() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "claude"
+	}
+	name := "claude"
+	if runtime.GOOS == "windows" {
+		name = "claude.exe"
+	}
+	path := filepath.Join(home, ".octobuddy", "bin", name)
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		return path
+	}
+	return "claude"
 }
 
 func newBotGateway(

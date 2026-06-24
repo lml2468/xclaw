@@ -13,43 +13,81 @@ import (
 	"time"
 )
 
+// PromptMode controls how ClaudeDriver assembles the system prompt and
+// tool surface. Minimal aligns with the Agent SDK's reference invocation
+// (replace the built-in prompt, silence cwd config, explicit tool
+// whitelist). claude_code keeps Claude Code's built-in preamble and
+// blanket tool access — escape hatch for SOUL.md authored against the
+// preamble.
+type PromptMode string
+
+const (
+	// PromptModeMinimal is the default: Request.SystemPrompt REPLACES
+	// the built-in system prompt; cwd .claude/ is not auto-loaded; the
+	// tool surface is the whitelist in Request.AllowedTools (or the
+	// driver default if nil). Interactive tools are always disallowed.
+	PromptModeMinimal PromptMode = "minimal"
+	// PromptModeClaudeCode preserves the previous behavior: prompt is
+	// APPENDED to the built-in one, cwd .claude/ auto-loads, every tool
+	// runs under bypassPermissions. Use only for bots whose SOUL.md was
+	// authored assuming Claude Code's preamble.
+	PromptModeClaudeCode PromptMode = "claude_code"
+)
+
+// defaultHeadlessAllowedTools is the headless-safe surface ClaudeDriver
+// passes to --allowedTools in minimal mode. Bump per claude release when
+// the upstream tool set changes. mcp__* covers MCP additions automatically.
+var defaultHeadlessAllowedTools = []string{
+	"Read", "Edit", "Write", "Bash",
+	"Grep", "Glob",
+	"WebSearch", "WebFetch",
+	"NotebookEdit", "TodoWrite",
+	"Agent", "Skill",
+	"mcp__*",
+}
+
+// disallowedInteractiveTools are blocked unconditionally in minimal mode
+// because they expect human input the daemon can't supply (they would
+// hang the turn in headless).
+var disallowedInteractiveTools = []string{
+	"AskUserQuestion",
+	"EnterPlanMode", "ExitPlanMode",
+	"EnterWorktree", "ExitWorktree",
+	"ShareOnboardingGuide",
+}
+
 // ClaudeDriver drives Claude Code headlessly via:
 //
 //	claude -p - --output-format stream-json --verbose [--resume <id>]...
 //
 // with the prompt fed on stdin, and normalizes its line-delimited JSON
-// ("stream-json") into AgentEvents. This is the concrete proof that the CLI can
-// replace claude-agent-sdk: the SDK itself merely spawns this same CLI.
+// ("stream-json") into AgentEvents.
 //
-// Output is plain stream-json (one event per complete content block); the driver
-// does NOT request --include-partial-messages, so there are no token-level
-// deltas to de-duplicate.
+// Output is plain stream-json (one event per complete content block); the
+// driver does NOT request --include-partial-messages, so there are no
+// token-level deltas to de-duplicate.
 //
-// It is the ONE place that knows about the claude binary, its argv shape, and
-// its env requirements (ANTHROPIC_*, CLAUDE_CONFIG_DIR). Keep agent-agnostic
-// policy out of it.
+// It is the ONE place that knows about the claude binary, its argv
+// shape, and its env requirements (ANTHROPIC_*, CLAUDE_CONFIG_DIR).
 type ClaudeDriver struct {
 	// Bin is the claude executable (default "claude" on PATH).
 	Bin string
+	// Mode selects between minimal (default) and claude_code prompt modes.
+	Mode PromptMode
 	// ExtraArgs are appended verbatim.
 	ExtraArgs []string
 	// Env are extra KEY=VALUE entries layered onto os.Environ for the spawned
 	// CLI (e.g. ANTHROPIC_BASE_URL, OCTO_BOT_ID, GH_TOKEN).
 	Env []string
 	// EnvFn, when set, is evaluated on every Query to build the extra env,
-	// overriding the static Env. Lets a caller inject a runtime-resolved value
-	// (e.g. a gateway token from the in-memory secret store) per turn.
+	// overriding the static Env.
 	EnvFn func() []string
 
-	// selfcheckOnce gates a one-time diagnostic line (claude path resolution,
-	// presence of ANTHROPIC_AUTH_TOKEN with masked value, ANTHROPIC_BASE_URL,
-	// CLAUDE_CONFIG_DIR + writability) emitted on the FIRST Query. This is the
-	// single most useful line for diagnosing "出错了，请稍后重试" from a fresh
-	// install — auth=UNSET / claude=MISSING / cwd writable=false each map to a
-	// specific operator mistake and the user can paste the line to support
-	// instead of describing symptoms. Per-turn is too noisy and per-driver-
-	// startup is too early (the gateway-token secret is injected over the bus
-	// AFTER the driver is constructed), so we sample on the first real spawn.
+	// selfcheckOnce gates a one-time diagnostic line emitted on the
+	// FIRST Query: claude path resolution, masked ANTHROPIC_AUTH_TOKEN,
+	// ANTHROPIC_BASE_URL, CLAUDE_CONFIG_DIR + writability, effective
+	// PromptMode + allowed-tools count. Single most useful line for
+	// diagnosing "出错了，请稍后重试" from a fresh install.
 	selfcheckOnce sync.Once
 }
 
@@ -57,7 +95,7 @@ func NewClaudeDriver(bin string) *ClaudeDriver {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &ClaudeDriver{Bin: bin}
+	return &ClaudeDriver{Bin: bin, Mode: PromptModeMinimal}
 }
 
 func (d *ClaudeDriver) Name() string { return "claude" }
@@ -66,44 +104,83 @@ func (d *ClaudeDriver) Capabilities() Capabilities {
 	return Capabilities{Streaming: true, Resume: true, ToolEvents: true}
 }
 
+// mode returns d.Mode, defaulting to PromptModeMinimal when unset so a
+// zero-value ClaudeDriver stays headless-safe.
+func (d *ClaudeDriver) mode() PromptMode {
+	if d.Mode == PromptModeClaudeCode {
+		return PromptModeClaudeCode
+	}
+	return PromptModeMinimal
+}
+
 func (d *ClaudeDriver) buildArgs(req Request) []string {
-	// The prompt is fed on stdin (`-p -`) rather than as an argv element, so a
-	// large prompt (group backfill + inlined file content) can't hit ARG_MAX.
+	// Prompt on stdin (`-p -`), never argv, so a large prompt (group
+	// backfill + inlined file content) can't hit ARG_MAX.
 	args := []string{"-p", "-", "--output-format", "stream-json", "--verbose"}
-	// Headless gateway invariant (claude-only, fixed): bypass interactive
-	// approval — there is no terminal to answer prompts, so any other permission
-	// mode would hang the turn forever. bypassPermissions grants every tool, so
-	// no --allowedTools is needed (and claude 2.1+ rejects "*" in allow rules,
-	// which only spammed a per-turn warning; verified tools still run without it).
-	args = append(args, "--permission-mode", "bypassPermissions")
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
-	// --append-system-prompt is re-sent every turn (including resumes): it does
-	// NOT persist across --resume, so dropping it on a resumed turn would silently
-	// lose the non-overridable SecurityPrefix + SOUL identity. Its tokens are a
-	// prompt-cache hit, so re-sending is cheap.
-	if req.SystemAppend != "" {
-		args = append(args, "--append-system-prompt", req.SystemAppend)
+	if d.mode() == PromptModeMinimal {
+		args = d.appendMinimalModeArgs(args, req)
+	} else {
+		args = d.appendClaudeCodeModeArgs(args, req)
 	}
-	// Pin auto-memory to the per-session dir. --settings merges into (does not
-	// replace) the defaults, so project-scope skill discovery under <cwd> still
+	// Pin auto-memory to the per-session dir. --settings MERGES into the
+	// defaults (does not replace), so project-scope skill discovery still
 	// works. JSON-encode so a path with special chars can't break the flag.
 	//
-	// Contract: req.MemoryDir MUST live OUTSIDE req.Cwd (sandbox.ResolveMemoryDir
-	// computes it under a separate memoryBase). That is the safety property — an
-	// agent with write access to its cwd must not be able to author the memory that
-	// is later injected as trusted context. The driver trusts the caller to honor
-	// this; the gateway derives the two from disjoint bases (gateway.resolveSandbox).
+	// Contract: req.MemoryDir MUST live OUTSIDE req.Cwd. An agent with
+	// write access to its cwd must not author the memory injected as
+	// trusted context. The gateway derives the two from disjoint bases.
 	if req.MemoryDir != "" {
 		if b, err := json.Marshal(map[string]string{"autoMemoryDirectory": req.MemoryDir}); err == nil {
 			args = append(args, "--settings", string(b))
 		}
 	}
 	args = append(args, d.ExtraArgs...)
+	return args
+}
+
+// appendMinimalModeArgs emits the SDK-aligned flag set: replace the
+// system prompt, silence cwd `.claude/` config, explicit tool whitelist
+// under default permission mode, headless-unsafe tools disallowed.
+func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request) []string {
+	args = append(args, "--permission-mode", "default")
+	// Empty value form silences user/project/local setting sources so a
+	// planted CLAUDE.md / skills / agents under the sandbox cwd can't
+	// influence the model.
+	args = append(args, "--setting-sources=")
+	// --system-prompt REPLACES the built-in prompt (doesn't append). Re-
+	// sent every turn including resumes: it does NOT persist across
+	// --resume, so omitting on a resumed turn would silently lose the
+	// non-overridable SecurityPrefix + SOUL identity. Tokens are a
+	// prompt-cache hit so re-sending is cheap.
+	if req.SystemPrompt != "" {
+		args = append(args, "--system-prompt", req.SystemPrompt)
+	}
+	allowed := req.AllowedTools
+	if allowed == nil {
+		allowed = defaultHeadlessAllowedTools
+	}
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, ","))
+	}
+	if len(disallowedInteractiveTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(disallowedInteractiveTools, ","))
+	}
+	return args
+}
+
+// appendClaudeCodeModeArgs preserves the previous behavior — append on
+// top of the built-in prompt, blanket tool access.
+func (d *ClaudeDriver) appendClaudeCodeModeArgs(args []string, req Request) []string {
+	args = append(args, "--permission-mode", "bypassPermissions")
+	if req.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", req.SystemPrompt)
+	}
 	return args
 }
 

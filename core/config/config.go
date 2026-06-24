@@ -74,6 +74,16 @@ type AgentConfig struct {
 	// tools that can stay silent for >20 min (e.g. a slow Bash); set lower for
 	// snappy DMs where a stuck turn should surface fast.
 	DispatchTimeoutSec int `json:"dispatchTimeoutSec,omitempty"`
+	// SystemPromptMode picks the ClaudeDriver prompt shape:
+	//   - "minimal" (default): SOUL.md+AGENTS.md REPLACE the built-in
+	//     prompt; cwd .claude/ is not auto-loaded; tool surface is the
+	//     headless whitelist.
+	//   - "claude_code": SOUL.md+AGENTS.md is APPENDED to the built-in
+	//     prompt; cwd .claude/ auto-loads; every tool runs under
+	//     bypassPermissions. Escape hatch for bots whose SOUL was
+	//     authored assuming the built-in preamble.
+	// Empty / invalid → minimal (warn on invalid).
+	SystemPromptMode string `json:"systemPromptMode,omitempty"`
 }
 
 // RateLimitConfig mirrors the on-disk rateLimit block.

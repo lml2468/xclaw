@@ -15,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/lml2468/octobuddy/desktop/internal/autostart"
+	"github.com/lml2468/octobuddy/desktop/internal/claudecli"
 	"github.com/lml2468/octobuddy/desktop/internal/control"
 	"github.com/lml2468/octobuddy/desktop/internal/logfile"
 	"github.com/lml2468/octobuddy/desktop/internal/octocli"
@@ -85,6 +86,10 @@ func main() {
 		if err := octocli.EnsureInstalled(); err != nil {
 			log.Printf("octobuddy: octo-cli install skipped: %v", err)
 		}
+		// Kick the claude fetch in the background — non-blocking, no-op
+		// if already installed. Daemon stays operational on PATH claude
+		// (if any) while the ~200 MB download runs on first launch.
+		claudecli.EnsureInstalled()
 	}
 
 	app = application.New(application.Options{
@@ -265,6 +270,27 @@ func setupSystemTray() {
 		}()
 	})
 
+	// claude CLI: same shape. First-launch installs come through
+	// EnsureInstalled (background fetch); this row lets the operator
+	// upgrade synchronously.
+	claudeInfo := menu.Add(claudeInfoLabel())
+	claudeInfo.SetEnabled(false)
+	menu.Add("Update claude").OnClick(func(*application.Context) {
+		go func() {
+			claudeInfo.SetLabel("Updating claude…")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			ver, err := claudecli.Upgrade(ctx)
+			if err != nil {
+				log.Printf("octobuddy: claude update failed: %v", err)
+				claudeInfo.SetLabel("claude — update failed")
+				return
+			}
+			log.Printf("octobuddy: claude updated to %s", ver)
+			claudeInfo.SetLabel("claude " + ver)
+		}()
+	})
+
 	// Diagnostics: open the persistent log file. The label says "查看日志"
 	// because that's where users (and you, when helping a user remotely) go
 	// first when "出错了，请稍后重试" shows up — the line containing the real
@@ -310,4 +336,18 @@ func octoInfoLabel() string {
 		return "octo-cli " + v
 	}
 	return "octo-cli — not installed"
+}
+
+// claudeInfoLabel mirrors octoInfoLabel for claude. While the
+// background install is in flight, the label hints "downloading…" so
+// the operator can tell the difference between "not started" and
+// "in progress".
+func claudeInfoLabel() string {
+	if v := claudecli.InstalledVersion(); v != "" {
+		return "claude " + v
+	}
+	if claudecli.Installing() {
+		return "claude — downloading…"
+	}
+	return "claude — not installed"
 }

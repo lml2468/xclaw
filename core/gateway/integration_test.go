@@ -15,7 +15,7 @@ import (
 // TestGroupContextInjectionAndSafety verifies the integrated pipeline: a group
 // turn injects the prior delta as sanitized background, demarcates the real
 // request with the current-message anchor, and carries the security prefix +
-// SOUL prompt in SystemAppend.
+// SOUL prompt in SystemPrompt.
 func TestGroupContextInjectionAndSafety(t *testing.T) {
 	gw, drv := newGroupContextGateway(t, "you are OctoBuddy", "claude-opus-4-8")
 
@@ -73,12 +73,12 @@ func assertGroupContextRequest(t *testing.T, second agent.Request) {
 	if !strings.Contains(second.Prompt[anchorIdx:], "what did alice say?") {
 		t.Fatalf("real request not after anchor:\n%s", second.Prompt)
 	}
-	// SystemAppend carries the security prefix + SOUL.
-	if !strings.Contains(second.SystemAppend, "UNTRUSTED") {
-		t.Fatalf("security prefix missing from system prompt:\n%s", second.SystemAppend)
+	// SystemPrompt carries the security prefix + SOUL.
+	if !strings.Contains(second.SystemPrompt, "UNTRUSTED") {
+		t.Fatalf("security prefix missing from system prompt:\n%s", second.SystemPrompt)
 	}
-	if !strings.Contains(second.SystemAppend, "you are OctoBuddy") {
-		t.Fatalf("SOUL prompt missing from system prompt:\n%s", second.SystemAppend)
+	if !strings.Contains(second.SystemPrompt, "you are OctoBuddy") {
+		t.Fatalf("SOUL prompt missing from system prompt:\n%s", second.SystemPrompt)
 	}
 	// The configured model override reaches the driver.
 	if second.Model != "claude-opus-4-8" {
@@ -157,7 +157,7 @@ func TestLineLeadingForgeryEscaped(t *testing.T) {
 }
 
 // TestGroupRosterInjectedIntoSystemPrompt verifies a GROUP turn injects the
-// learned roster + mention-format hint into SystemAppend, after the
+// learned roster + mention-format hint into SystemPrompt, after the
 // non-overridable security prefix.
 func TestGroupRosterInjectedIntoSystemPrompt(t *testing.T) {
 	st := newTestStore(t)
@@ -180,7 +180,7 @@ func TestGroupRosterInjectedIntoSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sys := drv.requests[0].SystemAppend
+	sys := drv.requests[0].SystemPrompt
 	// Security prefix stays first and non-overridable.
 	if !strings.Contains(sys, "UNTRUSTED") {
 		t.Fatalf("security prefix missing:\n%s", sys)
@@ -218,7 +218,7 @@ func TestDMTurnHasNoRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sys := drv.requests[0].SystemAppend
+	sys := drv.requests[0].SystemPrompt
 	if strings.Contains(sys, "[Group Members]") || strings.Contains(sys, "ONE colon") {
 		t.Fatalf("DM turn must not carry a roster:\n%s", sys)
 	}

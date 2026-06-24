@@ -207,6 +207,9 @@ func mergeAgentScalars(dst *AgentConfig, src *AgentConfig) {
 	if src.DispatchTimeoutSec > 0 {
 		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
 	}
+	if src.SystemPromptMode != "" {
+		dst.SystemPromptMode = src.SystemPromptMode
+	}
 }
 
 func mergeAgentCapabilities(dst *AgentConfig, src *AgentConfig) {

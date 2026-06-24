@@ -66,8 +66,19 @@ cd desktop && wails3 task package     # native GUI build
 cd core && CGO_ENABLED=0 go build -o octobuddy-daemon ./cmd/octobuddy-daemon
 ```
 
-**Distribution:** raw binary today. AppImage/deb/flatpak NOT shipped (on
-the roadmap — see PR-? in audit). Run `chmod +x ./octobuddy && ./octobuddy`.
+**Distribution:** the CI Ubuntu job builds an `.AppImage` per push under the
+`OctoBuddy-linux-AppImage` artifact (open the workflow run, download the zip,
+extract the `.AppImage`, `chmod +x`, double-click). Tagged releases will
+attach the `.AppImage` directly to the GitHub Release. Run it standalone
+or hook it up via [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher)
+for desktop integration.
+
+Building the AppImage locally:
+```sh
+sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev pkg-config
+bash scripts/package-linux-appimage.sh
+# output: ./output/OctoBuddy-<version>-<arch>.AppImage
+```
 
 **Gotchas:**
 - Webview rendering varies by WebKitGTK version. Newer is better; 6.0+ is
@@ -140,7 +151,7 @@ users; on the roadmap to fix). Place `octobuddy-daemon.exe` beside
 These are scheduled per the audit roadmap; PRs welcome:
 
 - Windows Authenticode signing in CI (PR-E)
-- Linux AppImage packaging step (PR-E)
+- AppImage GPG signing (currently unsigned; SHA-256 sidecar shipped)
 - Auto-update (sparkle / wails-updater equivalent) on all three platforms (PR-G)
 - DPI / high-density display explicit handling and verification (no known
   bugs today, but no test coverage either)

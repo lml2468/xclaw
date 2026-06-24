@@ -166,3 +166,29 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
+
+      # Linux AppImage: packages the Wails GUI binary + daemon + .desktop
+      # + icon as a single double-clickable file. Built per-PR so reviewers
+      # can grab a smoke binary without spinning up a Linux build env;
+      # released via scripts/release.sh on tag.
+      #
+      # `--privileged: false` plus the FUSE-free `appimagetool` extraction
+      # path used by the script side-steps the GitHub runner's lack of
+      # /dev/fuse; an `--appimage-extract-and-run` fallback inside the
+      # script would also work, but the pinned tool we fetch already
+      # handles this transparently.
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: bash scripts/package-linux-appimage.sh
+
+      - name: Upload AppImage artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OctoBuddy-linux-AppImage
+          path: |
+            output/OctoBuddy-*.AppImage
+            output/OctoBuddy-*.AppImage.sha256
+          if-no-files-found: error
+          retention-days: 14

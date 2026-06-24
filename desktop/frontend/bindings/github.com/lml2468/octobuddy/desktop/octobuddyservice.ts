@@ -211,19 +211,12 @@ export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
 }
 
 /**
- * LogClientError records a frontend-originated error into the persistent
- * desktop log (~/.octobuddy/logs/octobuddy.log via main()'s tee). Previous
- * behavior was silent: an uncaught Svelte render error or unhandled
- * promise rejection vanished from stderr the moment the dev terminal was
- * gone. With this method, the global window.onerror + unhandledrejection
- * + <svelte:boundary> handlers all funnel into here so operators (and
- * the user reporting an issue) have a single grep target — the same file
- * the tray's "查看日志" action opens.
- * 
- * Best-effort: bounded message size (the frontend caps too, but defense
- * in depth — a 10 MB stack trace is somebody's idea of a bad day) and
- * never propagates an error back up; client logging that fails would
- * otherwise cascade into the very crash report it was trying to capture.
+ * LogClientError funnels window.onerror / unhandledrejection /
+ * <svelte:boundary> traces into the persistent desktop log so an
+ * uncaught Svelte render error doesn't vanish with the dev terminal.
+ * Best-effort: per-field size caps (defense in depth on top of the
+ * frontend cap) and the call never propagates an error back so a
+ * failed log can't cascade into the crash it was trying to capture.
  */
 export function LogClientError(category: string, message: string, stack: string): $CancellablePromise<void> {
     return $Call.ByID(1849461069, category, message, stack);

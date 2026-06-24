@@ -272,9 +272,13 @@ func setupSystemTray() {
 
 	// claude CLI: same shape. First-launch installs come through
 	// EnsureInstalled (background fetch); this row lets the operator
-	// upgrade synchronously.
+	// upgrade synchronously. Subscribe to install state changes so the
+	// label refreshes when the background fetch completes.
 	claudeInfo := menu.Add(claudeInfoLabel())
 	claudeInfo.SetEnabled(false)
+	claudecli.OnInstallStateChange(func() {
+		claudeInfo.SetLabel(claudeInfoLabel())
+	})
 	menu.Add("Update claude").OnClick(func(*application.Context) {
 		go func() {
 			claudeInfo.SetLabel("Updating claude…")

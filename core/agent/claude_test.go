@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -187,26 +186,30 @@ func TestFullTurnSequence(t *testing.T) {
 }
 
 // TestClaudeArgsMinimalMode asserts the SDK-aligned default flag set:
-// the prompt REPLACES (not appends), cwd .claude/ is silenced via
-// setting-sources=, permission-mode is `default` (not bypass), and the
-// tool whitelist + disallow lists are emitted.
+// the prompt REPLACES (--system-prompt always emitted), project/local
+// setting sources are silenced (--setting-sources=user keeps user-scope
+// for CLAUDE_CONFIG_DIR-based per-bot skill discovery), permission-mode
+// is `default`, and the tool surface is restricted via --tools.
 func TestClaudeArgsMinimalMode(t *testing.T) {
 	d := NewClaudeDriver("claude")
 	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: "you are X"})
 	if !contains(args, "--system-prompt") {
 		t.Fatalf("--system-prompt missing: %v", args)
 	}
-	if !contains(args, "--setting-sources=") {
-		t.Fatalf("--setting-sources= missing: %v", args)
+	if !contains(args, "--setting-sources=user") {
+		t.Fatalf("--setting-sources=user missing (need to keep CLAUDE_CONFIG_DIR-based per-bot skills loading): %v", args)
 	}
 	if !contains(args, "--permission-mode") || !contains(args, "default") {
 		t.Fatalf("--permission-mode default missing: %v", args)
 	}
-	if !contains(args, "--allowedTools") {
-		t.Fatalf("--allowedTools missing: %v", args)
+	if !contains(args, "--tools") {
+		t.Fatalf("--tools missing (the surface-restrict flag — --allowedTools is auto-approve, not restrict): %v", args)
 	}
-	if !contains(args, "--disallowedTools") {
-		t.Fatalf("--disallowedTools missing: %v", args)
+	if contains(args, "--allowedTools") {
+		t.Fatalf("minimal mode must NOT use --allowedTools (does not actually restrict surface): %v", args)
+	}
+	if contains(args, "--disallowedTools") {
+		t.Fatalf("minimal mode uses --tools to restrict surface; --disallowedTools is redundant: %v", args)
 	}
 	if contains(args, "--append-system-prompt") {
 		t.Fatalf("minimal mode must NOT use --append-system-prompt: %v", args)
@@ -216,10 +219,31 @@ func TestClaudeArgsMinimalMode(t *testing.T) {
 	}
 }
 
+// TestClaudeArgsMinimalModeEmptyPromptStillReplaces is the regression
+// guard for the SecurityPrefix-drop hazard: an empty SystemPrompt must
+// still emit --system-prompt (with an empty value) so a misconfigured
+// caller doesn't silently fall back to claude's built-in default.
+func TestClaudeArgsMinimalModeEmptyPromptStillReplaces(t *testing.T) {
+	d := NewClaudeDriver("claude")
+	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: ""})
+	idx := -1
+	for i, a := range args {
+		if a == "--system-prompt" {
+			idx = i
+		}
+	}
+	if idx < 0 || idx+1 >= len(args) {
+		t.Fatalf("--system-prompt missing even on empty SystemPrompt: %v", args)
+	}
+	if args[idx+1] != "" {
+		t.Fatalf("--system-prompt value should be empty string, got %q", args[idx+1])
+	}
+}
+
 // TestClaudeArgsClaudeCodeModeEscapeHatch asserts the escape hatch
 // preserves the previous behavior: append on top of the built-in prompt,
-// blanket permissions, no setting-sources / allowedTools / system-prompt
-// flags. Used by bots whose SOUL.md assumed the Claude Code preamble.
+// blanket permissions, no surface-restrict / setting-sources / system-
+// prompt flags. Used by bots whose SOUL.md assumed the Claude Code preamble.
 func TestClaudeArgsClaudeCodeModeEscapeHatch(t *testing.T) {
 	d := NewClaudeDriver("claude")
 	d.Mode = PromptModeClaudeCode
@@ -233,45 +257,39 @@ func TestClaudeArgsClaudeCodeModeEscapeHatch(t *testing.T) {
 	if contains(args, "--system-prompt") {
 		t.Fatalf("claude_code mode must NOT use --system-prompt: %v", args)
 	}
-	if contains(args, "--setting-sources=") {
-		t.Fatalf("claude_code mode must NOT use --setting-sources=: %v", args)
+	if contains(args, "--setting-sources=user") {
+		t.Fatalf("claude_code mode must NOT use --setting-sources=user: %v", args)
 	}
-	if contains(args, "--allowedTools") {
-		t.Fatalf("claude_code mode must NOT use --allowedTools: %v", args)
+	if contains(args, "--tools") {
+		t.Fatalf("claude_code mode must NOT use --tools (bypassPermissions grants everything): %v", args)
 	}
 }
 
-// TestClaudeArgsAllowedTools pins the AllowedTools semantics:
-// nil → driver default; non-empty → exact list; empty slice → no flag.
+// TestClaudeArgsAllowedTools pins the AllowedTools semantics in minimal
+// mode: nil → driver default whitelist; empty slice → no tools at all
+// (--tools ""); non-empty → exact list.
 func TestClaudeArgsAllowedTools(t *testing.T) {
 	cases := []struct {
-		name       string
-		allowed    []string
-		wantPart   string
-		wantNoFlag bool
+		name      string
+		allowed   []string
+		wantValue string
 	}{
-		{"nil emits default whitelist", nil, "mcp__*", false},
-		{"explicit list verbatim", []string{"Read", "Bash"}, "Read,Bash", false},
-		{"empty slice → no flag", []string{}, "", true},
+		{"nil emits default whitelist", nil, "Read,Edit,Write,Bash,Grep,Glob,WebSearch,WebFetch,NotebookEdit,TodoWrite,Agent,Skill,mcp__*"},
+		{"explicit list verbatim", []string{"Read", "Bash"}, "Read,Bash"},
+		{"empty slice → --tools \"\" (no surface)", []string{}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := NewClaudeDriver("claude")
 			args := d.buildArgs(Request{Prompt: "hi", AllowedTools: tc.allowed})
-			if tc.wantNoFlag {
-				if contains(args, "--allowedTools") {
-					t.Fatalf("empty AllowedTools should not emit the flag: %v", args)
-				}
-				return
-			}
-			joined := ""
+			got := ""
 			for i, a := range args {
-				if a == "--allowedTools" && i+1 < len(args) {
-					joined = args[i+1]
+				if a == "--tools" && i+1 < len(args) {
+					got = args[i+1]
 				}
 			}
-			if !strings.Contains(joined, tc.wantPart) {
-				t.Fatalf("--allowedTools = %q, want it to contain %q", joined, tc.wantPart)
+			if got != tc.wantValue {
+				t.Fatalf("--tools = %q, want %q", got, tc.wantValue)
 			}
 		})
 	}

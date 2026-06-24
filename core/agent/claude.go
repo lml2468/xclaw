@@ -35,8 +35,11 @@ const (
 )
 
 // defaultHeadlessAllowedTools is the headless-safe surface ClaudeDriver
-// passes to --allowedTools in minimal mode. Bump per claude release when
-// the upstream tool set changes. mcp__* covers MCP additions automatically.
+// passes to --tools in minimal mode. Bump per claude release when the
+// upstream tool set changes. mcp__* covers MCP tools. Headless-unsafe
+// interactive tools (AskUserQuestion, EnterPlanMode, EnterWorktree,
+// etc.) are deliberately absent — --tools restricts the model's
+// surface, so omission is the disallow mechanism.
 var defaultHeadlessAllowedTools = []string{
 	"Read", "Edit", "Write", "Bash",
 	"Grep", "Glob",
@@ -44,16 +47,6 @@ var defaultHeadlessAllowedTools = []string{
 	"NotebookEdit", "TodoWrite",
 	"Agent", "Skill",
 	"mcp__*",
-}
-
-// disallowedInteractiveTools are blocked unconditionally in minimal mode
-// because they expect human input the daemon can't supply (they would
-// hang the turn in headless).
-var disallowedInteractiveTools = []string{
-	"AskUserQuestion",
-	"EnterPlanMode", "ExitPlanMode",
-	"EnterWorktree", "ExitWorktree",
-	"ShareOnboardingGuide",
 }
 
 // ClaudeDriver drives Claude Code headlessly via:
@@ -70,8 +63,14 @@ var disallowedInteractiveTools = []string{
 // It is the ONE place that knows about the claude binary, its argv
 // shape, and its env requirements (ANTHROPIC_*, CLAUDE_CONFIG_DIR).
 type ClaudeDriver struct {
-	// Bin is the claude executable (default "claude" on PATH).
+	// Bin is the claude executable. Default "claude" on PATH; set to an
+	// absolute path to pin a specific install.
 	Bin string
+	// BinFn, when set, overrides Bin per-Query. Lets the daemon refresh
+	// the resolved path on every turn so a freshly-landed background
+	// install (~/.octobuddy/bin/claude from the desktop's claudecli) is
+	// picked up on the next user message — without waiting for restart.
+	BinFn func() string
 	// Mode selects between minimal (default) and claude_code prompt modes.
 	Mode PromptMode
 	// ExtraArgs are appended verbatim.
@@ -145,31 +144,33 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 }
 
 // appendMinimalModeArgs emits the SDK-aligned flag set: replace the
-// system prompt, silence cwd `.claude/` config, explicit tool whitelist
-// under default permission mode, headless-unsafe tools disallowed.
+// system prompt, silence project/local config so a planted CLAUDE.md /
+// skills / agents under the sandbox cwd can't influence the model,
+// keep user-scope so per-bot skills under CLAUDE_CONFIG_DIR still load,
+// restrict the tool SURFACE via --tools (not --allowedTools, which is
+// the auto-approve list under prompt-based modes and does not actually
+// scope what the model can see — confirmed against claude 2.1.187).
 func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request) []string {
 	args = append(args, "--permission-mode", "default")
-	// Empty value form silences user/project/local setting sources so a
-	// planted CLAUDE.md / skills / agents under the sandbox cwd can't
-	// influence the model.
-	args = append(args, "--setting-sources=")
-	// --system-prompt REPLACES the built-in prompt (doesn't append). Re-
-	// sent every turn including resumes: it does NOT persist across
-	// --resume, so omitting on a resumed turn would silently lose the
-	// non-overridable SecurityPrefix + SOUL identity. Tokens are a
-	// prompt-cache hit so re-sending is cheap.
-	if req.SystemPrompt != "" {
-		args = append(args, "--system-prompt", req.SystemPrompt)
-	}
-	allowed := req.AllowedTools
-	if allowed == nil {
-		allowed = defaultHeadlessAllowedTools
-	}
-	if len(allowed) > 0 {
-		args = append(args, "--allowedTools", strings.Join(allowed, ","))
-	}
-	if len(disallowedInteractiveTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(disallowedInteractiveTools, ","))
+	// =user keeps CLAUDE_CONFIG_DIR-based skill discovery alive while
+	// dropping project (cwd .claude/) and local (cwd .claude.local) so a
+	// planted CLAUDE.md / skills / agents in the sandbox can't influence
+	// the model.
+	args = append(args, "--setting-sources=user")
+	// Always emit --system-prompt in minimal mode (even with an empty
+	// value) so a missing prompt is loud, not a silent fallback to
+	// claude's built-in default that would drop SecurityPrefix.
+	args = append(args, "--system-prompt", req.SystemPrompt)
+	// --tools is the surface-restrict flag: the model only sees the
+	// listed names. "" disables every built-in. nil = use the headless
+	// default whitelist.
+	switch {
+	case req.AllowedTools == nil:
+		args = append(args, "--tools", strings.Join(defaultHeadlessAllowedTools, ","))
+	case len(req.AllowedTools) == 0:
+		args = append(args, "--tools", "")
+	default:
+		args = append(args, "--tools", strings.Join(req.AllowedTools, ","))
 	}
 	return args
 }
@@ -198,7 +199,7 @@ func (d *ClaudeDriver) Query(ctx context.Context, req Request) (<-chan AgentEven
 		// accumulates quickly — close them explicitly.
 		_ = stdout.Close()
 		_ = stderr.Close()
-		return nil, fmt.Errorf("start %s: %w", d.Bin, err)
+		return nil, fmt.Errorf("start %s: %w", d.binPath(), err)
 	}
 
 	out := make(chan AgentEvent, 64)
@@ -293,15 +294,26 @@ func emitAgentEvent(ctx context.Context, out chan<- AgentEvent, ev AgentEvent) {
 }
 
 func (d *ClaudeDriver) buildCommand(ctx context.Context, req Request) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, d.Bin, d.buildArgs(req)...)
+	cmd := exec.CommandContext(ctx, d.binPath(), d.buildArgs(req)...)
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	cmd.Env = mergedEnv(d.queryEnv())
-	d.selfcheckOnce.Do(func() { d.logSelfcheck(cmd.Env, req.Cwd) })
+	d.selfcheckOnce.Do(func() { d.logSelfcheck(cmd.Env, req) })
 	cmd.WaitDelay = 10 * time.Second
 	return cmd
+}
+
+// binPath resolves d.Bin via BinFn when set so a background install can
+// be picked up between turns.
+func (d *ClaudeDriver) binPath() string {
+	if d.BinFn != nil {
+		if p := d.BinFn(); p != "" {
+			return p
+		}
+	}
+	return d.Bin
 }
 
 func (d *ClaudeDriver) queryEnv() []string {

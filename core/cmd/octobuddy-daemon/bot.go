@@ -62,8 +62,12 @@ func runBot(ctx context.Context, cfg config.Resolved, reg *botRegistry, srv *con
 
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
-	drv := agent.NewClaudeDriver(resolveClaudeBin())
+	drv := agent.NewClaudeDriver("")
 	drv.Mode = resolvePromptMode(cfg.Agent.SystemPromptMode, cfg.BotID)
+	// BinFn runs per Query so a freshly-landed background install
+	// (~/.octobuddy/bin/claude from claudecli) is picked up on the very
+	// next turn — no restart required.
+	drv.BinFn = resolveClaudeBin
 	// Resolve the gateway token lazily per turn so an injected token takes effect.
 	drv.EnvFn = func() []string { return cfg.DriverEnv(sec.GatewayToken(), sec.OctoToken(), sec.Secret) }
 
@@ -201,9 +205,15 @@ func resolvePromptMode(raw, botID string) agent.PromptMode {
 
 // resolveClaudeBin returns the desktop-managed binary at
 // ~/.octobuddy/bin/claude when it exists, falling back to "claude" on
-// PATH otherwise. The desktop runs claudecli.EnsureInstalled on first
-// launch; until that completes (or in pure headless deployments) the
-// PATH fallback covers operators who already installed claude.
+// PATH otherwise. Called per Query via ClaudeDriver.BinFn so a
+// freshly-completed background install lands on the next turn without
+// requiring a restart.
+//
+// Uses Lstat + symlink check: anything under ~/.octobuddy/bin/ that
+// resolves through a symlink is rejected (the rest of the codebase
+// treats symlinks under ~/.octobuddy as hostile via safepath; this is
+// the consistent stance). 0-byte and non-executable files are also
+// rejected so a crashed install temp doesn't masquerade as the binary.
 func resolveClaudeBin() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -214,10 +224,22 @@ func resolveClaudeBin() string {
 		name = "claude.exe"
 	}
 	path := filepath.Join(home, ".octobuddy", "bin", name)
-	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
-		return path
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return "claude"
 	}
-	return "claude"
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return "claude"
+	}
+	if fi.IsDir() || fi.Size() == 0 {
+		return "claude"
+	}
+	// Executable bit unset would still let claude run on Windows (no
+	// posix x bit), so this check is unix-only.
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
+		return "claude"
+	}
+	return path
 }
 
 func newBotGateway(

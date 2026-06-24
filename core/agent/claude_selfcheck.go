@@ -3,31 +3,33 @@ package agent
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/lml2468/octobuddy/core/clog"
 )
 
 // logSelfcheck emits one line summarizing the realized invocation environment
-// for the bot's first turn. The shape is deliberately greppable + paste-able:
+// for the bot's first turn. Greppable and paste-able for support tickets.
 //
-//	[selfcheck] bot=<id> claude=<path-or-MISSING:err> auth=<masked-or-UNSET> base_url=<url-or-UNSET> cwd=<path> writable=<true|false>
+//	[selfcheck] bot=<id> claude=<path-or-MISSING> auth=<masked-or-UNSET>
+//	            base_url=<url> cwd=<path> writable=<bool>
+//	            mode=<minimal|claude_code> tools=<count-or-DEFAULT>
 //
-// The token is masked (first 6 + last 4) so the line is safe to paste into a
-// support ticket without leaking the live key. claude=MISSING screams when the
-// CLI isn't installed/on PATH; auth=UNSET screams when the gateway-token
-// secret never made it into env (the actual root cause of the "出错了" report
-// we got from a fresh install). Anything else worth knowing — workspace cwd
-// not writable, custom base URL pointed at the wrong host — fits on the line.
-func (d *ClaudeDriver) logSelfcheck(env []string, cwd string) {
+// `tools` reflects what `--tools` actually carried for this turn (req's
+// override, or the driver default in minimal mode). In claude_code mode
+// the field is "BYPASS" since --tools is not passed (bypassPermissions
+// grants every tool).
+func (d *ClaudeDriver) logSelfcheck(env []string, req Request) {
 	envMap := map[string]string{}
 	for _, kv := range env {
 		if i := strings.IndexByte(kv, '='); i >= 0 {
 			envMap[kv[:i]] = kv[i+1:]
 		}
 	}
-	binStr := d.Bin
-	if p, err := exec.LookPath(d.Bin); err == nil {
+	bin := d.binPath()
+	binStr := bin
+	if p, err := exec.LookPath(bin); err == nil {
 		binStr = p
 	} else {
 		binStr = "MISSING:" + err.Error()
@@ -41,11 +43,27 @@ func (d *ClaudeDriver) logSelfcheck(env []string, cwd string) {
 	if botID == "" {
 		botID = "?"
 	}
-	writable := isDirWritable(cwd)
 	clog.For("selfcheck").Info("driver invocation environment",
 		"bot", botID, "claude", binStr, "auth", auth, "base_url", baseURL,
-		"cwd", cwd, "writable", writable,
-		"mode", string(d.mode()), "allowed_tools", len(defaultHeadlessAllowedTools))
+		"cwd", req.Cwd, "writable", isDirWritable(req.Cwd),
+		"mode", string(d.mode()), "tools", selfcheckToolsField(d.mode(), req.AllowedTools))
+}
+
+// selfcheckToolsField reports the tool-surface size as it actually
+// reaches the spawned CLI on this turn. "BYPASS" in claude_code mode
+// flags that no whitelist applies; "NONE" for an explicit empty list;
+// otherwise the count.
+func selfcheckToolsField(mode PromptMode, override []string) string {
+	if mode == PromptModeClaudeCode {
+		return "BYPASS"
+	}
+	if override == nil {
+		return strconv.Itoa(len(defaultHeadlessAllowedTools))
+	}
+	if len(override) == 0 {
+		return "NONE"
+	}
+	return strconv.Itoa(len(override))
 }
 
 // maskToken returns a redacted form safe to log: "UNSET" if empty, the literal

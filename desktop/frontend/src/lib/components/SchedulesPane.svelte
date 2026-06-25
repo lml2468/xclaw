@@ -154,8 +154,9 @@
  // ---- create / edit modal ----
  // Four targets: Console (the desktop's own session), Group (the main group
  // channel), Thread (群内话题/子区 — a CommunityTopic inside a group), and DM (a
- // direct message to a specific peer). Thread is group-scoped: pick a group,
- // then a thread within it. The thread's stored channelId is the COMPOUND
+ // private message to the OWNER — a scheduled DM may only target the owner, not
+ // an arbitrary peer). Thread is group-scoped: pick a group, then a thread
+ // within it. The thread's stored channelId is the COMPOUND
  // "<groupNo>____<shortId>", so an edited thread task recovers its group by
  // splitting on that separator.
   type Target = "console" | "group" | "thread" | "dm";
@@ -168,7 +169,6 @@
   let formTarget = $state<Target>("console");
   let formGroupId = $state("");   // group select; also the parent for a thread
   let formThreadId = $state("");  // compound thread channel id
-  let formDmUid = $state("");     // DM peer uid
   let formError = $state("");
   let formBusy = $state(false);
 
@@ -180,7 +180,6 @@
     formTarget = "console";
     formGroupId = "";
     formThreadId = "";
-    formDmUid = "";
     formError = "";
     modalOpen = true;
     loadGroups();
@@ -193,7 +192,6 @@
     formPrompt = task.prompt ?? "";
     formGroupId = "";
     formThreadId = "";
-    formDmUid = "";
     if (task.channelType === 3) {
       formTarget = "console";
     } else if (task.channelType === 2) {
@@ -208,10 +206,8 @@
       const sep = formThreadId.indexOf(THREAD_SEP);
       formGroupId = sep > 0 ? formThreadId.slice(0, sep) : "";
     } else if (task.channelType === 1) {
-      // DM — the body doesn't echo back the peer uid (operator-internal), so
-      // leave it blank; blank-on-edit preserves the existing peer binding.
+      // DM — always fires to the owner; nothing to pre-fill.
       formTarget = "dm";
-      formDmUid = "";
     } else {
       formTarget = "console";
     }
@@ -227,10 +223,9 @@
    // (matches core/cron/store.go): 1 = DM, 2 = Group, 3 = Console,
    // 5 = CommunityTopic (thread).
    //
-   // fromUid: Console stamps cron.ConsoleUID; Group/Thread fire as the owner
-   // (backend ignores the body fromUid and stamps owner); DM carries the peer
-   // uid. fromName: only Console needs a non-blank transcript caller label
-   // ("控制台"); IM targets always speak as the bot's real Octo identity.
+   // fromUid/fromName are stamped server-side for every IM target (the backend
+   // ignores the body fromUid: Console → ConsoleUID, Group/Thread/DM → owner),
+   // so we send them blank except the Console transcript caller label ("控制台").
     let channelId = "";
     let channelType = 3;
     let fromUid = "";
@@ -250,11 +245,8 @@
       if (!channelId) { formError = "请选择一个话题"; return; }
       // fromUid stays "" — Thread fires as the owner; backend stamps it.
     } else {
-      // DM
+      // DM — always fires privately to the owner; backend stamps the owner uid.
       channelType = 1;
-      fromUid = formDmUid.trim();
-      if (!editingId && !fromUid) { formError = "请填写对方的 uid"; return; }
-      // editingId + blank fromUid: preserve the existing peer binding.
     }
     formBusy = true;
     try {
@@ -463,8 +455,7 @@
               <small class="hint">先选群，再选其中的话题。</small>
             {/if}
           {:else}
-            <input bind:value={formDmUid} placeholder={editingId ? "（留空 = 保持原对方 uid）" : "对方的 uid"} />
-            <small class="hint">定时任务到点时，Bot 私聊该 uid。</small>
+            <small class="hint">定时任务到点时，Bot 私聊 owner（仅限 owner，不能指定其他人）。</small>
           {/if}
         </div>
         {#if formError}<div class="error">{formError}</div>{/if}

@@ -68,9 +68,11 @@ func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Ga
 	//                (the connector rejects a thread id queried as a plain
 	//                group), channel id = t.ChannelID (the compound id).
 	//   DM (1)     → router DM, octo DM, channel id = t.FromUID. An Octo DM is
-	//                addressed by the PEER uid, which a DM task stores in
-	//                FromUID; t.ChannelID is empty for a DM, so it must not be
-	//                used as the reply target here.
+	//                addressed by the recipient uid; a DM cron task fires to the
+	//                OWNER (the control handler stamps FromUID = owner — a
+	//                scheduled DM may only target the owner, never an arbitrary
+	//                peer), so FromUID is both the session key source and the
+	//                send target. t.ChannelID is empty for a DM.
 	chType := router.ChannelDM
 	octoType := octo.ChannelDM
 	channelID := t.FromUID

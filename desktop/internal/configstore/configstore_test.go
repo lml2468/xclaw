@@ -431,3 +431,60 @@ func TestLoadToolsetAbsent(t *testing.T) {
 		t.Fatalf("expected nil toolset when unprobed, got %+v", got)
 	}
 }
+
+// TestChannelToolsRoundTrip covers the chat-window per-channel tool override:
+// set → read back; muzzle (empty) preserved; remove (nil) reverts; other
+// channels + bot default untouched.
+func TestChannelToolsRoundTrip(t *testing.T) {
+	setup(t)
+	writeConfig(t, config.File{Bots: []config.BotEntry{{
+		ID: "b1", APIURL: "https://x.example",
+		Agent: &config.AgentConfig{Tools: &config.ToolPolicy{
+			Default:  []string{"Read", "Bash"},
+			Channels: map[string][]string{"other": {"Grep"}},
+		}},
+	}}})
+
+	if err := SetChannelTools("b1", "chanA", []string{"Read"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	tools, ok, err := ChannelTools("b1", "chanA")
+	if err != nil || !ok || len(tools) != 1 || tools[0] != "Read" {
+		t.Fatalf("read back: tools=%v ok=%v err=%v", tools, ok, err)
+	}
+
+	// Muzzle (explicit empty) survives.
+	if err := SetChannelTools("b1", "chanA", []string{}); err != nil {
+		t.Fatalf("muzzle set: %v", err)
+	}
+	tools, ok, _ = ChannelTools("b1", "chanA")
+	if !ok || tools == nil || len(tools) != 0 {
+		t.Fatalf("muzzle should be ok with empty list, got tools=%v ok=%v", tools, ok)
+	}
+
+	// Other channel + bot default preserved.
+	other, ok, _ := ChannelTools("b1", "other")
+	if !ok || len(other) != 1 || other[0] != "Grep" {
+		t.Fatalf("other channel clobbered: %v ok=%v", other, ok)
+	}
+	bc, _, _ := LoadOne("b1")
+	if bc.Tools == nil || len(bc.Tools.Default) != 2 {
+		t.Fatalf("bot default clobbered: %+v", bc.Tools)
+	}
+
+	// Remove reverts to unconfigured.
+	if err := SetChannelTools("b1", "chanA", nil); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, ok, _ := ChannelTools("b1", "chanA"); ok {
+		t.Fatal("expected chanA override removed")
+	}
+}
+
+func TestChannelToolsUnknownBot(t *testing.T) {
+	setup(t)
+	writeConfig(t, config.File{Bots: []config.BotEntry{{ID: "b1", APIURL: "https://x.example"}}})
+	if err := SetChannelTools("nope", "c", []string{"Read"}); err == nil {
+		t.Fatal("expected error for unknown bot")
+	}
+}

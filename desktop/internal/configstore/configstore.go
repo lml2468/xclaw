@@ -183,6 +183,13 @@ func SaveToolset(ts *config.ToolsetCache) error {
 		return err
 	}
 	f.Toolset = ts
+	return writeFile(f)
+}
+
+// writeFile atomically persists the whole File via safepath. Callers MUST hold
+// saveMu (it does read-modify-write at its sites). Centralizes the marshal +
+// mkdir + atomic write the toolset / channel-tools / Save paths share.
+func writeFile(f config.File) error {
 	if err := safepath.SafeMkdirAllAbs(Dir(), 0o755); err != nil {
 		return err
 	}
@@ -191,6 +198,81 @@ func SaveToolset(ts *config.ToolsetCache) error {
 		return err
 	}
 	return safepath.SafeWriteAbs(Path(), append(raw, '\n'), 0o600)
+}
+
+// ChannelTools returns the per-channel tool override for (botID, sessionKey):
+// the tool list and whether one is configured. ok=false means no override (the
+// channel falls through to the bot default / driver default). Backs the chat
+// window's per-conversation tool panel.
+func ChannelTools(botID, sessionKey string) (tools []string, ok bool, err error) {
+	f, rerr := readFile()
+	if rerr != nil {
+		return nil, false, rerr
+	}
+	for _, b := range f.Bots {
+		if b.ID != botID {
+			continue
+		}
+		if b.Agent == nil || b.Agent.Tools == nil || b.Agent.Tools.Channels == nil {
+			return nil, false, nil
+		}
+		t, has := b.Agent.Tools.Channels[sessionKey]
+		return t, has, nil
+	}
+	return nil, false, fmt.Errorf("unknown bot %q", botID)
+}
+
+// SetChannelTools writes the per-channel tool override for (botID, sessionKey)
+// via a targeted read-modify-write, preserving the rest of the bot's config
+// (and other channels). A nil `tools` REMOVES the override (the channel reverts
+// to the bot default); a non-nil slice (incl. empty = muzzle) is stored
+// verbatim. Takes saveMu so it can't race the bot-editor Save / toolset write.
+func SetChannelTools(botID, sessionKey string, tools []string) error {
+	if sessionKey == "" {
+		return fmt.Errorf("empty sessionKey")
+	}
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	f, err := readFile()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range f.Bots {
+		if f.Bots[i].ID != botID {
+			continue
+		}
+		found = true
+		if f.Bots[i].Agent == nil {
+			f.Bots[i].Agent = &config.AgentConfig{}
+		}
+		ag := f.Bots[i].Agent
+		if tools == nil {
+			// Remove the override; prune empty containers so the file stays tidy.
+			if ag.Tools != nil && ag.Tools.Channels != nil {
+				delete(ag.Tools.Channels, sessionKey)
+				if len(ag.Tools.Channels) == 0 {
+					ag.Tools.Channels = nil
+				}
+				if ag.Tools.Default == nil && ag.Tools.Channels == nil {
+					ag.Tools = nil
+				}
+			}
+		} else {
+			if ag.Tools == nil {
+				ag.Tools = &config.ToolPolicy{}
+			}
+			if ag.Tools.Channels == nil {
+				ag.Tools.Channels = map[string][]string{}
+			}
+			ag.Tools.Channels[sessionKey] = tools
+		}
+		break
+	}
+	if !found {
+		return fmt.Errorf("unknown bot %q", botID)
+	}
+	return writeFile(f)
 }
 
 // LoadOne returns just one bot, doing exactly ONE config.json parse + ONE pair

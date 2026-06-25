@@ -438,6 +438,37 @@ func (x *OctoBuddyService) CheckMCP(botID string) error {
 	return x.send("mcp.check", control.MCPCheckBody{BotID: botID})
 }
 
+// --- per-channel/DM tool overrides (chat-window tool panel) ---
+
+// ChannelToolsInfo is the chat panel's view of a conversation's tool override:
+// Configured=false → the channel uses the bot default (Tools is then ignored).
+type ChannelToolsInfo struct {
+	Configured bool     `json:"configured"`
+	Tools      []string `json:"tools"`
+}
+
+// ChannelTools returns the per-channel tool override for (botID, sessionKey).
+func (x *OctoBuddyService) ChannelTools(botID, sessionKey string) (ChannelToolsInfo, error) {
+	tools, ok, err := configstore.ChannelTools(botID, sessionKey)
+	if err != nil {
+		return ChannelToolsInfo{}, err
+	}
+	return ChannelToolsInfo{Configured: ok, Tools: tools}, nil
+}
+
+// SetChannelTools writes the per-channel override (configured=false removes it;
+// configured=true with the given list — empty = muzzle — stores it). The daemon
+// picks it up on the next turn for that conversation.
+func (x *OctoBuddyService) SetChannelTools(botID, sessionKey string, configured bool, tools []string) error {
+	if !configured {
+		return configstore.SetChannelTools(botID, sessionKey, nil)
+	}
+	if tools == nil {
+		tools = []string{} // explicit empty = muzzle, never nil(=remove)
+	}
+	return configstore.SetChannelTools(botID, sessionKey, tools)
+}
+
 // --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---
 
 // OctoCliStatus is the per-bot octo-cli registration state surfaced to the

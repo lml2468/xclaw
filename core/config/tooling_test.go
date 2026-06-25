@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -74,5 +75,39 @@ func TestToolPolicyResolve(t *testing.T) {
 	}
 	if got, ok := p.Resolve("other"); !ok || !reflect.DeepEqual(got, []string{"Read"}) {
 		t.Fatalf("fallthrough to default: %v ok=%v", got, ok)
+	}
+}
+
+// TestToolPolicyEmptyDefaultSurvivesJSON is the regression for the muzzle case:
+// an explicit empty Default (bot-level "no tools") must round-trip through JSON
+// distinct from absent (nil = driver default). Default has no omitempty for
+// exactly this reason.
+func TestToolPolicyEmptyDefaultSurvivesJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      *ToolPolicy
+		wantNil bool
+		wantLen int
+	}{
+		{"muzzle (empty)", &ToolPolicy{Default: []string{}}, false, 0},
+		{"scoped", &ToolPolicy{Default: []string{"Read"}}, false, 1},
+		{"unset", &ToolPolicy{Default: nil}, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got ToolPolicy
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Default == nil) != tc.wantNil {
+				t.Fatalf("Default nil=%v, want %v (json=%s)", got.Default == nil, tc.wantNil, raw)
+			}
+			if len(got.Default) != tc.wantLen {
+				t.Fatalf("len(Default)=%d, want %d (json=%s)", len(got.Default), tc.wantLen, raw)
+			}
+		})
 	}
 }

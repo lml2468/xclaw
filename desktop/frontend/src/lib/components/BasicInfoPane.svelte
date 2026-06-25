@@ -9,6 +9,8 @@
  // is the single source of truth — see lib/reservedEnv.ts.
   import type { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
   import { RESERVED_ENV_KEYS } from "../reservedEnv";
+  import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
+  import { store } from "../store.svelte";
 
   let { bot = $bindable<BotConfig>(), ondirty, ondelete }:
     { bot: BotConfig; ondirty: () => void; ondelete: () => void } = $props();
@@ -83,6 +85,118 @@
       commitEnv();
     }
   }
+
+  // --- system-prompt mode (segmented) ---
+  // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
+  // reading bot.* in markup isn't reactive. Mirror the editable agent fields
+  // into local $state (seeded once at mount, like the env `rows`) and commit
+  // back to bot on every change — same approach the env editor uses.
+  let promptMode = $state<string>(bot.systemPromptMode || "minimal");
+  function setPromptMode(mode: string) {
+    promptMode = mode;
+    bot.systemPromptMode = mode === "minimal" ? "" : mode; // "" = default(minimal)
+    ondirty();
+  }
+
+  // --- setting sources (user always on; project opt-in with warning) ---
+  let projectOn = $state<boolean>((bot.settingSources ?? []).includes("project"));
+  function toggleProject() {
+    projectOn = !projectOn;
+    bot.settingSources = projectOn ? ["user", "project"] : ["user"];
+    ondirty();
+  }
+
+  // --- bot-level tool whitelist ---
+  // The picker offers store.toolset.headlessSafe (probed from the binary).
+  // scopedTools === null → "use driver default" (all headless-safe). A Set
+  // (incl. empty) means the operator scoped the surface.
+  const toolset = $derived(store.toolset);
+  let scopedTools = $state<Set<string> | null>(
+    bot.tools?.default != null ? new Set(bot.tools.default) : null,
+  );
+  function commitTools() {
+    if (!bot.tools) bot.tools = {};
+    bot.tools.default = scopedTools == null
+      ? undefined
+      : (toolset?.headlessSafe ?? []).filter((t) => scopedTools!.has(t));
+    ondirty();
+  }
+  function startScoping() {
+    scopedTools = new Set(toolset?.headlessSafe ?? []); // all-on, then prune
+    commitTools();
+  }
+  function clearScoping() {
+    scopedTools = null;
+    commitTools();
+  }
+  function toggleTool(name: string) {
+    if (!scopedTools) return;
+    const next = new Set(scopedTools);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    scopedTools = next;
+    commitTools();
+  }
+
+  // --- MCP servers (.mcp.json) — file-backed, saved immediately (not via dirty) ---
+  type MCPHealth = { name: string; status: string; tools: string[] };
+  let mcpText = $state("");
+  let mcpLoaded = $state(false);
+  let mcpError = $state("");
+  let mcpBusy = $state(false);
+  let mcpHealth = $state<MCPHealth[] | null>(null);
+  let mcpHealthNote = $state("");
+
+  async function loadMCP() {
+    if (store.preview) { mcpText = ""; mcpLoaded = true; return; }
+    try {
+      mcpText = (await OctoBuddyService.LoadMCPConfig(bot.id)) ?? "";
+    } catch (e) {
+      mcpError = String(e);
+    }
+    mcpLoaded = true;
+  }
+  // Load once per mount (parent remounts on bot switch via {#key}).
+  $effect(() => { if (!mcpLoaded) void loadMCP(); });
+
+  async function saveAndTestMCP() {
+    mcpError = ""; mcpBusy = true; mcpHealth = null; mcpHealthNote = "";
+    try {
+      if (!store.preview) await OctoBuddyService.SaveMCPConfig(bot.id, mcpText);
+    } catch (e) {
+      mcpError = String(e); mcpBusy = false; return;
+    }
+    await testMCP();
+    mcpBusy = false;
+  }
+
+  // testMCP fires mcp.check; the daemon replies on the event stream. We arm a
+  // one-shot listener (store exposes the last mcp.check envelope) and poll it.
+  async function testMCP() {
+    mcpHealth = null; mcpHealthNote = "";
+    if (store.preview) {
+      mcpHealthNote = "预览模式不连接后台，无法测试。";
+      return;
+    }
+    const before = store.mcpCheckSeq;
+    try {
+      await OctoBuddyService.CheckMCP(bot.id);
+    } catch (e) {
+      mcpError = String(e); return;
+    }
+    // Wait (up to ~65s — the daemon caps the probe at 60s) for the response.
+    for (let i = 0; i < 130; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const res = store.mcpCheck;
+      if (res && store.mcpCheckSeq !== before && res.botId === bot.id) {
+        if (!res.configured) { mcpHealthNote = "未配置 MCP 服务器。"; mcpHealth = []; }
+        else { mcpHealth = res.servers ?? []; }
+        return;
+      }
+    }
+    mcpHealthNote = "测试超时，请稍后重试。";
+  }
+
 </script>
 
 <div class="pane" oninput={ondirty} onchange={ondirty}>
@@ -99,6 +213,45 @@
       <small>存于系统钥匙串，绝不写入 config.json。</small>
     </label>
   </fieldset>
+
+  <fieldset>
+    <legend>System Prompt 模式</legend>
+    <div class="modeseg">
+      <button type="button" class:active={promptMode === "minimal"} onclick={() => setPromptMode("minimal")}>minimal</button>
+      <button type="button" class:active={promptMode === "claude_code"} onclick={() => setPromptMode("claude_code")}>claude_code</button>
+    </div>
+    <small>minimal（默认）：SOUL+AGENTS 替换内置提示词，cwd .claude/ 不加载。claude_code：追加到内置提示词，cwd .claude/ 自动加载。仅当 SOUL 是按内置提示词编写时才用 claude_code。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>配置来源（Setting Sources）</legend>
+    <label class="chk"><input type="checkbox" checked disabled /> user（始终启用：加载 CLAUDE_CONFIG_DIR 下的每-bot 技能）</label>
+    <label class="chk"><input type="checkbox" checked={projectOn} onchange={toggleProject} /> project（加载沙箱 cwd 的 .claude/ 与 CLAUDE.md）</label>
+    {#if projectOn}
+      <small class="warn">⚠️ 开启 project 会加载 agent 可写的沙箱目录中的指令/技能——群聊中可被不可信用户影响，存在提示词注入风险。仅建议单运营者可信 bot 开启。</small>
+    {/if}
+  </fieldset>
+
+  <fieldset>
+    <legend>可用工具（Bot 级默认）</legend>
+    {#if !toolset}
+      <small>正在探测 claude 可用工具…（首次安装/升级后生成）</small>
+    {:else if !toolset.probed || (toolset.headlessSafe ?? []).length === 0}
+      <small>尚未探测到工具集。安装/升级 claude 后将自动填充。</small>
+    {:else if scopedTools == null}
+      <small>当前使用全部 headless-安全工具（{(toolset.headlessSafe ?? []).length} 个）。</small>
+      <button class="add sm" type="button" onclick={startScoping}>限定可用工具…</button>
+    {:else}
+      <div class="toolgrid">
+        {#each toolset.headlessSafe as name (name)}
+          <label class="chk"><input type="checkbox" checked={scopedTools.has(name)} onchange={() => toggleTool(name)} /> {name}</label>
+        {/each}
+      </div>
+      <button class="add sm" type="button" onclick={clearScoping}>恢复为全部工具</button>
+      <small>未勾选的工具不会提供给该 Bot。按频道/私聊的细分工具在聊天窗口右上角配置。</small>
+    {/if}
+  </fieldset>
+
 
   <fieldset>
     <legend>环境变量</legend>
@@ -133,6 +286,32 @@
     <textarea bind:value={bot.agents} rows="4" placeholder="规范、可做与不可做"></textarea>
   </fieldset>
 
+  <fieldset>
+    <legend>MCP 服务器（.mcp.json）</legend>
+    <textarea class="mono" bind:value={mcpText} rows="6" spellcheck="false"
+      placeholder={'{\n  "mcpServers": {\n    "my-server": { "command": "npx", "args": ["-y", "@scope/server"] }\n  }\n}'}></textarea>
+    <div class="mcp-actions">
+      <button class="add sm" type="button" disabled={mcpBusy} onclick={saveAndTestMCP}>保存并测试连接</button>
+      <button class="add sm" type="button" disabled={mcpBusy} onclick={testMCP}>仅测试</button>
+      {#if mcpBusy}<small>测试中…</small>{/if}
+    </div>
+    {#if mcpError}<small class="warn">{mcpError}</small>{/if}
+    {#if mcpHealthNote}<small>{mcpHealthNote}</small>{/if}
+    {#if mcpHealth && mcpHealth.length}
+      <div class="mcp-health">
+        {#each mcpHealth as s (s.name)}
+          <div class="mcp-row">
+            <span class="dot" class:ok={s.status === "connected"} class:bad={s.status !== "connected"}></span>
+            <span class="mcp-name">{s.name}</span>
+            <span class="mcp-status">{s.status === "connected" ? `已连接 · ${s.tools.length} 个工具` : s.status}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <small>标准 mcp.json 格式，保存到 ~/.octobuddy/&lt;id&gt;/.claude/.mcp.json，下个回合生效。留空则删除（停用 MCP）。MCP 工具需在上方「可用工具」中包含对应名称或 mcp__* 才会启用。</small>
+  </fieldset>
+
+
   <div class="danger-row">
     <button class="remove" onclick={ondelete}>删除此 Bot</button>
     <small>下次「保存并重启」时该 Bot 的所有配置与会话数据会被一并清除。</small>
@@ -151,6 +330,27 @@
   textarea { resize: vertical; font-family: var(--ui); }
   small { color: var(--ink-faint); font-size: 11px; }
   small.hint { padding-top: 4px; }
+  small.warn { color: var(--danger); }
+
+  .modeseg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden; align-self: flex-start; }
+  .modeseg button { padding: 6px 16px; font-size: 12px; font-weight: 550; background: transparent; color: var(--ink-soft); border: none; border-right: 1px solid var(--hairline); }
+  .modeseg button:last-child { border-right: none; }
+  .modeseg button.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
+
+  .chk { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
+  .chk input { width: auto; }
+
+  .toolgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; }
+
+  textarea.mono { font-family: var(--mono); font-size: 12px; }
+  .mcp-actions { display: flex; align-items: center; gap: 10px; }
+  .mcp-health { display: flex; flex-direction: column; gap: 5px; }
+  .mcp-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .mcp-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .mcp-row .dot.ok { background: var(--accent); }
+  .mcp-row .dot.bad { background: var(--danger); }
+  .mcp-name { font-family: var(--mono); color: var(--ink); }
+  .mcp-status { color: var(--ink-faint); }
 
   .envrow { display: flex; align-items: center; gap: 6px; }
   .envrow .k { width: 160px; font-family: var(--mono); font-size: 12px; }

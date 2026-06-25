@@ -320,6 +320,30 @@ export function SaveConfig(bots: configstore$0.BotConfig[], removedIDs: string[]
 }
 
 /**
+ * LoadMCPConfig returns the bot's raw .mcp.json text ("" when none).
+ */
+export function LoadMCPConfig(botID: string): $CancellablePromise<string> {
+    return $Call.ByID(1362130182, botID);
+}
+
+/**
+ * SaveMCPConfig validates and writes the bot's .mcp.json (empty content deletes
+ * it). Returns a human-readable validation error for the UI to show inline.
+ */
+export function SaveMCPConfig(botID: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(2902027761, botID, content);
+}
+
+/**
+ * CheckMCP asks the daemon to probe the bot's saved .mcp.json and report each
+ * server's health. Async: the response arrives on the event stream as an
+ * mcp.check envelope.
+ */
+export function CheckMCP(botID: string): $CancellablePromise<void> {
+    return $Call.ByID(3405780004, botID);
+}
+
+/**
  * Send routes a DM message to a bot (botID may be empty for the default bot).
  * attachments are optional Composer-side files (image / file) that the daemon
  * materializes into the session sandbox and folds into the agent prompt; nil

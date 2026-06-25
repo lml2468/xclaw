@@ -199,6 +199,13 @@ class Store {
     this.lastError = text;
   }
   connected = $state(false);
+ // Cached claude tool surface (probed on install/upgrade), loaded once for the
+ // settings tool picker. null until LoadToolset resolves.
+  toolset = $state<{ probed: boolean; claudeVersion: string; headlessSafe: string[] } | null>(null);
+ // Last mcp.check response (per-bot MCP health), and a monotonic seq the
+ // settings pane uses to detect a fresh reply to its own CheckMCP call.
+  mcpCheck = $state<{ botId: string; configured: boolean; servers: { name: string; status: string; tools: string[] }[] } | null>(null);
+  mcpCheckSeq = $state(0);
  // True in preview mode (OCTOBUDDY_PREVIEW / ?preview): seeded mock data, no daemon,
  // so we skip the control-bus fetches (SessionsList/History).
   readonly preview = new URLSearchParams(location.search).has("preview");
@@ -529,6 +536,15 @@ class Store {
         }
       } else if (env.type === "session.history" && env.body && Array.isArray(env.body.messages)) {
         this.applyHistory(env.body.botId, env.body.key, env.body.messages);
+      } else if (env.type === "mcp.check" && env.body) {
+        // Per-bot MCP health (settings "test connection"). Bump the seq so the
+        // settings pane can tell this is a fresh reply to its own request.
+        this.mcpCheck = {
+          botId: env.body.botId,
+          configured: !!env.body.configured,
+          servers: Array.isArray(env.body.servers) ? env.body.servers : [],
+        };
+        this.mcpCheckSeq += 1;
       }
       return;
     }

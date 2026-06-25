@@ -47,6 +47,18 @@ type BotConfig struct {
 	// instead of an actionable task list. Round-tripped through Save so the
 	// SchedulesPane toggle survives a config write.
 	Cron bool `json:"cron"`
+	// SystemPromptMode mirrors agent.systemPromptMode ("minimal" | "claude_code";
+	// "" = minimal). Editable on the 基础信息 pane.
+	SystemPromptMode string `json:"systemPromptMode"`
+	// SettingSources mirrors agent.settingSources (subset of {user, project};
+	// empty = ["user"]). Editable on the 基础信息 pane.
+	SettingSources []string `json:"settingSources"`
+	// Tools mirrors agent.tools — bot-level default whitelist + per-channel
+	// overrides. nil/absent = the driver's probed headless-safe default. The
+	// bot-level default is edited on 基础信息; per-channel overrides are edited
+	// in the chat window (E3) but round-tripped here so a 基础信息 save preserves
+	// them.
+	Tools *config.ToolPolicy `json:"tools,omitempty"`
 }
 
 // Dir is ~/.octobuddy.
@@ -208,6 +220,9 @@ func resolveBot(b config.BotEntry) BotConfig {
 	if b.Agent != nil {
 		bc.Model = b.Agent.Model
 		bc.GatewayBaseURL = b.Agent.GatewayBaseURL
+		bc.SystemPromptMode = b.Agent.SystemPromptMode
+		bc.SettingSources = b.Agent.SettingSources
+		bc.Tools = b.Agent.Tools
 		if b.Agent.Cron != nil {
 			bc.Cron = *b.Agent.Cron
 		}
@@ -297,6 +312,9 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		ag.GatewayToken = "" // secret backend only
 		ag.Model = b.Model
 		ag.GatewayBaseURL = b.GatewayBaseURL
+		ag.SystemPromptMode = b.SystemPromptMode
+		ag.SettingSources = b.SettingSources
+		ag.Tools = b.Tools
 		if b.Cron {
 			cron := b.Cron
 			ag.Cron = &cron

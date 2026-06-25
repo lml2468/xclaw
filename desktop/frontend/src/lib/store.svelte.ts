@@ -276,6 +276,8 @@ class Store {
       { id: "main", connected: true, usage: { 0: pv(1_284_500, 96_120, 842_300, 318_400, 4.8123, 318) } },
       { id: "research", connected: false, lastError: "awaiting secret", usage: { 0: pv(412_900, 38_540, 201_770, 64_200, 1.2045, 92) } },
     ];
+    // Mock probed toolset so the tool pickers (基础信息 + chat panel) render in preview.
+    this.toolset = { probed: true, claudeVersion: "2.1.187", headlessSafe: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "NotebookEdit", "TodoWrite", "Task", "Skill"] };
     this.health = "claude · 2 bots";
     this.connected = true;
     this.selectedBotId = "main";

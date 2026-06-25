@@ -344,6 +344,22 @@ export function CheckMCP(botID: string): $CancellablePromise<void> {
 }
 
 /**
+ * ChannelTools returns the per-channel tool override for (botID, sessionKey).
+ */
+export function ChannelTools(botID: string, sessionKey: string): $CancellablePromise<$models.ChannelToolsInfo> {
+    return $Call.ByID(4287213674, botID, sessionKey).then(($result: any) => {
+        return $$createType15($result);
+    });
+}
+
+/**
+ * SetChannelTools writes the per-channel override (configured=false removes it).
+ */
+export function SetChannelTools(botID: string, sessionKey: string, configured: boolean, tools: string[]): $CancellablePromise<void> {
+    return $Call.ByID(3639733770, botID, sessionKey, configured, tools);
+}
+
+/**
  * Send routes a DM message to a bot (botID may be empty for the default bot).
  * attachments are optional Composer-side files (image / file) that the daemon
  * materializes into the session sandbox and folds into the agent prompt; nil
@@ -406,3 +422,4 @@ const $$createType11 = $Create.Nullable($$createType10);
 const $$createType12 = octoapi$0.BotResult.createFrom;
 const $$createType13 = $models.OctoCliStatus.createFrom;
 const $$createType14 = $models.ToolsetInfo.createFrom;
+const $$createType15 = $models.ChannelToolsInfo.createFrom;

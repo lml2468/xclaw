@@ -58,8 +58,7 @@
         new BotConfig({ id: "main", apiUrl: "https://im.example.com/api", model: "claude-opus-4-8", gatewayBaseUrl: "https://gw.example/v1", env: { OCTO_BOT_ID: "27abc1234567" }, soul: "You are Atlas, the team's ops copilot.", agents: "Confirm before destructive actions." }),
         new BotConfig({ id: "research", apiUrl: "https://im.example.com/api", env: { OCTO_BOT_ID: "27xyz9876543" } }),
       ];
-      // Seed a mock toolset so the picker renders in preview.
-      store.toolset = { probed: true, claudeVersion: "2.1.187", headlessSafe: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "NotebookEdit", "TodoWrite", "Task", "Skill"] };
+      // store.toolset is seeded by store.seedPreview() in preview mode.
       sel = 0;
       return;
     }

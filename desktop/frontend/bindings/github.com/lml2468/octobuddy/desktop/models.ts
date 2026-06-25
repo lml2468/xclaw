@@ -75,5 +75,38 @@ export class ToolsetInfo {
     }
 }
 
+/**
+ * ChannelToolsInfo is the chat panel's view of a conversation's tool override.
+ * Configured=false → the channel uses the bot default (Tools is then ignored).
+ */
+export class ChannelToolsInfo {
+    "configured": boolean;
+    "tools": string[];
+
+    /** Creates a new ChannelToolsInfo instance. */
+    constructor($$source: Partial<ChannelToolsInfo> = {}) {
+        if (!("configured" in $$source)) {
+            this["configured"] = false;
+        }
+        if (!("tools" in $$source)) {
+            this["tools"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ChannelToolsInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ChannelToolsInfo {
+        const $$createField1_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("tools" in $$parsedSource) {
+            $$parsedSource["tools"] = $$createField1_0($$parsedSource["tools"]);
+        }
+        return new ChannelToolsInfo($$parsedSource as Partial<ChannelToolsInfo>);
+    }
+}
+
 // Create functions for complex types.
 const $$createType0 = $Create.Array($Create.Any);

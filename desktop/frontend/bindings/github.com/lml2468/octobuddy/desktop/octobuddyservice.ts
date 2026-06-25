@@ -399,6 +399,18 @@ export function SetChannelTools(botID: string, sessionKey: string, configured: b
 }
 
 /**
+ * ThreadsList returns the threads (CommunityTopic / 群内话题) inside one group, for
+ * the cron-task thread picker. Same shape + error semantics as GroupsList; the
+ * returned Thread.ID is the compound "<groupNo>____<shortId>" channel id the
+ * task binds to. Empty list (no error) when the group has no threads.
+ */
+export function ThreadsList(botID: string, groupNo: string): $CancellablePromise<octocli$0.Thread[]> {
+    return $Call.ByID(1207556925, botID, groupNo).then(($result: any) => {
+        return $$createType18($result);
+    });
+}
+
+/**
  * UsageStats requests a bot's token usage over a range (since = Unix seconds at a
  * local-midnight bound; 0 = all time). The response arrives via EventStream as a
  * usage.stats envelope echoing `since`.
@@ -445,3 +457,5 @@ const $$createType13 = workspace$0.Node.createFrom;
 const $$createType14 = $Create.Nullable($$createType13);
 const $$createType15 = octoapi$0.BotResult.createFrom;
 const $$createType16 = $models.OctoCliStatus.createFrom;
+const $$createType17 = octocli$0.Thread.createFrom;
+const $$createType18 = $Create.Array($$createType17);

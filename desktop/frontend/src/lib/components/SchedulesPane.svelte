@@ -74,6 +74,49 @@
     }
   }
 
+ // ---- threads dropdown (for the Thread target picker) ----
+ // Threads live inside a group, so the list is keyed on the selected group and
+ // reloaded whenever it changes. threadsForGroup tracks WHICH group the current
+ // list belongs to, so a stale list from a previously-selected group isn't
+ // shown against the new one.
+  let threads = $state<{ id: string; name: string }[]>([]);
+  let threadsError = $state("");
+  let threadsLoading = $state(false);
+  let threadsForGroup = $state("");
+  async function loadThreads(groupNo: string) {
+    threadsError = "";
+    if (!groupNo) { threads = []; threadsForGroup = ""; return; }
+    if (isPreview) {
+      threads = [
+        { id: groupNo + THREAD_SEP + "t1", name: "演示话题A" },
+        { id: groupNo + THREAD_SEP + "t2", name: "演示话题B" },
+      ];
+      threadsForGroup = groupNo;
+      return;
+    }
+    threadsLoading = true;
+    try {
+      threads = (await OctoBuddyService.ThreadsList(bot.id, groupNo)) ?? [];
+      threadsForGroup = groupNo;
+    } catch (e) {
+      threads = [];
+      threadsForGroup = groupNo;
+      threadsError = errMsg(e);
+    } finally {
+      threadsLoading = false;
+    }
+  }
+ // Reload the thread list when the Thread target is active and its parent group
+ // changes (or is first picked). Clears a previously-chosen thread that belongs
+ // to a different group.
+  $effect(() => {
+    if (formTarget !== "thread") return;
+    const g = formGroupId;
+    if (g === threadsForGroup) return;
+    if (formThreadId && !formThreadId.startsWith(g + THREAD_SEP)) formThreadId = "";
+    void loadThreads(g);
+  });
+
  // ---- enable cron banner ----
  // The flow is two-step by design: clicking 启用 flips bot.cron locally +
  // marks the settings dirty, surfacing 保存并重启 in the SettingsModal
@@ -109,21 +152,23 @@
   }
 
  // ---- create / edit modal ----
- // DM target removed from the picker: in practice the operator drives the
- // bot for either "post into a channel I'm in" (Group) or "remind / nudge
- // myself" (Console). DMing a specific peer on a schedule is rare AND
- // surprising for the receiver — landing it as a feature gap rather than
- // a footgun. Existing DM tasks left from earlier versions still load
- // (the daemon doesn't care) and render in the table as "DM" with edit
- // disabled — operator can delete + recreate via Console/Group.
-  type Target = "console" | "group";
+ // Four targets: Console (the desktop's own session), Group (the main group
+ // channel), Thread (群内话题/子区 — a CommunityTopic inside a group), and DM (a
+ // private message to the OWNER — a scheduled DM may only target the owner, not
+ // an arbitrary peer). Thread is group-scoped: pick a group, then a thread
+ // within it. The thread's stored channelId is the COMPOUND
+ // "<groupNo>____<shortId>", so an edited thread task recovers its group by
+ // splitting on that separator.
+  type Target = "console" | "group" | "thread" | "dm";
+  const THREAD_SEP = "____";
   let modalOpen = $state(false);
   let editingId = $state<string | null>(null);
   let formSchedule = $state("0 9 * * *");
   let formRecurring = $state(true);
   let formPrompt = $state("");
   let formTarget = $state<Target>("console");
-  let formGroupId = $state("");
+  let formGroupId = $state("");   // group select; also the parent for a thread
+  let formThreadId = $state("");  // compound thread channel id
   let formError = $state("");
   let formBusy = $state(false);
 
@@ -134,6 +179,7 @@
     formPrompt = "";
     formTarget = "console";
     formGroupId = "";
+    formThreadId = "";
     formError = "";
     modalOpen = true;
     loadGroups();
@@ -145,14 +191,24 @@
     formRecurring = task.recurring;
     formPrompt = task.prompt ?? "";
     formGroupId = "";
+    formThreadId = "";
     if (task.channelType === 3) {
       formTarget = "console";
     } else if (task.channelType === 2) {
       formTarget = "group";
       formGroupId = task.channelId ?? "";
+    } else if (task.channelType === 5) {
+      // Thread — the compound channelId encodes its group; split to recover
+      // the parent group select, then the reactive loader fills the thread list
+      // and we preselect this thread by its full compound id.
+      formTarget = "thread";
+      formThreadId = task.channelId ?? "";
+      const sep = formThreadId.indexOf(THREAD_SEP);
+      formGroupId = sep > 0 ? formThreadId.slice(0, sep) : "";
+    } else if (task.channelType === 1) {
+      // DM — always fires to the owner; nothing to pre-fill.
+      formTarget = "dm";
     } else {
-     // Legacy DM task — picker no longer offers DM, default the edit
-     // form to Console. Operator can re-target or just delete + recreate.
       formTarget = "console";
     }
     formError = "";
@@ -163,15 +219,13 @@
   async function submit() {
     formError = "";
     if (isPreview) { modalOpen = false; return; }
-   // Channel coords derived from the target choice. ChannelType convention:
-   //   2 = Group, 3 = Console (matches core/cron/store.go).
+   // Channel coords derived from the target choice. ChannelType convention
+   // (matches core/cron/store.go): 1 = DM, 2 = Group, 3 = Console,
+   // 5 = CommunityTopic (thread).
    //
-   // fromUid: for Console the backend stamps cron.ConsoleUID regardless so
-   // we send CONSOLE_UID for clarity; for Group the backend ignores fromUid
-   // and stamps the owner. fromName: Group/DM fires always speak as the bot's
-   // real Octo identity, so no custom display name — send empty. Console fires
-   // surface in the desktop transcript, where the synthetic prompt shows a
-   // caller name; "控制台" keeps that row from rendering blank.
+   // fromUid/fromName are stamped server-side for every IM target (the backend
+   // ignores the body fromUid: Console → ConsoleUID, Group/Thread/DM → owner),
+   // so we send them blank except the Console transcript caller label ("控制台").
     let channelId = "";
     let channelType = 3;
     let fromUid = "";
@@ -180,12 +234,19 @@
       channelType = 3;
       fromUid = CONSOLE_UID;
       fromName = "控制台";
-    } else {
-      // Group
+    } else if (formTarget === "group") {
       channelType = 2;
       channelId = formGroupId.trim();
       if (!channelId) { formError = "请选择一个群"; return; }
-      // fromUid stays "" — Group tasks fire as the owner; backend ignores body fromUid for Group.
+      // fromUid stays "" — Group tasks fire as the owner; backend stamps it.
+    } else if (formTarget === "thread") {
+      channelType = 5;
+      channelId = formThreadId.trim();
+      if (!channelId) { formError = "请选择一个话题"; return; }
+      // fromUid stays "" — Thread fires as the owner; backend stamps it.
+    } else {
+      // DM — always fires privately to the owner; backend stamps the owner uid.
+      channelType = 1;
     }
     formBusy = true;
     try {
@@ -228,6 +289,10 @@
     if (task.channelType === 2) {
       const g = groups.find((x) => x.id === task.channelId);
       return g ? `群 · ${g.name}` : `群 · ${task.channelId || "?"}`;
+    }
+    if (task.channelType === 5) {
+      const t = threads.find((x) => x.id === task.channelId);
+      return t ? `话题 · ${t.name}` : `话题 · ${task.channelId || "?"}`;
     }
     return `DM`;
   }
@@ -346,10 +411,12 @@
           <div class="seg">
             <button class:active={formTarget === "console"} onclick={() => formTarget = "console"} type="button">控制台</button>
             <button class:active={formTarget === "group"} onclick={() => formTarget = "group"} type="button">群</button>
+            <button class:active={formTarget === "thread"} onclick={() => formTarget = "thread"} type="button">群内话题</button>
+            <button class:active={formTarget === "dm"} onclick={() => formTarget = "dm"} type="button">单人 DM</button>
           </div>
           {#if formTarget === "console"}
             <small class="hint">触发结果会出现在该 Bot 的桌面 Console 会话。</small>
-          {:else}
+          {:else if formTarget === "group"}
             <select bind:value={formGroupId}>
               <option value="" disabled>— 选择一个群 —</option>
               {#each groups as g}
@@ -361,6 +428,34 @@
             {:else if groups.length === 0}
               <small class="hint">octo-cli 未返回任何群。Bot 需要先被拉进至少一个群（IM 客户端发起邀请），下次打开此对话框即可看到。</small>
             {/if}
+          {:else if formTarget === "thread"}
+            <select bind:value={formGroupId}>
+              <option value="" disabled>— 选择一个群 —</option>
+              {#each groups as g}
+                <option value={g.id}>{g.name}</option>
+              {/each}
+            </select>
+            {#if groupsError}
+              <small class="err">无法加载群列表：{groupsError}</small>
+            {:else if formGroupId}
+              <select bind:value={formThreadId}>
+                <option value="" disabled>— 选择一个话题 —</option>
+                {#each threads as t}
+                  <option value={t.id}>{t.name}</option>
+                {/each}
+              </select>
+              {#if threadsLoading}
+                <small class="hint">加载话题中…</small>
+              {:else if threadsError}
+                <small class="err">无法加载话题列表：{threadsError}</small>
+              {:else if threads.length === 0}
+                <small class="hint">该群暂无话题（在 IM 客户端的群里创建一个话题/子区后再回来）。</small>
+              {/if}
+            {:else}
+              <small class="hint">先选群，再选其中的话题。</small>
+            {/if}
+          {:else}
+            <small class="hint">定时任务到点时，Bot 私聊 owner（仅限 owner，不能指定其他人）。</small>
           {/if}
         </div>
         {#if formError}<div class="error">{formError}</div>{/if}

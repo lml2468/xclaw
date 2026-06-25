@@ -127,18 +127,17 @@ type CronCreateBody struct {
 	Prompt string `json:"prompt"`
 	// Recurring, when set, overrides the default (cron→true, one-shot→false).
 	Recurring *bool `json:"recurring,omitempty"`
-	// ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console.
+	// ChannelID + ChannelType bind the task's target. Omit (or type 1) for a DM
+	// task, which fires to the resolved owner. ChannelType: 1 = DM, 2 = Group,
+	// 3 = Console, 5 = CommunityTopic (a thread inside a group; ChannelID is the
+	// compound "<groupNo>____<shortId>").
 	ChannelID   string `json:"channelId,omitempty"`
 	ChannelType int    `json:"channelType,omitempty"`
-	// FromUID identifies WHO the task fires AS — distinct from the auth uid
-	// (which is server-resolved + not from this body). For DM targets this is
-	// the peer's uid (the task fires as a DM from the bot to that peer). For
-	// Console targets the handler stamps cron.ConsoleUID regardless of the body.
-	// For Group targets the handler stamps the owner (the bot identifies as
-	// itself in the group). Empty for DM is a validation error at create time;
-	// empty for DM on update preserves the existing FromUID (the "blank =
-	// preserve" GUI contract for the edit modal).
+	// FromUID is accepted for proto compatibility but IGNORED: the handler always
+	// stamps the fire identity itself — cron.ConsoleUID for Console and the
+	// server-resolved owner for every IM target (Group, Thread, and DM). A
+	// scheduled DM may only target the owner (no arbitrary peer), so the body
+	// uid is never used as a DM recipient. Deprecated.
 	FromUID  string `json:"fromUid,omitempty"`
 	FromName string `json:"fromName,omitempty"`
 }
@@ -176,10 +175,8 @@ type CronUpdateBody struct {
 	Recurring   *bool  `json:"recurring,omitempty"`
 	ChannelID   string `json:"channelId,omitempty"`
 	ChannelType int    `json:"channelType,omitempty"`
-	// FromUID — see CronCreateBody.FromUID. On update an empty value PRESERVES
-	// the existing stored FromUID (so the GUI's "blank = preserve" edit-modal
-	// contract is honored at the wire layer, not silently rebound by the
-	// handler stamping owner over the peer uid).
+	// FromUID — see CronCreateBody.FromUID (accepted for proto compatibility but
+	// IGNORED; the handler stamps the fire identity itself).
 	FromUID  string `json:"fromUid,omitempty"`
 	FromName string `json:"fromName,omitempty"`
 	// Enabled, when non-nil, sets the task's Enabled flag. nil leaves it.

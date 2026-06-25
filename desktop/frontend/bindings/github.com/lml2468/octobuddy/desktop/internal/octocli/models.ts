@@ -34,3 +34,35 @@ export class Group {
         return new Group($$parsedSource as Partial<Group>);
     }
 }
+
+/**
+ * Thread is a single thread (CommunityTopic / 群内话题 / 子区) inside a group,
+ * projected from `octo-cli thread list <group-no>`. The renderer uses it to
+ * populate the cron-task thread picker. ID is the COMPOUND channel id
+ * ("<groupNo>____<shortId>") the connector addresses sends with — not the bare
+ * short id — so a cron task stored with this ID routes + delivers correctly.
+ */
+export class Thread {
+    "id": string;
+    "name": string;
+
+    /** Creates a new Thread instance. */
+    constructor($$source: Partial<Thread> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Thread instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Thread {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Thread($$parsedSource as Partial<Thread>);
+    }
+}

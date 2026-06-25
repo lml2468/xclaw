@@ -50,14 +50,13 @@ func (d controlCommandDispatcher) cronTarget(botID, action string) (*botTarget, 
 
 func cronCreateCoords(b control.CronCreateBody, owner string) (cron.SessionCoords, error) {
 	chType := channelTypeFor(b.ChannelType, b.ChannelID)
-	fromUID, err := resolveFromUID(chType, b.FromUID, owner)
-	if err != nil {
-		return cron.SessionCoords{}, err
+	if (chType == int(router.ChannelGroup) || chType == int(cron.ChannelCommunityTopic)) && b.ChannelID == "" {
+		return cron.SessionCoords{}, fmt.Errorf("group/thread target requires channelId")
 	}
 	return cron.SessionCoords{
 		ChannelID:   b.ChannelID,
 		ChannelType: cron.ChannelKind(chType),
-		FromUID:     fromUID,
+		FromUID:     resolveFromUID(chType, owner),
 		FromName:    safety.SanitizeDisplayName(b.FromName, owner),
 	}, nil
 }
@@ -132,12 +131,7 @@ func cronUpdateCoords(b control.CronUpdateBody, owner string) cron.SessionCoords
 		return cron.SessionCoords{}
 	}
 	chType := channelTypeFor(b.ChannelType, b.ChannelID)
-	fromUID := b.FromUID
-	if chType == int(cron.ChannelConsole) {
-		fromUID = cron.ConsoleUID
-	} else if chType == int(router.ChannelGroup) {
-		fromUID = owner
-	}
+	fromUID := resolveFromUID(chType, owner)
 	fromName := ""
 	if b.FromName != "" {
 		fromName = safety.SanitizeDisplayName(b.FromName, owner)
@@ -161,30 +155,25 @@ func cronUpdateEnabledOnly(b control.CronUpdateBody) bool {
 // and bot.go's fireCronTask routes it past EnqueueCron straight to the
 // gateway. Without this branch a Console body would fall through to "DM
 // with empty channelId" which the connector would then try to deliver to.
-// resolveFromUID picks the stored FromUID for a NEW cron task based on the
-// channel type, falling back to the server-resolved owner for Group targets
-// and stamping the canonical ConsoleUID for Console. DM tasks require an
-// explicit body FromUID (the peer the task should DM to) — empty is a
-// validation error because storing the owner uid for a "DM to alice" task
-// would silently rewrite the target to "DM to self" on first fire.
-// Used only by cron.create; cron.update's "blank = preserve" semantics
-// live in the update handler + Manager.Update mutator.
-func resolveFromUID(chType int, bodyFromUID, owner string) (string, error) {
-	switch chType {
-	case int(cron.ChannelConsole):
-		return cron.ConsoleUID, nil
-	case int(router.ChannelGroup):
-		return owner, nil
-	default: // DM
-		if bodyFromUID == "" {
-			return "", fmt.Errorf("DM target requires fromUid (peer's uid)")
-		}
-		return bodyFromUID, nil
+// resolveFromUID picks the stored FromUID for a cron task based on the channel
+// type: the canonical ConsoleUID for Console, and the server-resolved owner for
+// EVERY IM target (Group, Thread, AND DM). A DM task can only ever DM the owner
+// — scheduling a private message to an arbitrary peer is a footgun (surprising
+// to the receiver, and the body uid is forgeable), so the peer is never taken
+// from the body. Used by both cron.create and cron.update.
+func resolveFromUID(chType int, owner string) string {
+	if chType == int(cron.ChannelConsole) {
+		return cron.ConsoleUID
 	}
+	// Group / Thread / DM all fire as the owner: Group and Thread because the
+	// bot identifies as itself in the channel; DM because a scheduled DM may
+	// only target the owner (no arbitrary peer).
+	return owner
 }
 
 func channelTypeFor(explicit int, channelID string) int {
-	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) || explicit == int(cron.ChannelConsole) {
+	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) ||
+		explicit == int(cron.ChannelConsole) || explicit == int(cron.ChannelCommunityTopic) {
 		return explicit
 	}
 	if channelID != "" {

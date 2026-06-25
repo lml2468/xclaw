@@ -69,11 +69,10 @@ func assertForgedCronCreate(t *testing.T, call func(string, any) (any, error), m
 	t.Helper()
 
 	// A forged body uid (the deprecated UID field) is NOT an authorization
-	// claim: the create still succeeds (gated on the resolved owner) AND
-	// binds to the owner via Coords.FromUID for the DM target case OR to
-	// the body FromUID — here we hit the latter by supplying a peer.
-	// The intruder UID is silently dropped (proves "auth claim ignored");
-	// the FromUID "alice" is honored (proves "target is the body's peer").
+	// claim: the create still succeeds (gated on the resolved owner). The body
+	// FromUID is likewise ignored — a DM task always fires to the OWNER (a
+	// scheduled DM may only target the owner, never an arbitrary peer), so the
+	// stored FromUID is the owner regardless of what the body carries.
 	res, err := call("cron.create", control.CronCreateBody{
 		BotID: "b1", UID: "intruder", FromUID: "alice", Schedule: "0 9 * * *", Prompt: "daily standup",
 	})
@@ -84,9 +83,9 @@ func assertForgedCronCreate(t *testing.T, call func(string, any) (any, error), m
 	if !ok || info.ID == "" || info.NextRun == "" {
 		t.Fatalf("unexpected create result: %#v", res)
 	}
-	// Verify the stored task: CreatedBy is the auth-owner (server side),
-	// FromUID is the peer the task should DM to (body side). Distinct
-	// concerns — confusing them is what the FromUID refactor fixed.
+	// Verify the stored task: both CreatedBy (auth) and FromUID (fire target)
+	// are the resolved owner — the forged body uid "intruder" and the body
+	// FromUID "alice" are both dropped.
 	stored, err := mgr.List()
 	if err != nil || len(stored) != 1 {
 		t.Fatalf("list after create: %v %#v", err, stored)
@@ -94,8 +93,8 @@ func assertForgedCronCreate(t *testing.T, call func(string, any) (any, error), m
 	if stored[0].CreatedBy != owner {
 		t.Fatalf("CreatedBy must be the resolved owner, got %q", stored[0].CreatedBy)
 	}
-	if stored[0].FromUID != "alice" {
-		t.Fatalf("FromUID must be the body peer (alice), got %q — the create handler must not stamp owner over the DM peer", stored[0].FromUID)
+	if stored[0].FromUID != owner {
+		t.Fatalf("a DM task fires to the owner; FromUID must be %q (body peer %q must be ignored), got %q", owner, "alice", stored[0].FromUID)
 	}
 	return info
 }
@@ -228,3 +227,73 @@ func assertCronEnabledOnlyUpdate(t *testing.T, call func(string, any) (any, erro
 // warrants. A regression in the routing branch is caught immediately by
 // the verify-step "create a Console-target task, observe it land in the
 // desktop chat" smoke run.
+
+// TestCronThreadTarget verifies a thread (CommunityTopic = 5) task: the
+// compound channel id is stored verbatim, ChannelType persists as 5, and the
+// task fires AS the owner (FromUID = owner, like a group — never a peer uid).
+func TestCronThreadTarget(t *testing.T) {
+	const owner = "owner-1"
+	env := newCronHandlerTestEnv(t, owner, false)
+
+	const threadID = "0fff23f5____2069602928229879808"
+	res, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "thread digest",
+		ChannelID: threadID, ChannelType: 5,
+	})
+	if err != nil {
+		t.Fatalf("thread-target create: %v", err)
+	}
+	info := res.(control.CronTaskInfo)
+	if info.ChannelID != threadID || info.ChannelType != 5 {
+		t.Fatalf("thread coords not preserved: %+v", info)
+	}
+	stored, err := env.mgr.List()
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("list after thread create: %v %#v", err, stored)
+	}
+	if stored[0].ChannelType != cron.ChannelCommunityTopic {
+		t.Fatalf("stored ChannelType must be CommunityTopic(5), got %d", stored[0].ChannelType)
+	}
+	if stored[0].FromUID != owner {
+		t.Fatalf("a thread task fires as the owner, FromUID must be %q, got %q", owner, stored[0].FromUID)
+	}
+}
+
+// TestCronThreadRequiresChannelID verifies a thread/group task without a
+// channel id is rejected at create — otherwise it would fire with an
+// unroutable empty channel id.
+func TestCronThreadRequiresChannelID(t *testing.T) {
+	env := newCronHandlerTestEnv(t, "owner-1", false)
+	if _, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "p", ChannelType: 5,
+	}); err == nil {
+		t.Fatal("thread create without channelId must be refused")
+	}
+}
+
+// TestCronDMTargetsOwner verifies a DM task fires to the OWNER, never an
+// arbitrary peer: a body FromUID is ignored and the stored FromUID is the
+// resolved owner. (A scheduled DM to a random peer is a footgun, so the peer
+// is never taken from the forgeable body.)
+func TestCronDMTargetsOwner(t *testing.T) {
+	const owner = "owner-1"
+	env := newCronHandlerTestEnv(t, owner, false)
+
+	res, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "nudge", ChannelType: 1, FromUID: "stranger",
+	})
+	if err != nil {
+		t.Fatalf("DM create should succeed (fires to owner): %v", err)
+	}
+	info := res.(control.CronTaskInfo)
+	if info.ChannelType != 1 {
+		t.Fatalf("DM task type must be 1, got %d", info.ChannelType)
+	}
+	stored, err := env.mgr.List()
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("list after DM create: %v %#v", err, stored)
+	}
+	if stored[0].FromUID != owner {
+		t.Fatalf("DM fires to the owner; FromUID must be %q, body peer %q must be ignored, got %q", owner, "stranger", stored[0].FromUID)
+	}
+}

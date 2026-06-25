@@ -6,6 +6,42 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * BotDefaultToolsInfo is the chat panel's view of a bot's BOT-LEVEL tool default
+ * (agent.tools.default). Scoped=true means the bot explicitly limited its tools
+ * (Tools is that list); Scoped=false means the bot uses the driver default (all
+ * probed built-ins). A per-channel override can only narrow WITHIN this set — the
+ * panel offers exactly these candidates, never the global superset.
+ */
+export class BotDefaultToolsInfo {
+    "scoped": boolean;
+    "tools": string[];
+
+    /** Creates a new BotDefaultToolsInfo instance. */
+    constructor($$source: Partial<BotDefaultToolsInfo> = {}) {
+        if (!("scoped" in $$source)) {
+            this["scoped"] = false;
+        }
+        if (!("tools" in $$source)) {
+            this["tools"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BotDefaultToolsInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BotDefaultToolsInfo {
+        const $$createField1_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("tools" in $$parsedSource) {
+            $$parsedSource["tools"] = $$createField1_0($$parsedSource["tools"]);
+        }
+        return new BotDefaultToolsInfo($$parsedSource as Partial<BotDefaultToolsInfo>);
+    }
+}
+
+/**
  * ChannelToolsInfo is the chat panel's view of a conversation's tool override:
  * Configured=false → the channel uses the bot default (Tools is then ignored).
  */

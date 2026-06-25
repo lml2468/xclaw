@@ -6,14 +6,40 @@ package toolset
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/config"
+	"github.com/lml2468/octobuddy/core/safepath"
 	"github.com/lml2468/octobuddy/desktop/internal/claudecli"
 	"github.com/lml2468/octobuddy/desktop/internal/configstore"
 )
+
+// probeConfigDir is a dedicated, plugin-free CLAUDE_CONFIG_DIR the tool-surface
+// probe runs under. Probing with the operator's own ~/.claude (the nil-env
+// default) inherits their installed MCP plugins, so plugin tool names
+// (mcp__plugin_*__*) leak into the "built-in" surface the picker shows. A clean
+// isolated dir yields ONLY the binary's genuine built-in tools. Kept stable (not
+// a fresh temp dir per call) so the CLI's first-run setup runs once, not every
+// probe. Lives beside the managed binary under ~/.octobuddy/bin/.
+func probeConfigDir() string {
+	return filepath.Join(claudecli.Dir(), ".toolset-probe")
+}
+
+// hasMCP reports whether any tool name is an MCP tool (mcp__server__tool). The
+// isolated probe never emits these, so their presence in a cached surface means
+// the cache predates the isolation fix and must be re-probed.
+func hasMCP(tools []string) bool {
+	for _, t := range tools {
+		if strings.HasPrefix(t, "mcp__") {
+			return true
+		}
+	}
+	return false
+}
 
 // nowFn is overridable in tests; production uses time.Now.
 var nowFn = time.Now
@@ -47,7 +73,13 @@ func Refresh(ctx context.Context) (*config.ToolsetCache, error) {
 	// (~1s) on each settings open, so treat a populated cache as current for
 	// the unversioned case too. A genuine binary swap on PATH is picked up by
 	// the install-state hook / next daemon restart, not this background poll.
-	if cached != nil && len(cached.Available) > 0 {
+	//
+	// EXCEPTION: a cache written by the pre-isolation probe inherited the
+	// operator's ~/.claude and so recorded plugin MCP tool names (mcp__*) as
+	// "built-ins". The isolated probe below can never emit those, so any mcp__*
+	// in the cached surface marks a stale cache — force a re-probe to heal it,
+	// even when the version matches.
+	if cached != nil && len(cached.Available) > 0 && !hasMCP(cached.Available) {
 		if ver != "" && cached.ClaudeVersion == ver {
 			return cached, nil
 		}
@@ -58,7 +90,14 @@ func Refresh(ctx context.Context) (*config.ToolsetCache, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	available, err := agent.ProbeTools(ctx, bin, nil)
+	// Probe under an isolated, plugin-free CLAUDE_CONFIG_DIR so the reported
+	// surface is the binary's genuine built-ins only — NOT the operator's
+	// ~/.claude with its installed MCP plugins (whose mcp__plugin_*__* names
+	// would otherwise pollute the "built-in" picker). Best-effort mkdir; if it
+	// fails we still pass the dir (the CLI creates it).
+	dir := probeConfigDir()
+	_ = safepath.SafeMkdirAllAbs(dir, 0o700)
+	available, err := agent.ProbeTools(ctx, bin, []string{"CLAUDE_CONFIG_DIR=" + dir})
 	if err != nil {
 		// Probe failed (binary missing/unusable). Leave any existing cache in
 		// place; the daemon still probes live per turn regardless.

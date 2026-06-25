@@ -42,6 +42,18 @@ import * as workspace$0 from "./internal/workspace/models.js";
 import * as $models from "./models.js";
 
 /**
+ * BotDefaultTools returns the bot's bot-level default tool whitelist (the set a
+ * per-channel override is allowed to narrow). Scoped=false (Tools nil) → the bot
+ * is at the driver default, so the panel falls back to the full probed built-in
+ * set + the bot's configured MCP servers.
+ */
+export function BotDefaultTools(botID: string): $CancellablePromise<$models.BotDefaultToolsInfo> {
+    return $Call.ByID(4106330385, botID).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+/**
  * BotSkillCreate scaffolds a new per-bot skill bundle.
  */
 export function BotSkillCreate(botID: string, name: string): $CancellablePromise<void> {
@@ -67,7 +79,7 @@ export function BotSkillDeleteFile(botID: string, name: string, rel: string): $C
  */
 export function BotSkillFiles(botID: string, name: string): $CancellablePromise<string[]> {
     return $Call.ByID(1837564793, botID, name).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
@@ -90,7 +102,7 @@ export function BotSkillWrite(botID: string, name: string, rel: string, content:
  */
 export function BotSkillsList(botID: string): $CancellablePromise<skills$0.SkillInfo[]> {
     return $Call.ByID(3283931783, botID).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
@@ -127,7 +139,7 @@ export function BotWorkflowWrite(botID: string, name: string, content: string): 
  */
 export function BotWorkflowsList(botID: string): $CancellablePromise<workflows$0.Info[]> {
     return $Call.ByID(2566002125, botID).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -143,7 +155,7 @@ export function BotsList(): $CancellablePromise<void> {
  */
 export function ChannelTools(botID: string, sessionKey: string): $CancellablePromise<$models.ChannelToolsInfo> {
     return $Call.ByID(4287213674, botID, sessionKey).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType6($result);
     });
 }
 
@@ -202,7 +214,7 @@ export function CronUpdate(body: control$0.CronUpdateBody): $CancellablePromise<
  */
 export function GroupsList(botID: string): $CancellablePromise<octocli$0.Group[]> {
     return $Call.ByID(3721641824, botID).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -225,7 +237,7 @@ export function History(botID: string, sessionKey: string, limit: number): $Canc
  */
 export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
     return $Call.ByID(2972308434).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType10($result);
     });
 }
 
@@ -247,7 +259,7 @@ export function LoadMCPConfig(botID: string): $CancellablePromise<string> {
  */
 export function LoadToolset(): $CancellablePromise<$models.ToolsetInfo> {
     return $Call.ByID(1914731222).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType11($result);
     });
 }
 
@@ -269,7 +281,7 @@ export function LogClientError(category: string, message: string, stack: string)
  */
 export function MemoryFile(botID: string, channelType: number, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
     return $Call.ByID(1690105045, botID, channelType, sessionKey, relPath).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType12($result);
     });
 }
 
@@ -279,7 +291,7 @@ export function MemoryFile(botID: string, channelType: number, sessionKey: strin
  */
 export function MemoryTree(botID: string, channelType: number, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
     return $Call.ByID(1798474967, botID, channelType, sessionKey).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType14($result);
     });
 }
 
@@ -292,7 +304,7 @@ export function MemoryTree(botID: string, channelType: number, sessionKey: strin
  */
 export function OctoAddBot(apiURL: string, apiKey: string, name: string): $CancellablePromise<octoapi$0.BotResult> {
     return $Call.ByID(3460653163, apiURL, apiKey, name).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType15($result);
     });
 }
 
@@ -319,7 +331,7 @@ export function OctoCliRelogin(botID: string): $CancellablePromise<void> {
  */
 export function OctoCliStatus(botID: string): $CancellablePromise<$models.OctoCliStatus> {
     return $Call.ByID(2151220461, botID).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType16($result);
     });
 }
 
@@ -401,7 +413,7 @@ export function UsageStats(botID: string, since: number): $CancellablePromise<vo
  */
 export function WorkspaceFile(botID: string, channelType: number, sessionKey: string, relPath: string): $CancellablePromise<workspace$0.FileContent> {
     return $Call.ByID(3898295363, botID, channelType, sessionKey, relPath).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType12($result);
     });
 }
 
@@ -411,24 +423,25 @@ export function WorkspaceFile(botID: string, channelType: number, sessionKey: st
  */
 export function WorkspaceTree(botID: string, channelType: number, sessionKey: string): $CancellablePromise<workspace$0.Node | null> {
     return $Call.ByID(2868650453, botID, channelType, sessionKey).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType14($result);
     });
 }
 
 // Private type creation functions
-const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = skills$0.SkillInfo.createFrom;
-const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = workflows$0.Info.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = $models.ChannelToolsInfo.createFrom;
-const $$createType6 = octocli$0.Group.createFrom;
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = configstore$0.BotConfig.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = $models.ToolsetInfo.createFrom;
-const $$createType11 = workspace$0.FileContent.createFrom;
-const $$createType12 = workspace$0.Node.createFrom;
-const $$createType13 = $Create.Nullable($$createType12);
-const $$createType14 = octoapi$0.BotResult.createFrom;
-const $$createType15 = $models.OctoCliStatus.createFrom;
+const $$createType0 = $models.BotDefaultToolsInfo.createFrom;
+const $$createType1 = $Create.Array($Create.Any);
+const $$createType2 = skills$0.SkillInfo.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = workflows$0.Info.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.ChannelToolsInfo.createFrom;
+const $$createType7 = octocli$0.Group.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = configstore$0.BotConfig.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $models.ToolsetInfo.createFrom;
+const $$createType12 = workspace$0.FileContent.createFrom;
+const $$createType13 = workspace$0.Node.createFrom;
+const $$createType14 = $Create.Nullable($$createType13);
+const $$createType15 = octoapi$0.BotResult.createFrom;
+const $$createType16 = $models.OctoCliStatus.createFrom;

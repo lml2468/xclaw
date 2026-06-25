@@ -28,9 +28,9 @@
 
   let composer = $state<Composer>();
 
- // Initial-show + initial-tab parsing from ?settings[=basic|octo|skills|workflows].
-  type SettingsTab = "basic" | "octo" | "skills" | "workflows";
-  const TABS: SettingsTab[] = ["basic", "octo", "skills", "workflows"];
+ // Initial-show + initial-tab parsing from ?settings[=basic|runtime|octo|skills|workflows|schedules].
+  type SettingsTab = "basic" | "runtime" | "octo" | "skills" | "workflows" | "schedules";
+  const TABS: SettingsTab[] = ["basic", "runtime", "octo", "skills", "workflows", "schedules"];
   function initialSettingsState(): { show: boolean; tab: SettingsTab } {
     const t = new URLSearchParams(location.search).get("settings");
     if (t === null) return { show: false, tab: "basic" };

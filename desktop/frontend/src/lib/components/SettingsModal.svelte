@@ -18,12 +18,13 @@
   import { errMsg } from "../errors";
   import Avatar from "./Avatar.svelte";
   import BasicInfoPane from "./BasicInfoPane.svelte";
+  import RuntimeInfoPane from "./RuntimeInfoPane.svelte";
   import OctoIntegrationPane from "./OctoIntegrationPane.svelte";
   import SkillsPane from "./SkillsPane.svelte";
   import SchedulesPane from "./SchedulesPane.svelte";
   import WorkflowsPane from "./WorkflowsPane.svelte";
 
-  type TabKey = "basic" | "octo" | "skills" | "workflows" | "schedules";
+  type TabKey = "basic" | "runtime" | "octo" | "skills" | "workflows" | "schedules";
   let { onclose, initialTab = "basic" as TabKey, openWizardOnMount = false }:
     { onclose: () => void; initialTab?: TabKey; openWizardOnMount?: boolean } = $props();
 
@@ -95,7 +96,15 @@
  // --- save ---
   async function save(restart: boolean) {
     if (!current) return;
-    error = ""; saved = false; busy = true;
+    error = ""; saved = false;
+    // Model is required (mirrors the backend check in configstore.Save). Guard
+    // here for immediate feedback before the round-trip; name the offending bot.
+    const noModel = bots.find((b) => !(b.model ?? "").trim());
+    if (noModel) {
+      error = `Bot「${noModel.id || "(未命名)"}」缺少模型（必填）`;
+      return;
+    }
+    busy = true;
     try {
       const present = new Set(bots.map((b) => b.id));
       const removed = loadedIds.filter((id) => !present.has(id));
@@ -167,10 +176,11 @@
 
   const TABS: { key: TabKey; label: string }[] = [
     { key: "basic",     label: "基础信息" },
+    { key: "runtime",   label: "Runtime 信息" },
     { key: "octo",      label: "Octo 集成" },
     { key: "skills",    label: "技能" },
-    { key: "schedules", label: "定时任务" },
     { key: "workflows", label: "工作流" },
+    { key: "schedules", label: "定时任务" },
   ];
 
  // Arrow-key tab navigation per WAI-ARIA APG tablist pattern (←/→ cycle
@@ -239,6 +249,13 @@
                      the Bot ID input — wiping any uncommitted blank env
                      row mid-keystroke. -->
                 <BasicInfoPane bind:bot={bots[sel]} ondirty={markDirty} ondelete={deleteBot} />
+              {/key}
+            {:else if activeTab === "runtime"}
+              {#key sel}
+                <!-- {#key sel} remounts RuntimeInfoPane on bot switch so its
+                     internal env-row state (seeded once at mount) is rebuilt
+                     fresh from bot.env. -->
+                <RuntimeInfoPane bind:bot={bots[sel]} ondirty={markDirty} />
               {/key}
             {:else if activeTab === "octo"}
               <OctoIntegrationPane bind:bot={bots[sel]} botStatus={store.bots.find((x) => x.id === current.id) ?? null} ondirty={markDirty} {isPreview} />

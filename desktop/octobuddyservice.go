@@ -469,6 +469,31 @@ func (x *OctoBuddyService) SetChannelTools(botID, sessionKey string, configured 
 	return configstore.SetChannelTools(botID, sessionKey, tools)
 }
 
+// BotDefaultToolsInfo is the chat panel's view of a bot's BOT-LEVEL tool default
+// (agent.tools.default). Scoped=true means the bot explicitly limited its tools
+// (Tools is that list); Scoped=false means the bot uses the driver default (all
+// probed built-ins). A per-channel override can only narrow WITHIN this set — the
+// panel offers exactly these candidates, never the global superset.
+type BotDefaultToolsInfo struct {
+	Scoped bool     `json:"scoped"`
+	Tools  []string `json:"tools"`
+}
+
+// BotDefaultTools returns the bot's bot-level default tool whitelist (the set a
+// per-channel override is allowed to narrow). Scoped=false (Tools nil) → the bot
+// is at the driver default, so the panel falls back to the full probed built-in
+// set + the bot's configured MCP servers.
+func (x *OctoBuddyService) BotDefaultTools(botID string) (BotDefaultToolsInfo, error) {
+	bot, ok, err := configstore.LoadOne(botID)
+	if err != nil {
+		return BotDefaultToolsInfo{}, err
+	}
+	if !ok || bot.Tools == nil || bot.Tools.Default == nil {
+		return BotDefaultToolsInfo{Scoped: false}, nil
+	}
+	return BotDefaultToolsInfo{Scoped: true, Tools: bot.Tools.Default}, nil
+}
+
 // --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---
 
 // OctoCliStatus is the per-bot octo-cli registration state surfaced to the

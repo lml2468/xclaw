@@ -2,9 +2,10 @@
  // Per-channel/DM tool panel: a popover over the chat header's tool icon that
  // scopes which tools the agent may use IN THIS conversation, writing through to
  // agent.tools.channels[sessionKey]. "跟随 Bot 默认" (unconfigured) falls back to
- // the bot-level default / driver default; toggling to a custom set lets the
- // operator prune the offered tools per conversation. Options come from the
- // probed toolset (store.toolset.headlessSafe), same source as the 基础信息 picker.
+ // the bot-level default; "本会话自定义" lets the operator prune WITHIN the bot's
+ // own selected tool set — a per-channel override can only narrow, never add
+ // tools the bot itself doesn't have. So the candidate pool is the bot's
+ // bot-level default (BotDefaultTools), NOT the global probed superset.
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { store } from "../store.svelte";
 
@@ -17,6 +18,36 @@
   let loaded = $state(false);
   let error = $state("");
 
+  const mcpPattern = (s: string) => `mcp__${s}__*`;
+  const isMCP = (t: string) => t.startsWith("mcp__");
+
+  // The bot's bot-level default tool set — the candidate pool a per-channel
+  // override narrows. When the bot is scoped (botScoped), candidates ARE that
+  // list; when unscoped (driver default), candidates fall back to the full
+  // probed built-ins + the bot's configured MCP servers.
+  let botScoped = $state(false);
+  let botDefault = $state<string[]>([]);   // the bot's tools.default when scoped
+  let mcpServers = $state<string[]>([]);   // bot's .mcp.json server names
+
+  // Built-in candidates: the bot's scoped built-ins, else the full probed set.
+  const builtinCandidates = $derived(
+    botScoped
+      ? botDefault.filter((t) => !isMCP(t)).sort()
+      : [...(toolset?.headlessSafe ?? [])].filter((t) => !isMCP(t)).sort(),
+  );
+  // MCP candidates (as mcp__<server>__* patterns): from the bot's scoped MCP
+  // entries, else from the bot's configured servers.
+  const mcpCandidates = $derived(
+    botScoped
+      ? botDefault.filter(isMCP).sort()
+      : mcpServers.map(mcpPattern).sort(),
+  );
+  // Scoped channel names that aren't in the candidate pool — removable "超出 Bot
+  // 集" chips (shouldn't normally happen now; kept so a legacy override that
+  // included a wider set stays visible and removable rather than silently lost).
+  const candidateSet = $derived(new Set([...builtinCandidates, ...mcpCandidates]));
+  const extraScoped = $derived([...scoped].filter((t) => !candidateSet.has(t)).sort());
+
   async function load() {
     try {
       if (store.preview) {
@@ -25,6 +56,17 @@
       const info = await OctoBuddyService.ChannelTools(botId, sessionKey);
       configured = !!info?.configured;
       scoped = new Set(info?.tools ?? []);
+      // The bot's bot-level default (candidate pool).
+      const bd = await OctoBuddyService.BotDefaultTools(botId);
+      botScoped = !!bd?.scoped;
+      botDefault = bd?.tools ?? [];
+      // The bot's configured MCP servers (used only when the bot is unscoped).
+      try {
+        const raw = (await OctoBuddyService.LoadMCPConfig(botId)) ?? "";
+        mcpServers = Object.keys(JSON.parse(raw || "{}")?.mcpServers ?? {}).sort();
+      } catch {
+        mcpServers = [];
+      }
     } catch (e) {
       error = String(e);
     }
@@ -57,13 +99,14 @@
   }
 
   function useCustom() {
-    // Seed from the full offered set so the operator prunes from all-on. Guard
-    // against an unprobed toolset (the segmented control is hidden until probed,
-    // so this is belt-and-suspenders) — seeding from [] would muzzle the channel.
-    const offered = toolset?.headlessSafe ?? [];
-    if (offered.length === 0) return;
+    // Seed from the bot's OWN candidate pool (built-ins it has + its MCP tools),
+    // so "本会话自定义" starts all-on within the bot's set and the operator prunes
+    // from there — never offering tools the bot itself doesn't have. Seeding from
+    // [] would muzzle the channel, so guard the empty pool.
+    const pool = [...builtinCandidates, ...mcpCandidates];
+    if (pool.length === 0) return;
     configured = true;
-    scoped = new Set(offered);
+    scoped = new Set(pool);
     commit();
   }
   function followDefault() {
@@ -94,12 +137,37 @@
       <button type="button" class:active={configured} onclick={useCustom}>本会话自定义</button>
     </div>
     {#if configured}
-      <div class="toolgrid">
-        {#each toolset.headlessSafe as name (name)}
-          <label class="chk"><input type="checkbox" checked={scoped.has(name)} onchange={() => toggle(name)} /> {name}</label>
-        {/each}
+      <div class="group">
+        <span class="grouplabel">内置工具</span>
+        <div class="toolgrid">
+          {#each builtinCandidates as name (name)}
+            <label class="chk"><input type="checkbox" checked={scoped.has(name)} onchange={() => toggle(name)} /> {name}</label>
+          {/each}
+        </div>
       </div>
-      <p class="hint">未勾选的工具在本会话不可用（全部取消 = 本会话禁用工具）。</p>
+      <div class="group">
+        <span class="grouplabel">MCP 工具</span>
+        {#if mcpCandidates.length === 0}
+          <p class="hint">该 Bot 未启用 MCP 工具。</p>
+        {:else}
+          <div class="toolgrid">
+            {#each mcpCandidates as name (name)}
+              <label class="chk"><input type="checkbox" checked={scoped.has(name)} onchange={() => toggle(name)} /> {name}</label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      {#if extraScoped.length}
+        <div class="group">
+          <span class="grouplabel">超出 Bot 集（将移除）</span>
+          <div class="toolgrid">
+            {#each extraScoped as name (name)}
+              <label class="chk extra"><input type="checkbox" checked onchange={() => toggle(name)} /> {name} <span class="tag">超集</span></label>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      <p class="hint">本会话只能在该 Bot 已选工具内进一步收窄（全部取消 = 本会话禁用工具）。</p>
     {:else}
       <p class="hint">本会话使用该 Bot 的默认工具集。</p>
     {/if}
@@ -124,6 +192,10 @@
   .modeseg button.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
   .toolgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; }
   .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink); }
+  .chk.extra { color: var(--ink-soft); }
+  .chk .tag { font-size: 10px; color: var(--ink-faint); border: 1px solid var(--hairline); border-radius: 5px; padding: 0 4px; }
+  .group { display: flex; flex-direction: column; gap: 6px; }
+  .grouplabel { font-size: 10px; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
   .hint { color: var(--ink-faint); font-size: 11px; margin: 0; }
   .hint.err { color: var(--danger); }
 </style>

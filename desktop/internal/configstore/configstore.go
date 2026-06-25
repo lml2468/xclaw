@@ -483,6 +483,9 @@ func Save(bots []BotConfig, removedIDs []string) error {
 		if !safepath.ValidSlug(b.ID) {
 			return fmt.Errorf("invalid bot id %q — letters, digits, . _ - only", b.ID)
 		}
+		if strings.TrimSpace(b.Model) == "" {
+			return fmt.Errorf("bot %s: model is required", b.ID)
+		}
 		if err := validURL(b.APIURL); err != nil {
 			return fmt.Errorf("bot %s: apiUrl: %w", b.ID, err)
 		}

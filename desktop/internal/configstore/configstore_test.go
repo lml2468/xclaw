@@ -63,6 +63,7 @@ func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 			OnBehalfOf:     &config.OnBehalfOf{UID: "grantor-9"},
 			Trigger:        &config.TriggerConfig{MentionFreeGroups: []string{"g1", "g2"}},
 			Agent: &config.AgentConfig{
+				Model:              "m",
 				Cron:               ptrTo(true),
 				ToolProgress:       true,
 				InheritUserConfig:  true,
@@ -122,7 +123,7 @@ func TestSavePreservesChannelToolOverrides(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{Bots: []config.BotEntry{{
 		ID: "b1", APIURL: "https://x.example",
-		Agent: &config.AgentConfig{Tools: &config.ToolPolicy{
+		Agent: &config.AgentConfig{Model: "m", Tools: &config.ToolPolicy{
 			Default:  []string{"Read"},
 			Channels: map[string][]string{"chanA": {"Bash"}},
 		}},
@@ -163,13 +164,14 @@ func TestSavePreservesChannelToolOverrides(t *testing.T) {
 }
 
 // TestSaveClearingDefaultToolsCollapsesEmptyAgent pins that clearing the
-// bot-level whitelist on an otherwise-empty agent leaves no "tools":{"default":null}
-// cruft (and no channels means the whole tools block is dropped).
-func TestSaveClearingDefaultToolsCollapsesEmptyAgent(t *testing.T) {
+// bot-level whitelist leaves no "tools":{"default":null} cruft. (The agent block
+// itself no longer collapses to nil — model is required, so it always carries at
+// least Model — but the Tools sub-block must be dropped when empty.)
+func TestSaveClearingDefaultToolsDropsToolsBlock(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{Bots: []config.BotEntry{{
 		ID: "b1", APIURL: "https://x.example",
-		Agent: &config.AgentConfig{Tools: &config.ToolPolicy{Default: []string{"Read"}}},
+		Agent: &config.AgentConfig{Model: "m", Tools: &config.ToolPolicy{Default: []string{"Read"}}},
 	}}})
 	loaded, err := Load()
 	if err != nil {
@@ -180,8 +182,11 @@ func TestSaveClearingDefaultToolsCollapsesEmptyAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := readBack(t).Bots[0]
-	if b.Agent != nil {
-		t.Errorf("empty agent should collapse to nil, got %+v", b.Agent)
+	if b.Agent == nil {
+		t.Fatalf("agent should survive (model is required)")
+	}
+	if b.Agent.Tools != nil {
+		t.Errorf("empty tools block should be dropped, got %+v", b.Agent.Tools)
 	}
 }
 
@@ -221,7 +226,7 @@ func TestSavePrunesOnlyExplicitRemovals(t *testing.T) {
 	}
 
 	// Keep a; drop b WITHOUT explicit removal; explicitly remove c.
-	keep := []BotConfig{{ID: "a", APIURL: "https://x.example"}}
+	keep := []BotConfig{{ID: "a", APIURL: "https://x.example", Model: "m"}}
 	if err := Save(keep, []string{"c"}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +266,7 @@ func TestBootstrapScaffoldOnceAndStaysDeleted(t *testing.T) {
 	setup(t)
 	bootPath := filepath.Join(botDir("fresh"), "BOOTSTRAP.md")
 
-	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example"}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example", Model: "m"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, err := os.ReadFile(bootPath); err != nil {
@@ -275,7 +280,7 @@ func TestBootstrapScaffoldOnceAndStaysDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A later operator edit-save of the now-EXISTING bot must NOT recreate it.
-	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example", Soul: "I am Atlas."}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example", Model: "m", Soul: "I am Atlas."}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(bootPath); !os.IsNotExist(err) {
@@ -288,7 +293,7 @@ func TestBootstrapScaffoldOnceAndStaysDeleted(t *testing.T) {
 func TestBootstrapNotScaffoldedForExistingBot(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{Bots: []config.BotEntry{{ID: "existing", APIURL: "https://x.example"}}})
-	if err := Save([]BotConfig{{ID: "existing", APIURL: "https://x.example"}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "existing", APIURL: "https://x.example", Model: "m"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(botDir("existing"), "BOOTSTRAP.md")); !os.IsNotExist(err) {
@@ -298,7 +303,7 @@ func TestBootstrapNotScaffoldedForExistingBot(t *testing.T) {
 
 func TestSaveScaffoldsTemplatesOnFirstCreate(t *testing.T) {
 	setup(t)
-	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example"}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "fresh", APIURL: "https://x.example", Model: "m"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	soul, err := os.ReadFile(filepath.Join(botDir("fresh"), "SOUL.md"))
@@ -347,7 +352,7 @@ func TestDefaultTemplatesCarryLoadBearingSections(t *testing.T) {
 func TestSaveFirstCreateKeepsOperatorContent(t *testing.T) {
 	setup(t)
 	if err := Save([]BotConfig{{
-		ID: "fresh", APIURL: "https://x.example",
+		ID: "fresh", APIURL: "https://x.example", Model: "m",
 		Soul:   "I am Atlas.",
 		Agents: "Be concise.",
 	}}, nil); err != nil {
@@ -373,7 +378,7 @@ func TestSaveFirstCreateKeepsOperatorContent(t *testing.T) {
 func TestSaveBlankFieldsAreNoOpOnExistingBot(t *testing.T) {
 	setup(t)
 	// First Save creates the bot dir + scaffolds templates.
-	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example"}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example", Model: "m"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	soulPath := filepath.Join(botDir("ex"), "SOUL.md")
@@ -383,7 +388,7 @@ func TestSaveBlankFieldsAreNoOpOnExistingBot(t *testing.T) {
 		t.Fatalf("template should have scaffolded: %v", err)
 	}
 	// Second Save with blank fields must leave the scaffolded content alone.
-	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example"}}, nil); err != nil {
+	if err := Save([]BotConfig{{ID: "ex", APIURL: "https://x.example", Model: "m"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(soulPath)
@@ -452,6 +457,7 @@ func TestSaveSecretEnvUsesSecretRef(t *testing.T) {
 	bots := []BotConfig{{
 		ID:        "alpha",
 		APIURL:    "https://octo.example",
+		Model:     "m",
 		Env:       map[string]string{"PLAIN": "visible", "GH_TOKEN": ghSecret},
 		SecretEnv: map[string]bool{"GH_TOKEN": true},
 	}}
@@ -500,6 +506,23 @@ func filepathContains(haystack, needle string) bool {
 	return false
 }
 
+// TestSaveRejectsEmptyModel pins that model is required: a bot saved without a
+// model is rejected (the backend half of the "model 必填" rule).
+func TestSaveRejectsEmptyModel(t *testing.T) {
+	setup(t)
+	err := Save([]BotConfig{{ID: "a", APIURL: "https://x.example"}}, nil)
+	if err == nil {
+		t.Fatal("Save without a model must be rejected")
+	}
+	if !filepathContains(err.Error(), "model") {
+		t.Fatalf("error should name the model field: %v", err)
+	}
+	// Whitespace-only model is also rejected (TrimSpace).
+	if err := Save([]BotConfig{{ID: "a", APIURL: "https://x.example", Model: "  "}}, nil); err == nil {
+		t.Fatal("whitespace-only model must be rejected")
+	}
+}
+
 // TestSaveRejectsDuplicateOctoBotID is the regression for R3: two bots
 // must not share an OCTO_BOT_ID. They would otherwise share an octo-cli disk
 // profile, and deleting one bot's profile would silently break the other's
@@ -507,8 +530,8 @@ func filepathContains(haystack, needle string) bool {
 func TestSaveRejectsDuplicateOctoBotID(t *testing.T) {
 	setup(t)
 	err := Save([]BotConfig{
-		{ID: "a", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
-		{ID: "b", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+		{ID: "a", APIURL: "https://x.example", Model: "m", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+		{ID: "b", APIURL: "https://x.example", Model: "m", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
 	}, nil)
 	if err == nil {
 		t.Fatal("Save with duplicate OCTO_BOT_ID must be rejected")
@@ -518,9 +541,9 @@ func TestSaveRejectsDuplicateOctoBotID(t *testing.T) {
 	}
 	// Distinct robot ids — and bots without OCTO_BOT_ID at all — must continue to work.
 	if err := Save([]BotConfig{
-		{ID: "a", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
-		{ID: "b", APIURL: "https://x.example", Env: map[string]string{"OCTO_BOT_ID": "27xyz"}},
-		{ID: "c", APIURL: "https://x.example"},
+		{ID: "a", APIURL: "https://x.example", Model: "m", Env: map[string]string{"OCTO_BOT_ID": "27abc"}},
+		{ID: "b", APIURL: "https://x.example", Model: "m", Env: map[string]string{"OCTO_BOT_ID": "27xyz"}},
+		{ID: "c", APIURL: "https://x.example", Model: "m"},
 	}, nil); err != nil {
 		t.Fatalf("distinct OCTO_BOT_IDs should save cleanly: %v", err)
 	}

@@ -50,6 +50,9 @@ func (d controlCommandDispatcher) cronTarget(botID, action string) (*botTarget, 
 
 func cronCreateCoords(b control.CronCreateBody, owner string) (cron.SessionCoords, error) {
 	chType := channelTypeFor(b.ChannelType, b.ChannelID)
+	if (chType == int(router.ChannelGroup) || chType == int(cron.ChannelCommunityTopic)) && b.ChannelID == "" {
+		return cron.SessionCoords{}, fmt.Errorf("group/thread target requires channelId")
+	}
 	fromUID, err := resolveFromUID(chType, b.FromUID, owner)
 	if err != nil {
 		return cron.SessionCoords{}, err
@@ -135,7 +138,8 @@ func cronUpdateCoords(b control.CronUpdateBody, owner string) cron.SessionCoords
 	fromUID := b.FromUID
 	if chType == int(cron.ChannelConsole) {
 		fromUID = cron.ConsoleUID
-	} else if chType == int(router.ChannelGroup) {
+	} else if chType == int(router.ChannelGroup) || chType == int(cron.ChannelCommunityTopic) {
+		// Group and Thread fire as the bot/owner; the body FromUID is irrelevant.
 		fromUID = owner
 	}
 	fromName := ""
@@ -173,7 +177,9 @@ func resolveFromUID(chType int, bodyFromUID, owner string) (string, error) {
 	switch chType {
 	case int(cron.ChannelConsole):
 		return cron.ConsoleUID, nil
-	case int(router.ChannelGroup):
+	case int(router.ChannelGroup), int(cron.ChannelCommunityTopic):
+		// Group and Thread both fire as the bot/owner (the bot identifies as
+		// itself in the channel); the body FromUID is irrelevant.
 		return owner, nil
 	default: // DM
 		if bodyFromUID == "" {
@@ -184,7 +190,8 @@ func resolveFromUID(chType int, bodyFromUID, owner string) (string, error) {
 }
 
 func channelTypeFor(explicit int, channelID string) int {
-	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) || explicit == int(cron.ChannelConsole) {
+	if explicit == int(router.ChannelDM) || explicit == int(router.ChannelGroup) ||
+		explicit == int(cron.ChannelConsole) || explicit == int(cron.ChannelCommunityTopic) {
 		return explicit
 	}
 	if channelID != "" {

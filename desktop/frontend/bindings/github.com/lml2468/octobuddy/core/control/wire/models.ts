@@ -43,7 +43,9 @@ export class CronCreateBody {
 
     /**
      * ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-     * which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console.
+     * which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console,
+     * 5 = CommunityTopic (a thread inside a group; ChannelID is the compound
+     * "<groupNo>____<shortId>").
      */
     "channelId"?: string;
     "channelType"?: number;

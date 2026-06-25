@@ -58,16 +58,36 @@ func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Ga
 	}
 
 	// IM targets — the original path through the per-session worker queue.
+	// Three kinds, distinguished by router type (how SessionKey derives the
+	// session), octo type (how the connector addresses the send), and which
+	// field carries the reply channel id:
+	//
+	//   Group (2)  → router Group, octo Group, channel id = t.ChannelID.
+	//   Thread (5) → router Group (group-like: its own session keyed on the
+	//                compound "<groupNo>____<shortId>"), octo CommunityTopic
+	//                (the connector rejects a thread id queried as a plain
+	//                group), channel id = t.ChannelID (the compound id).
+	//   DM (1)     → router DM, octo DM, channel id = t.FromUID. An Octo DM is
+	//                addressed by the PEER uid, which a DM task stores in
+	//                FromUID; t.ChannelID is empty for a DM, so it must not be
+	//                used as the reply target here.
 	chType := router.ChannelDM
 	octoType := octo.ChannelDM
-	if t.ChannelType == cron.ChannelKind(router.ChannelGroup) {
+	channelID := t.FromUID
+	switch t.ChannelType {
+	case cron.ChannelKind(router.ChannelGroup):
 		chType = router.ChannelGroup
 		octoType = octo.ChannelGroup
+		channelID = t.ChannelID
+	case cron.ChannelCommunityTopic:
+		chType = router.ChannelGroup
+		octoType = octo.ChannelCommunityTopic
+		channelID = t.ChannelID
 	}
 	inbound := router.InboundMessage{
 		FromUID:     t.FromUID,
 		FromName:    t.FromName,
-		ChannelID:   t.ChannelID,
+		ChannelID:   channelID,
 		ChannelType: chType,
 		Text:        t.Prompt,
 		Source:      trigger.SourceCron,
@@ -78,5 +98,5 @@ func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Ga
 		clog.For("cron").Warn("task has unroutable coords", "task", t.ID, "err", err)
 		return
 	}
-	connector.EnqueueCron(key, t.ChannelID, octoType, inbound)
+	connector.EnqueueCron(key, channelID, octoType, inbound)
 }

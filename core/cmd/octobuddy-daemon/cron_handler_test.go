@@ -228,3 +228,60 @@ func assertCronEnabledOnlyUpdate(t *testing.T, call func(string, any) (any, erro
 // warrants. A regression in the routing branch is caught immediately by
 // the verify-step "create a Console-target task, observe it land in the
 // desktop chat" smoke run.
+
+// TestCronThreadTarget verifies a thread (CommunityTopic = 5) task: the
+// compound channel id is stored verbatim, ChannelType persists as 5, and the
+// task fires AS the owner (FromUID = owner, like a group — never a peer uid).
+func TestCronThreadTarget(t *testing.T) {
+	const owner = "owner-1"
+	env := newCronHandlerTestEnv(t, owner, false)
+
+	const threadID = "0fff23f5____2069602928229879808"
+	res, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "thread digest",
+		ChannelID: threadID, ChannelType: 5,
+	})
+	if err != nil {
+		t.Fatalf("thread-target create: %v", err)
+	}
+	info := res.(control.CronTaskInfo)
+	if info.ChannelID != threadID || info.ChannelType != 5 {
+		t.Fatalf("thread coords not preserved: %+v", info)
+	}
+	stored, err := env.mgr.List()
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("list after thread create: %v %#v", err, stored)
+	}
+	if stored[0].ChannelType != cron.ChannelCommunityTopic {
+		t.Fatalf("stored ChannelType must be CommunityTopic(5), got %d", stored[0].ChannelType)
+	}
+	if stored[0].FromUID != owner {
+		t.Fatalf("a thread task fires as the owner, FromUID must be %q, got %q", owner, stored[0].FromUID)
+	}
+}
+
+// TestCronThreadRequiresChannelID verifies a thread/group task without a
+// channel id is rejected at create — otherwise it would fire with an
+// unroutable empty channel id.
+func TestCronThreadRequiresChannelID(t *testing.T) {
+	env := newCronHandlerTestEnv(t, "owner-1", false)
+	if _, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "p", ChannelType: 5,
+	}); err == nil {
+		t.Fatal("thread create without channelId must be refused")
+	}
+}
+
+// TestCronDMRequiresFromUID verifies a DM task without a peer uid is rejected:
+// storing the owner uid for a "DM to alice" task would silently rewrite the
+// target to "DM to self" on first fire.
+func TestCronDMRequiresFromUID(t *testing.T) {
+	env := newCronHandlerTestEnv(t, "owner-1", false)
+	// Explicit DM type, no FromUID, no channelId.
+	if _, err := env.call("cron.create", control.CronCreateBody{
+		BotID: "b1", Schedule: "0 9 * * *", Prompt: "p", ChannelType: 1,
+	}); err == nil {
+		t.Fatal("DM create without fromUid must be refused")
+	}
+}
+

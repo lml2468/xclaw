@@ -535,6 +535,20 @@ func (x *OctoBuddyService) GroupsList(botID string) ([]octocli.Group, error) {
 	return octocli.Groups(ctx, robotID)
 }
 
+// ThreadsList returns the threads (CommunityTopic / 群内话题) inside one group, for
+// the cron-task thread picker. Same shape + error semantics as GroupsList; the
+// returned Thread.ID is the compound "<groupNo>____<shortId>" channel id the
+// task binds to. Empty list (no error) when the group has no threads.
+func (x *OctoBuddyService) ThreadsList(botID, groupNo string) ([]octocli.Thread, error) {
+	robotID, _, _, err := loadOctoBinding(botID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return octocli.Threads(ctx, robotID, groupNo)
+}
+
 // OctoCliRelogin re-writes the disk profile for the bot from the stored
 // bf_ token. Used to repair a missing/stale profile from the Octo-integration
 // pane without forcing the operator to re-save the whole config.

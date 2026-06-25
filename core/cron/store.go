@@ -21,7 +21,8 @@ import (
 )
 
 // ChannelKind mirrors router.ChannelType without importing it (the store stays a
-// leaf package). 1 = DM, 2 = Group, matching router and octo.
+// leaf package). 1 = DM, 2 = Group, 5 = CommunityTopic (群内话题/子区), matching
+// router and octo.
 //
 // 3 = Console is a non-IM target used exclusively by the desktop GUI: the
 // scheduled fire lands as a Console session inbound (rendered in the chat
@@ -29,10 +30,16 @@ import (
 // The IM connector never sees a Console-kind fire; bot.go's fireCronTask
 // routes it past EnqueueCron straight to gateway.Handle. Persisted as kind=3
 // so a daemon restart preserves the routing decision without rediscovery.
+//
+// 5 = CommunityTopic is a thread inside a group. Its ChannelID is the compound
+// "<groupNo>____<shortId>" (octo.ThreadIDSeparator); it routes group-like (its
+// own isolated session keyed on the compound id) but must be SENT with octo
+// channel_type=CommunityTopic — bot.go's fireCronTask makes that distinction.
 type ChannelKind int
 
 const (
-	ChannelConsole ChannelKind = 3
+	ChannelConsole        ChannelKind = 3
+	ChannelCommunityTopic ChannelKind = 5
 )
 
 // ConsoleUID is the synthetic from-uid that identifies the desktop GUI's

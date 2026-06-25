@@ -363,6 +363,33 @@ func TestParseGroupsResponse_GroupNo(t *testing.T) {
 	}
 }
 
+func TestParseThreadsResponse_Live(t *testing.T) {
+	// The real `octo-cli thread list <group-no>` shape: id under `channel_id`
+	// (the COMPOUND "<groupNo>____<shortId>" the connector sends with), name
+	// under `name`, plus channel_type/short_id we ignore.
+	raw := []byte(`{"ok":true,"data":[{"channel_id":"0fff____2069","name":"thread test","short_id":"2069","channel_type":5}]}`)
+	threads, err := parseThreadsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 1 || threads[0].ID != "0fff____2069" || threads[0].Name != "thread test" {
+		t.Fatalf("thread parse wrong: %+v", threads)
+	}
+}
+
+func TestParseThreadsResponse_MissingName(t *testing.T) {
+	// id-only thread → name falls back to the compound id so the dropdown
+	// isn't a blank, unpickable option.
+	raw := []byte(`{"ok":true,"data":[{"channel_id":"g____1"}]}`)
+	threads, err := parseThreadsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 1 || threads[0].Name != "g____1" {
+		t.Fatalf("missing-name fallback wrong: %+v", threads)
+	}
+}
+
 func TestParseGroupsResponse_MissingName(t *testing.T) {
 	// Defensive: an item with id but no name should still render — fall back
 	// to id so the GUI dropdown isn't a blank option the user can't pick.

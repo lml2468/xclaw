@@ -754,6 +754,94 @@ func parseGroupsResponse(raw []byte) ([]Group, error) {
 	return out, nil
 }
 
+// Thread is a single thread (CommunityTopic / 群内话题 / 子区) inside a group,
+// projected from `octo-cli thread list <group-no>`. The renderer uses it to
+// populate the cron-task thread picker. ID is the COMPOUND channel id
+// ("<groupNo>____<shortId>") the connector addresses sends with — not the bare
+// short id — so a cron task stored with this ID routes + delivers correctly.
+type Thread struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Threads shells out to `octo-cli thread list <group-no> --bot-id <robotID>
+// --format json` and returns the group's threads. Same auth + argv-injection
+// guards as Groups (the group-no flows into argv, so validate it too). The
+// response item carries the compound id under `channel_id` (plus `name`,
+// `short_id`, `channel_type:5`); we read `channel_id` as the ID so the stored
+// cron coords are the exact id the connector sends with.
+func Threads(ctx context.Context, robotID, groupNo string) ([]Thread, error) {
+	if robotID == "" {
+		return nil, fmt.Errorf("octocli.Threads: robotID is required")
+	}
+	if !octoapi.ValidRobotID.MatchString(robotID) {
+		return nil, fmt.Errorf("octocli.Threads: robotID %q has illegal characters (must match %s)", robotID, octoapi.ValidRobotID.String())
+	}
+	if groupNo == "" {
+		return nil, fmt.Errorf("octocli.Threads: groupNo is required")
+	}
+	// The group-no is a positional argv element; refuse a value that could
+	// smuggle a flag ("--config=…") across the argv boundary. Real group-nos
+	// are hex/compound ids — no leading dash, no whitespace.
+	if strings.HasPrefix(groupNo, "-") || strings.ContainsAny(groupNo, " \t\n") {
+		return nil, fmt.Errorf("octocli.Threads: groupNo %q has illegal characters", groupNo)
+	}
+	bin := BinPath()
+	if !isFile(bin) {
+		return nil, fmt.Errorf("octocli.Threads: octo-cli not installed at %s", bin)
+	}
+	cmd := exec.CommandContext(ctx, bin, "thread", "list", groupNo, "--bot-id", robotID, "--format", "json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("octo-cli thread list (%s/%s): %w (output: %s)", robotID, groupNo, err, redactChildOutput(out))
+	}
+	return parseThreadsResponse(out)
+}
+
+// parseThreadsResponse extracts Thread entries from the octo-cli envelope.
+// Same tolerance as parseGroupsResponse; the id is the compound channel_id.
+// Pure function so it can be unit-tested without spawning.
+func parseThreadsResponse(raw []byte) ([]Thread, error) {
+	var env struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("parse octo-cli response: %w (output: %s)", err, redactChildOutput(raw))
+	}
+	if !env.OK {
+		msg := env.Error.Message
+		if msg == "" {
+			msg = "unknown error"
+		}
+		return nil, fmt.Errorf("octo-cli reported error: %s", msg)
+	}
+	items, err := unwrapItems(env.Data)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Thread, 0, len(items))
+	for _, raw := range items {
+		var loose map[string]any
+		if err := json.Unmarshal(raw, &loose); err != nil {
+			continue
+		}
+		id := firstNonEmptyKey(loose, "channel_id", "channelId", "id")
+		name := firstNonEmptyKey(loose, "name", "threadName", "thread_name")
+		if id == "" {
+			continue
+		}
+		if name == "" {
+			name = id
+		}
+		out = append(out, Thread{ID: id, Name: name})
+	}
+	return out, nil
+}
+
 func unwrapItems(data json.RawMessage) ([]json.RawMessage, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return nil, nil

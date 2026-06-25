@@ -128,7 +128,9 @@ type CronCreateBody struct {
 	// Recurring, when set, overrides the default (cron→true, one-shot→false).
 	Recurring *bool `json:"recurring,omitempty"`
 	// ChannelID + ChannelType bind a GROUP task. Omit (or type 1) for a DM task,
-	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console.
+	// which binds to the resolved owner. ChannelType: 1 = DM, 2 = Group, 3 = Console,
+	// 5 = CommunityTopic (a thread inside a group; ChannelID is the compound
+	// "<groupNo>____<shortId>").
 	ChannelID   string `json:"channelId,omitempty"`
 	ChannelType int    `json:"channelType,omitempty"`
 	// FromUID identifies WHO the task fires AS — distinct from the auth uid

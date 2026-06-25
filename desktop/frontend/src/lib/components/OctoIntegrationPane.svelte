@@ -10,7 +10,7 @@
  // see configstore.Save's auto-Login + this pane's manual "重新登录" button
  // for the recovery path.
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
-  import { errMsg } from "../errors";
+  import { friendlyErr } from "../errors";
   import { untrack } from "svelte";
   import type { BotConfig } from "../../../bindings/github.com/lml2468/octobuddy/desktop/internal/configstore/models";
 
@@ -96,7 +96,7 @@
       if (gen !== cliStatusGen || capturedId !== bot.id) return;
       cliRegistered = !!s?.registered;
       cliRobotId = s?.robotId ?? "";
-    } catch (e) { cliError = errMsg(e); }
+    } catch (e) { cliError = friendlyErr(e); }
   }
   async function relogin() {
     cliBusy = true; cliError = ""; cliNotice = "";
@@ -111,7 +111,7 @@
         cliRobotId = robotId;
         cliNotice = "已写入 octo-cli profile";
       }
-    } catch (e) { cliError = errMsg(e); }
+    } catch (e) { cliError = friendlyErr(e); }
     finally { cliBusy = false; }
   }
   async function logout() {
@@ -123,7 +123,7 @@
         cliRegistered = false;
         cliNotice = "已删除 octo-cli profile";
       }
-    } catch (e) { cliError = errMsg(e); }
+    } catch (e) { cliError = friendlyErr(e); }
     finally { cliBusy = false; }
   }
 </script>

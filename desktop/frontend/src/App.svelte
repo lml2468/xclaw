@@ -247,10 +247,10 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1z"/></svg>
               </button>
             {/if}
-            <button class="icon" class:on={filePane === "memory"} style="--wails-draggable: no-drag;" title="Session memory" onclick={() => toggleFilePane("memory")} aria-label="Toggle memory" aria-pressed={filePane === "memory"}>
+            <button class="icon" class:on={filePane === "memory"} style="--wails-draggable: no-drag;" title="会话记忆" onclick={() => toggleFilePane("memory")} aria-label="切换会话记忆" aria-pressed={filePane === "memory"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5a6 6 0 0 0-12 0c0 1.3.5 2.6 1.5 3.5.7.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
             </button>
-            <button class="icon" class:on={filePane === "workspace"} style="--wails-draggable: no-drag;" title="Workspace files" onclick={() => toggleFilePane("workspace")} aria-label="Toggle workspace" aria-pressed={filePane === "workspace"}>
+            <button class="icon" class:on={filePane === "workspace"} style="--wails-draggable: no-drag;" title="工作区文件" onclick={() => toggleFilePane("workspace")} aria-label="切换工作区" aria-pressed={filePane === "workspace"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
             </button>
           {/if}

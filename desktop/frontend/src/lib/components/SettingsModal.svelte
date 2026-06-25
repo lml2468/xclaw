@@ -15,7 +15,7 @@
   import { store } from "../store.svelte";
   import { modal } from "../actions/modal";
   import { confirm } from "../confirm.svelte";
-  import { errMsg } from "../errors";
+  import { friendlyErr } from "../errors";
   import Avatar from "./Avatar.svelte";
   import BasicInfoPane from "./BasicInfoPane.svelte";
   import RuntimeInfoPane from "./RuntimeInfoPane.svelte";
@@ -75,7 +75,7 @@
       // wizard rather than a blank settings shell with an easy-to-miss button.
       if (openWizardOnMount && bots.length === 0) openWizard();
     } catch (e) {
-      error = errMsg(e);
+      error = friendlyErr(e);
     }
   }
 
@@ -114,7 +114,7 @@
       dirty = false;
       if (restart) { await OctoBuddyService.RestartCore(); store.bots = []; OctoBuddyService.BotsList(); onclose(); }
     } catch (e) {
-      error = errMsg(e);
+      error = friendlyErr(e);
     } finally {
       busy = false;
     }
@@ -158,7 +158,7 @@
       dirty = true;
       wizardOpen = false;
     } catch (e) {
-      wizError = errMsg(e);
+      wizError = friendlyErr(e);
     } finally {
       wizBusy = false;
     }

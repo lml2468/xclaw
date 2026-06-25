@@ -348,6 +348,21 @@ func TestParseGroupsResponse_ItemsObject(t *testing.T) {
 	}
 }
 
+func TestParseGroupsResponse_GroupNo(t *testing.T) {
+	// The shape `octo-cli group list` actually returns: id under `group_no`,
+	// plus a `space_id` we ignore. Before group_no was added to the key probe
+	// every entry was dropped (id=="" → continue) and the cron target dropdown
+	// came back empty.
+	raw := []byte(`{"ok":true,"data":[{"group_no":"0fff23f5","name":"OctoBuddy测试群","space_id":"minglue_default"}]}`)
+	groups, err := parseGroupsResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ID != "0fff23f5" || groups[0].Name != "OctoBuddy测试群" {
+		t.Fatalf("group_no parse wrong: %+v", groups)
+	}
+}
+
 func TestParseGroupsResponse_MissingName(t *testing.T) {
 	// Defensive: an item with id but no name should still render — fall back
 	// to id so the GUI dropdown isn't a blank option the user can't pick.

@@ -681,8 +681,8 @@ type Group struct {
 //
 // Response shape across octo-cli versions has been observed as either a
 // JSON array under `data` or an object `{items: [...], total: N}` under
-// `data`, with per-item keys variously `id`/`groupId`/`group_id` and
-// `name`/`groupName`/`group_name`. We parse tolerantly and only surface
+// `data`, with per-item keys variously `id`/`groupId`/`group_id`/`group_no`
+// and `name`/`groupName`/`group_name`. We parse tolerantly and only surface
 // entries that have a non-empty id; missing names degrade to the id so the
 // renderer can still display something.
 //
@@ -741,7 +741,7 @@ func parseGroupsResponse(raw []byte) ([]Group, error) {
 		if err := json.Unmarshal(raw, &loose); err != nil {
 			continue
 		}
-		id := firstNonEmptyKey(loose, "id", "groupId", "group_id")
+		id := firstNonEmptyKey(loose, "id", "groupId", "group_id", "group_no", "groupNo", "channelId", "channel_id")
 		name := firstNonEmptyKey(loose, "name", "groupName", "group_name")
 		if id == "" {
 			continue

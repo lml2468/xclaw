@@ -67,15 +67,17 @@ func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Ga
 	//                compound "<groupNo>____<shortId>"), octo CommunityTopic
 	//                (the connector rejects a thread id queried as a plain
 	//                group), channel id = t.ChannelID (the compound id).
-	//   DM (1)     → router DM, octo DM, channel id = t.FromUID. An Octo DM is
-	//                addressed by the recipient uid; a DM cron task fires to the
-	//                OWNER (the control handler stamps FromUID = owner — a
-	//                scheduled DM may only target the owner, never an arbitrary
-	//                peer), so FromUID is both the session key source and the
-	//                send target. t.ChannelID is empty for a DM.
+	//   DM (1)     → router DM, octo DM. An Octo DM is addressed by the
+	//                recipient uid; a scheduled DM may only target the OWNER, so
+	//                the recipient is resolved from the LIVE owner uid at fire
+	//                time (connector.OwnerUID()) — NOT the stored FromUID. This
+	//                is robust to owner rotation and to tasks stored before the
+	//                owner was resolved (those have an empty FromUID, which the
+	//                old "use t.FromUID" path dropped as "no from_uid").
 	chType := router.ChannelDM
 	octoType := octo.ChannelDM
-	channelID := t.FromUID
+	channelID := ""
+	fromUID := t.FromUID
 	switch t.ChannelType {
 	case cron.ChannelKind(router.ChannelGroup):
 		chType = router.ChannelGroup
@@ -85,9 +87,17 @@ func fireCronTask(ctx context.Context, connector *octo.Connector, gw *gateway.Ga
 		chType = router.ChannelGroup
 		octoType = octo.ChannelCommunityTopic
 		channelID = t.ChannelID
+	default: // DM — fire to the live owner.
+		owner := connector.OwnerUID()
+		if owner == "" {
+			clog.For("cron").Warn("DM task cannot fire: bot owner not resolved yet", "task", t.ID)
+			return
+		}
+		fromUID = owner
+		channelID = owner
 	}
 	inbound := router.InboundMessage{
-		FromUID:     t.FromUID,
+		FromUID:     fromUID,
 		FromName:    t.FromName,
 		ChannelID:   channelID,
 		ChannelType: chType,

@@ -58,12 +58,17 @@
         new BotConfig({ id: "main", apiUrl: "https://im.example.com/api", model: "claude-opus-4-8", gatewayBaseUrl: "https://gw.example/v1", env: { OCTO_BOT_ID: "27abc1234567" }, soul: "You are Atlas, the team's ops copilot.", agents: "Confirm before destructive actions." }),
         new BotConfig({ id: "research", apiUrl: "https://im.example.com/api", env: { OCTO_BOT_ID: "27xyz9876543" } }),
       ];
+      // Seed a mock toolset so the picker renders in preview.
+      store.toolset = { probed: true, claudeVersion: "2.1.187", headlessSafe: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "NotebookEdit", "TodoWrite", "Task", "Skill"] };
       sel = 0;
       return;
     }
     try {
       bots = (await OctoBuddyService.LoadConfig()) ?? [];
       loadedIds = bots.map((b) => b.id);
+      // Load the probed tool surface for the tool picker (best-effort; the
+      // picker shows a "probing…" hint until it resolves).
+      OctoBuddyService.LoadToolset().then((ts) => { if (ts) store.toolset = ts; }).catch(() => {});
       sel = 0;
       // First-run path: the Sidebar opens this modal with openWizardOnMount
       // when the roster is empty so the user lands directly on the Add-bot

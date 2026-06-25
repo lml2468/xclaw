@@ -16,6 +16,7 @@ import (
 	"github.com/lml2468/octobuddy/desktop/internal/configstore"
 	"github.com/lml2468/octobuddy/desktop/internal/control"
 	"github.com/lml2468/octobuddy/desktop/internal/core"
+	"github.com/lml2468/octobuddy/desktop/internal/mcpconfig"
 	"github.com/lml2468/octobuddy/desktop/internal/octoapi"
 	"github.com/lml2468/octobuddy/desktop/internal/octocli"
 	"github.com/lml2468/octobuddy/desktop/internal/secrets"
@@ -410,6 +411,31 @@ func (x *OctoBuddyService) LoadToolset() (ToolsetInfo, error) {
 // follows with RestartCore to apply.
 func (x *OctoBuddyService) SaveConfig(bots []configstore.BotConfig, removedIDs []string) error {
 	return configstore.Save(bots, removedIDs)
+}
+
+// --- per-bot MCP server config (~/.octobuddy/<id>/.claude/.mcp.json) ---
+
+// LoadMCPConfig returns the bot's raw .mcp.json text ("" when none). Written
+// through to disk immediately by SaveMCPConfig (not via the dirty/SaveConfig
+// flow) — the daemon loads it per turn.
+func (x *OctoBuddyService) LoadMCPConfig(botID string) (string, error) {
+	return mcpconfig.Load(botID)
+}
+
+// SaveMCPConfig validates and writes the bot's .mcp.json (empty content deletes
+// it). The daemon picks it up on the next turn; a running bot must be restarted
+// for the change to apply to an in-flight session, but new turns load it
+// fresh. Returns a human-readable validation error for the UI to show inline.
+func (x *OctoBuddyService) SaveMCPConfig(botID, content string) error {
+	return mcpconfig.Save(botID, content)
+}
+
+// CheckMCP asks the daemon to probe the bot's saved .mcp.json and report each
+// server's health (the "test connection" button + post-save check). Async: the
+// response arrives on EventStream as an mcp.check envelope. Requires the bot to
+// be running in the daemon (the probe uses its resolved bin + env).
+func (x *OctoBuddyService) CheckMCP(botID string) error {
+	return x.send("mcp.check", control.MCPCheckBody{BotID: botID})
 }
 
 // --- octo-cli profile management (per-bot disk profiles in ~/.octo-cli/) ---

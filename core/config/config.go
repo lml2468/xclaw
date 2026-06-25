@@ -102,7 +102,11 @@ type AgentConfig struct {
 // ToolPolicy is the per-bot tool surface.
 //   - Default is the bot-level whitelist. nil → unset (driver resolves the
 //     binary's probed headless-safe set); a non-nil (incl. empty) slice is
-//     used verbatim (empty = no tools).
+//     used verbatim (empty = no tools). NB: no omitempty on Default — an
+//     explicit empty list (muzzle) must survive a JSON round-trip distinct
+//     from absent. The parent Tools pointer is omitempty, so an unconfigured
+//     bot omits the whole block; once present, default serializes as [] vs
+//     a non-empty list vs null(unset).
 //   - Channels overrides Default per sessionKey (group = channelId; DM =
 //     "<spaceId>:<uid>" or bare uid — the same key the router derives). A
 //     present entry is used verbatim (incl. empty = muzzle that channel).
@@ -110,7 +114,7 @@ type AgentConfig struct {
 // Unconfigured channels (and the desktop Console) fall through to the global
 // headless-safe set.
 type ToolPolicy struct {
-	Default  []string            `json:"default,omitempty"`
+	Default  []string            `json:"default"`
 	Channels map[string][]string `json:"channels,omitempty"`
 }
 

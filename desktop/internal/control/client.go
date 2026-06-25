@@ -47,6 +47,9 @@ type (
 	SessionActivityBody = wire.SessionActivityBody
 	ErrorBody           = wire.ErrorBody
 	HistoryMessage      = wire.HistoryMessage
+	MCPCheckBody        = wire.MCPCheckBody
+	MCPServerHealth     = wire.MCPServerHealth
+	MCPCheckResponse    = wire.MCPCheckResponse
 )
 
 const (

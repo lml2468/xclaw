@@ -30,6 +30,20 @@ export class BotConfig {
      */
     "cron": boolean;
 
+    /** SystemPromptMode mirrors agent.systemPromptMode ("minimal" | "claude_code"; "" = minimal). */
+    "systemPromptMode": string;
+
+    /** SettingSources mirrors agent.settingSources (subset of {user, project}; empty = ["user"]). */
+    "settingSources": string[];
+
+    /**
+     * Tools mirrors agent.tools — bot-level default whitelist + per-channel
+     * overrides keyed by sessionKey. null/absent = the driver's probed
+     * headless-safe default. The bot-level default is edited on 基础信息; the
+     * per-channel map is edited in the chat window but round-tripped here.
+     */
+    "tools": ToolPolicy | null;
+
     /** Creates a new BotConfig instance. */
     constructor($$source: Partial<BotConfig> = {}) {
         if (!("id" in $$source)) {
@@ -65,6 +79,15 @@ export class BotConfig {
         if (!("cron" in $$source)) {
             this["cron"] = false;
         }
+        if (!("systemPromptMode" in $$source)) {
+            this["systemPromptMode"] = "";
+        }
+        if (!("settingSources" in $$source)) {
+            this["settingSources"] = [];
+        }
+        if (!("tools" in $$source)) {
+            this["tools"] = null;
+        }
 
         Object.assign(this, $$source);
     }
@@ -85,6 +108,15 @@ export class BotConfig {
         return new BotConfig($$parsedSource as Partial<BotConfig>);
     }
 }
+
+/**
+ * ToolPolicy mirrors core/config.ToolPolicy: a bot-level default tool whitelist
+ * plus per-sessionKey overrides. A null/absent value means "driver default".
+ */
+export type ToolPolicy = {
+    default?: string[];
+    channels?: { [_ in string]?: string[] };
+};
 
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);

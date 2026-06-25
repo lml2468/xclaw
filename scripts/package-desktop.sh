@@ -80,6 +80,16 @@ if [[ -z "${OCTOBUDDY_SKIP_OCTO:-}" ]]; then
 fi
 
 echo "▸ building the Wails app (.app bundle)…"
+# Start from a clean bundle: wails3 task create:app:bundle does NOT clear an
+# existing bin/<app>.app, and its codesign:adhoc step signs --deep, which
+# rewrites the SIGNATURE of any nested Contents/Helpers/* carried over from a
+# prior run (changing its sha256). On a SKIP_OCTO iteration the octo-cli embed +
+# sidecar block below is skipped, so a stale octo-cli left in Helpers would get
+# re-signed (hash changes) while its sidecar stays put → EnsureInstalled fails
+# closed on "sha256 mismatch" at runtime. Removing the bundle first makes each
+# package run hermetic (the helpers are re-copied fresh and the sidecar, when
+# octo is embedded, is computed against the final signed bytes).
+rm -rf "$bundle"
 if [[ -n "$universal" ]]; then
   ( cd "$desktop" && wails3 task darwin:package:universal )
 else

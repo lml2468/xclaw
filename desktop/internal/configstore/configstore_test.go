@@ -384,3 +384,50 @@ func TestSaveRejectsDuplicateOctoBotID(t *testing.T) {
 		t.Fatalf("distinct OCTO_BOT_IDs should save cleanly: %v", err)
 	}
 }
+
+// TestSaveLoadToolsetPreservesBots verifies SaveToolset writes the top-level
+// toolset block via read-modify-write without disturbing the bot roster, and
+// LoadToolset reads it back.
+func TestSaveLoadToolsetPreservesBots(t *testing.T) {
+	setup(t)
+	writeConfig(t, config.File{Bots: []config.BotEntry{{ID: "b1", APIURL: "https://x.example"}}})
+
+	ts := &config.ToolsetCache{
+		ClaudeVersion: "2.1.187",
+		ProbedAt:      123,
+		Available:     []string{"Read", "Bash", "AskUserQuestion"},
+		HeadlessSafe:  []string{"Read", "Bash"},
+	}
+	if err := SaveToolset(ts); err != nil {
+		t.Fatalf("SaveToolset: %v", err)
+	}
+
+	got, err := LoadToolset()
+	if err != nil {
+		t.Fatalf("LoadToolset: %v", err)
+	}
+	if got == nil || got.ClaudeVersion != "2.1.187" || len(got.HeadlessSafe) != 2 {
+		t.Fatalf("toolset round-trip wrong: %+v", got)
+	}
+
+	// Bots must survive the toolset write.
+	bots, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(bots) != 1 || bots[0].ID != "b1" {
+		t.Fatalf("bot roster not preserved across SaveToolset: %+v", bots)
+	}
+}
+
+// TestLoadToolsetAbsent returns nil (not an error) when never probed.
+func TestLoadToolsetAbsent(t *testing.T) {
+	setup(t)
+	got, err := LoadToolset()
+	if err != nil {
+		t.Fatalf("LoadToolset on empty: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil toolset when unprobed, got %+v", got)
+	}
+}

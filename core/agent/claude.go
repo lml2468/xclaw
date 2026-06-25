@@ -314,6 +314,15 @@ func filterTools(tools []string) []string {
 	return out
 }
 
+// HeadlessSafeTools is the exported view of filterTools: given a probed
+// available set (from ProbeTools), it returns the headless-safe subset the
+// driver would offer by default — the same set the desktop's tool picker
+// should present. Centralizes the interactive-tool denylist so the GUI and the
+// driver never diverge.
+func HeadlessSafeTools(available []string) []string {
+	return filterTools(available)
+}
+
 // MCPServerStatus is one MCP server's health as reported by the claude
 // `system/init` line: Name + Status ("connected" | "failed" | …) and the
 // mcp__<name>__* tools it contributed (empty when failed). Drives the

@@ -461,3 +461,12 @@ func TestFilterToolsDropsInteractive(t *testing.T) {
 		}
 	}
 }
+
+// TestHeadlessSafeTools is the exported view of filterTools — the desktop uses
+// it to compute the picker's offered set, so it must match the driver default.
+func TestHeadlessSafeTools(t *testing.T) {
+	got := HeadlessSafeTools([]string{"Read", "AskUserQuestion", "Bash", "EnterPlanMode"})
+	if len(got) != 2 || got[0] != "Read" || got[1] != "Bash" {
+		t.Fatalf("HeadlessSafeTools = %v, want [Read Bash]", got)
+	}
+}

@@ -35,3 +35,45 @@ export class OctoCliStatus {
         return new OctoCliStatus($$parsedSource as Partial<OctoCliStatus>);
     }
 }
+
+/**
+ * ToolsetInfo is the tool-picker view of the probed claude tool surface.
+ * Probed is false when claude has not been probed yet (no binary / first run);
+ * the picker then shows a "probing…" state. HeadlessSafe is the set the picker
+ * offers (Available minus interactive tools).
+ */
+export class ToolsetInfo {
+    "probed": boolean;
+    "claudeVersion": string;
+    "headlessSafe": string[];
+
+    /** Creates a new ToolsetInfo instance. */
+    constructor($$source: Partial<ToolsetInfo> = {}) {
+        if (!("probed" in $$source)) {
+            this["probed"] = false;
+        }
+        if (!("claudeVersion" in $$source)) {
+            this["claudeVersion"] = "";
+        }
+        if (!("headlessSafe" in $$source)) {
+            this["headlessSafe"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ToolsetInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ToolsetInfo {
+        const $$createField2_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("headlessSafe" in $$parsedSource) {
+            $$parsedSource["headlessSafe"] = $$createField2_0($$parsedSource["headlessSafe"]);
+        }
+        return new ToolsetInfo($$parsedSource as Partial<ToolsetInfo>);
+    }
+}
+
+// Create functions for complex types.
+const $$createType0 = $Create.Array($Create.Any);

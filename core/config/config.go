@@ -230,8 +230,26 @@ type BotEntry struct {
 type File struct {
 	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
 	Context   *ContextConfig   `json:"context,omitempty"`
+	// Toolset is the desktop-maintained cache of the claude binary's tool
+	// surface, probed on install/upgrade (agent.ProbeTools). It feeds the
+	// desktop's tool picker the full set of selectable tools. The daemon does
+	// NOT consume it — it probes live per turn (see ClaudeDriver). Persisted
+	// here only so the GUI has the list without spawning claude itself.
+	Toolset *ToolsetCache `json:"toolset,omitempty"`
 
 	Bots []BotEntry `json:"bots,omitempty"`
+}
+
+// ToolsetCache records the claude binary's tool surface as last probed by the
+// desktop. ClaudeVersion is the binary version the probe ran against (so the
+// desktop can re-probe on change); Available is the raw built-in tool set;
+// HeadlessSafe is Available minus interactive tools — the set the picker
+// offers. ProbedAt is a unix timestamp for display/staleness only.
+type ToolsetCache struct {
+	ClaudeVersion string   `json:"claudeVersion,omitempty"`
+	ProbedAt      int64    `json:"probedAt,omitempty"`
+	Available     []string `json:"available,omitempty"`
+	HeadlessSafe  []string `json:"headlessSafe,omitempty"`
 }
 
 // Resolved is a single bot's fully-resolved, ready-to-run configuration.

@@ -20,6 +20,7 @@ import (
 	"github.com/lml2468/octobuddy/desktop/internal/octocli"
 	"github.com/lml2468/octobuddy/desktop/internal/secrets"
 	"github.com/lml2468/octobuddy/desktop/internal/skills"
+	"github.com/lml2468/octobuddy/desktop/internal/toolset"
 	"github.com/lml2468/octobuddy/desktop/internal/workflows"
 	"github.com/lml2468/octobuddy/desktop/internal/workspace"
 )
@@ -370,6 +371,37 @@ func (x *OctoBuddyService) CronUpdate(body control.CronUpdateBody) error {
 // LoadConfig returns the editor view of every configured bot.
 func (x *OctoBuddyService) LoadConfig() ([]configstore.BotConfig, error) {
 	return configstore.Load()
+}
+
+// ToolsetInfo is the tool-picker view of the probed claude tool surface.
+// Probed is false when claude has not been probed yet (no binary / first run);
+// the picker then shows a "probing…" state. HeadlessSafe is the set the picker
+// offers (Available minus interactive tools).
+type ToolsetInfo struct {
+	Probed        bool     `json:"probed"`
+	ClaudeVersion string   `json:"claudeVersion"`
+	HeadlessSafe  []string `json:"headlessSafe"`
+}
+
+// LoadToolset returns the cached claude tool surface (probed on
+// install/upgrade) so the settings tool picker can offer the selectable set.
+// Probed is false when claude has not been probed yet. Best-effort: it also
+// triggers a background refresh so a stale or missing cache self-heals without
+// blocking the UI (the next LoadToolset call sees the fresh result).
+func (x *OctoBuddyService) LoadToolset() (ToolsetInfo, error) {
+	go func() {
+		if _, err := toolset.Refresh(context.Background()); err != nil {
+			log.Printf("octobuddy: toolset probe (on load) failed: %v", err)
+		}
+	}()
+	ts, err := configstore.LoadToolset()
+	if err != nil {
+		return ToolsetInfo{}, err
+	}
+	if ts == nil {
+		return ToolsetInfo{Probed: false}, nil
+	}
+	return ToolsetInfo{Probed: true, ClaudeVersion: ts.ClaudeVersion, HeadlessSafe: ts.HeadlessSafe}, nil
 }
 
 // SaveConfig writes the bots back (config.json + SOUL/AGENTS + secret backend).

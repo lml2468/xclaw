@@ -19,6 +19,7 @@ import (
 	"github.com/lml2468/octobuddy/desktop/internal/control"
 	"github.com/lml2468/octobuddy/desktop/internal/logfile"
 	"github.com/lml2468/octobuddy/desktop/internal/octocli"
+	"github.com/lml2468/octobuddy/desktop/internal/toolset"
 	"github.com/lml2468/octobuddy/desktop/internal/windowstate"
 )
 
@@ -278,6 +279,15 @@ func setupSystemTray() {
 	claudeInfo.SetEnabled(false)
 	claudecli.OnInstallStateChange(func() {
 		claudeInfo.SetLabel(claudeInfoLabel())
+		// Re-probe the tool surface into config.json so the settings tool
+		// picker reflects the installed binary. Background: probing spawns
+		// claude (~1s) and we must not block the tray callback. No-ops when
+		// the version is unchanged.
+		go func() {
+			if _, err := toolset.Refresh(context.Background()); err != nil {
+				log.Printf("octobuddy: toolset probe failed: %v", err)
+			}
+		}()
 	})
 	menu.Add("Update claude").OnClick(func(*application.Context) {
 		go func() {

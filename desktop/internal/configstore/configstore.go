@@ -148,6 +148,39 @@ func Load() ([]BotConfig, error) {
 	return out, nil
 }
 
+// LoadToolset returns the cached claude tool surface (nil when never probed).
+// Read-only; the desktop writes it via SaveToolset after an install/upgrade probe.
+func LoadToolset() (*config.ToolsetCache, error) {
+	f, err := readFile()
+	if err != nil {
+		return nil, err
+	}
+	return f.Toolset, nil
+}
+
+// SaveToolset persists the probed tool surface into config.json's top-level
+// `toolset` block, preserving everything else (bots + runtime policy) via a
+// read-modify-write. Writes atomically through safepath. Takes the same saveMu
+// as Save so a concurrent bot-editor save and a toolset refresh can't clobber
+// each other's read-modify-write (lost update).
+func SaveToolset(ts *config.ToolsetCache) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	f, err := readFile()
+	if err != nil {
+		return err
+	}
+	f.Toolset = ts
+	if err := safepath.SafeMkdirAllAbs(Dir(), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	return safepath.SafeWriteAbs(Path(), append(raw, '\n'), 0o600)
+}
+
 // LoadOne returns just one bot, doing exactly ONE config.json parse + ONE pair
 // of secret reads + ONE pair of SOUL/AGENTS reads — vs Load, which fans
 // the secret + file work over every bot just to satisfy a single-bot caller.

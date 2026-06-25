@@ -211,6 +211,17 @@ export function LoadConfig(): $CancellablePromise<configstore$0.BotConfig[]> {
 }
 
 /**
+ * LoadToolset returns the cached claude tool surface (probed on
+ * install/upgrade) so the settings tool picker can offer the selectable set.
+ * Probed is false when claude has not been probed yet.
+ */
+export function LoadToolset(): $CancellablePromise<$models.ToolsetInfo> {
+    return $Call.ByID(1914731222).then(($result: any) => {
+        return $$createType14($result);
+    });
+}
+
+/**
  * LogClientError funnels window.onerror / unhandledrejection /
  * <svelte:boundary> traces into the persistent desktop log so an
  * uncaught Svelte render error doesn't vanish with the dev terminal.
@@ -370,3 +381,4 @@ const $$createType10 = workspace$0.Node.createFrom;
 const $$createType11 = $Create.Nullable($$createType10);
 const $$createType12 = octoapi$0.BotResult.createFrom;
 const $$createType13 = $models.OctoCliStatus.createFrom;
+const $$createType14 = $models.ToolsetInfo.createFrom;

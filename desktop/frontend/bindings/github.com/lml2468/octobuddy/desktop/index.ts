@@ -7,6 +7,7 @@ export {
 };
 
 export {
+    BotDefaultToolsInfo,
     ChannelToolsInfo,
     OctoCliStatus,
     ToolsetInfo

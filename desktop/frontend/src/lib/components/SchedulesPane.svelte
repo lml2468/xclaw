@@ -124,7 +124,6 @@
   let formPrompt = $state("");
   let formTarget = $state<Target>("console");
   let formGroupId = $state("");
-  let formFromName = $state("");
   let formError = $state("");
   let formBusy = $state(false);
 
@@ -135,7 +134,6 @@
     formPrompt = "";
     formTarget = "console";
     formGroupId = "";
-    formFromName = "";
     formError = "";
     modalOpen = true;
     loadGroups();
@@ -146,7 +144,6 @@
     formSchedule = task.schedule;
     formRecurring = task.recurring;
     formPrompt = task.prompt ?? "";
-    formFromName = task.fromName ?? "";
     formGroupId = "";
     if (task.channelType === 3) {
       formTarget = "console";
@@ -171,15 +168,18 @@
    //
    // fromUid: for Console the backend stamps cron.ConsoleUID regardless so
    // we send CONSOLE_UID for clarity; for Group the backend ignores fromUid
-   // and stamps the owner.
+   // and stamps the owner. fromName: Group/DM fires always speak as the bot's
+   // real Octo identity, so no custom display name — send empty. Console fires
+   // surface in the desktop transcript, where the synthetic prompt shows a
+   // caller name; "控制台" keeps that row from rendering blank.
     let channelId = "";
     let channelType = 3;
     let fromUid = "";
-    let fromName = formFromName.trim();
+    let fromName = "";
     if (formTarget === "console") {
       channelType = 3;
       fromUid = CONSOLE_UID;
-      if (!fromName) fromName = "控制台";
+      fromName = "控制台";
     } else {
       // Group
       channelType = 2;
@@ -363,10 +363,6 @@
             {/if}
           {/if}
         </div>
-        <label>
-          From Name <span class="hint">可选。任务触发时作为调用者显示名</span>
-          <input bind:value={formFromName} placeholder="（可空）" />
-        </label>
         {#if formError}<div class="error">{formError}</div>{/if}
       </div>
       <footer>

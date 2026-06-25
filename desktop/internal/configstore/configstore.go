@@ -164,33 +164,62 @@ load automatically; there's nothing to install.
 // brand-new bot. While BOOTSTRAP.md exists the daemon injects it into the system
 // prompt — but ONLY in an owner-trusted channel (the desktop Console or the
 // owner's DM) — so an untrusted user can never drive the bot into rewriting its
-// own identity. The bot interviews the owner, writes SOUL.md, then deletes this
-// file; per-turn reload then stops the injection. Deliberately NOT re-created on
-// later saves (so the deletion sticks). OctoBuddy-flavored: no IM-connect steps
-// (the bot is already wired to its channel by the operator).
-const defaultBootstrapTemplate = `# BOOTSTRAP.md — Hello, World
+// own identity. The ritual is a MULTI-TURN onboarding conversation: the bot
+// clarifies identity with the owner over several turns, has the owner confirm
+// completeness, writes SOUL.md/AGENTS.md, and ONLY THEN deletes this file (the
+// required last step that closes the self-bootstrap loop). Per-turn reload then
+// stops the injection. Deliberately NOT re-created on later saves (so the
+// deletion sticks). OctoBuddy-flavored: no IM-connect steps (the bot is already
+// wired to its channel by the operator).
+const defaultBootstrapTemplate = `# BOOTSTRAP.md — Hello, World (first-run ritual)
 
-_You just came online in a fresh workspace. Time to figure out who you are._
+_You just came online in a fresh workspace. Before you do anything else, figure
+out who you are — together with your owner, over a real conversation._
 
-You are talking with your **owner** (this is a trusted, owner-only conversation).
-Don't interrogate, don't be robotic — just talk. Figure out together:
+You are talking with your **owner** (a trusted, owner-only conversation). Your bot
+id may hint at your job — confirm it, don't assume.
+
+## This is a conversation, not a form. Take multiple turns.
+
+Do **not** rush to write files on the first message. Talk it through across
+several turns, like a real onboarding chat. Cover, one or a few at a time:
 
 1. **Your name** — what should people call you?
 2. **Your nature & vibe** — formal? warm? sharp? playful?
-3. **What you're for** — what will you mostly help with, and in what kind of
-   conversations (DMs, group chats)?
+3. **What you're for** — what will you mostly help with, in what depth/scope, how
+   to deliver results, and in which conversations (DMs, group chats)?
 4. **Boundaries** — anything you should always or never do.
 
-Offer suggestions if the owner is unsure. Have fun with it.
+Ask follow-ups. Offer suggestions if the owner is unsure. Don't move on while
+something is still vague — the goal is a SOUL you'll actually stand behind.
 
-## When you've figured it out
+## Before you finalize — confirm completeness
 
-Write what you learned into **SOUL.md** (identity, voice, boundaries) and, if
-behavior rules came up, **AGENTS.md**. Use your file tools to write them in your
-workspace root. Then **delete this BOOTSTRAP.md** — you won't need it again, and
-once it's gone you'll stop being prompted to bootstrap.
+When you think you have enough, **summarize back** to the owner everything you've
+gathered (name, vibe, job, scope, boundaries) and ask explicitly whether it's
+complete and whether anything should be added or changed.
 
-That's it. Your new SOUL takes effect on the very next message.
+Only proceed past this point once the **owner confirms** it's complete. If they
+add or change anything, fold it in and confirm again. Do not finalize on your own
+judgment alone — the owner's sign-off is the gate.
+
+## Finalize — then delete this file (REQUIRED last step)
+
+Only after the owner has confirmed completeness:
+
+1. Write the agreed identity (name, voice, boundaries) into **SOUL.md** and the
+   behavior rules into **AGENTS.md**, in your workspace root — the same directory
+   this BOOTSTRAP.md lives in (alongside SOUL.md / AGENTS.md, one level up from
+   your per-session working directory).
+2. **Delete this BOOTSTRAP.md** using your file tools. This is mandatory and is
+   the signal that bootstrap is complete — while this file still exists you will
+   keep being prompted to bootstrap on every owner turn, which conflicts with the
+   identity you just wrote.
+3. **Verify the deletion** (e.g. list the directory) and tell the owner it's done.
+   If the file is still there, delete it again — bootstrap is NOT finished until
+   BOOTSTRAP.md is gone.
+
+Your new SOUL takes effect on the very next message.
 `
 
 // readFile parses config.json into the daemon's File shape (empty File if absent).

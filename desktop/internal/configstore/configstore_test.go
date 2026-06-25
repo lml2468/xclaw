@@ -331,6 +331,15 @@ func TestDefaultTemplatesCarryLoadBearingSections(t *testing.T) {
 			t.Errorf("defaultAgentsTemplate missing %q section", want)
 		}
 	}
+	// BOOTSTRAP must keep the closed-loop steps: a multi-turn clarification, an
+	// owner-confirmation gate, and the REQUIRED self-delete that closes the
+	// self-bootstrap loop. A careless edit dropping any of these would let a bot
+	// finalize without owner sign-off or leave BOOTSTRAP.md behind.
+	for _, want := range []string{"Take multiple turns", "confirm completeness", "REQUIRED last step", "Delete this BOOTSTRAP.md", "Verify the deletion"} {
+		if !strings.Contains(defaultBootstrapTemplate, want) {
+			t.Errorf("defaultBootstrapTemplate missing closed-loop step %q", want)
+		}
+	}
 }
 
 // First-time Save respects operator-provided content — the template only fills

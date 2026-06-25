@@ -13,6 +13,7 @@
   import { RESERVED_ENV_KEYS } from "../reservedEnv";
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { store } from "../store.svelte";
+  import { errMsg } from "../errors";
 
   let { bot = $bindable<BotConfig>(), ondirty }:
     { bot: BotConfig; ondirty: () => void } = $props();
@@ -100,7 +101,11 @@
   }
 
   // --- setting sources (user always on; project opt-in with warning) ---
+  // In claude_code mode the driver does NOT pass --setting-sources (the CLI
+  // default user+project+local applies), so this toggle is a no-op there — we
+  // disable it and say so rather than letting the operator think it bites.
   let projectOn = $state<boolean>((bot.settingSources ?? []).includes("project"));
+  const settingSourcesActive = $derived(promptMode === "minimal");
   function toggleProject() {
     projectOn = !projectOn;
     bot.settingSources = projectOn ? ["user", "project"] : ["user"];
@@ -194,7 +199,7 @@
     try {
       mcpText = (await OctoBuddyService.LoadMCPConfig(bot.id)) ?? "";
     } catch (e) {
-      mcpError = String(e);
+      mcpError = errMsg(e);
     }
     mcpLoaded = true;
   }
@@ -206,7 +211,7 @@
     try {
       if (!store.preview) await OctoBuddyService.SaveMCPConfig(bot.id, mcpText);
     } catch (e) {
-      mcpError = String(e); mcpBusy = false; return;
+      mcpError = errMsg(e); mcpBusy = false; return;
     }
     await testMCP();
     mcpBusy = false;
@@ -224,7 +229,7 @@
     try {
       await OctoBuddyService.CheckMCP(bot.id);
     } catch (e) {
-      mcpError = String(e); return;
+      mcpError = errMsg(e); return;
     }
     // Wait (up to ~65s — the daemon caps the probe at 60s) for the response.
     // Correlation is (seq advanced past our snapshot) AND (botId matches): the
@@ -252,15 +257,17 @@
       <button type="button" class:active={promptMode === "minimal"} onclick={() => setPromptMode("minimal")}>minimal</button>
       <button type="button" class:active={promptMode === "claude_code"} onclick={() => setPromptMode("claude_code")}>claude_code</button>
     </div>
-    <small>minimal（默认）：SOUL+AGENTS 替换内置提示词，cwd .claude/ 不加载。claude_code：追加到内置提示词，cwd .claude/ 自动加载。仅当 SOUL 是按内置提示词编写时才用 claude_code。</small>
+    <small>minimal（默认）：SOUL+AGENTS <strong>替换</strong>内置提示词。claude_code：<strong>追加</strong>到内置提示词。仅当 SOUL 是按内置提示词编写时才用 claude_code。cwd 下 <code>.claude/</code> 是否加载由下方「配置来源」的 project 决定（claude_code 模式恒为加载）。</small>
   </fieldset>
 
   <fieldset>
     <legend>配置来源（Setting Sources）</legend>
-    <label class="chk"><input type="checkbox" checked disabled /> user（始终启用：加载 CLAUDE_CONFIG_DIR 下的每-bot 技能）</label>
-    <label class="chk"><input type="checkbox" checked={projectOn} onchange={toggleProject} /> project（加载沙箱 cwd 的 .claude/ 与 CLAUDE.md）</label>
-    {#if projectOn}
-      <small class="warn">⚠️ 开启 project 会加载 agent 可写的沙箱目录中的指令/技能——群聊中可被不可信用户影响，存在提示词注入风险。仅建议单运营者可信 bot 开启。</small>
+    <label class="chk"><input type="checkbox" checked disabled /> user（始终启用：加载 CLAUDE_CONFIG_DIR 下每个 Bot 的技能）</label>
+    <label class="chk"><input type="checkbox" checked={projectOn} disabled={!settingSourcesActive} onchange={toggleProject} /> project（加载沙箱 cwd 的 .claude/ 与 CLAUDE.md）</label>
+    {#if !settingSourcesActive}
+      <small>claude_code 模式使用 CLI 默认配置来源，此处设置不生效（cwd 的 .claude/ 恒为加载）。</small>
+    {:else if projectOn}
+      <small class="warn">⚠️ 开启 project 会加载 Agent 可写的沙箱目录中的指令/技能——群聊中可被不可信用户影响，存在提示词注入风险。仅建议单运营者可信 Bot 开启。</small>
     {/if}
   </fieldset>
 
@@ -286,7 +293,7 @@
         {/each}
       </div>
     {/if}
-    <small>标准 mcp.json 格式，保存到 ~/.octobuddy/&lt;id&gt;/.claude/.mcp.json，下个回合生效。留空则删除（停用 MCP）。每个服务器的工具在下方「MCP 工具」中按 mcp__&lt;server&gt;__* 启用。</small>
+    <small>标准 mcp.json 格式，保存到 ~/.octobuddy/&lt;id&gt;/.claude/.mcp.json，此后每条新消息生效（进行中的回复不受影响）。留空则删除（停用 MCP）。每个服务器的工具在下方「MCP 工具」中按 mcp__&lt;server&gt;__* 启用。</small>
   </fieldset>
 
   <fieldset>
@@ -327,7 +334,7 @@
           <label class="chk extra"><input type="checkbox" checked onchange={() => toggleTool(name)} /> {name} <span class="tag">未配置</span></label>
         {/each}
       </div>
-      <small>勾选后该 MCP 服务器的工具（mcp__&lt;server&gt;__*）对该 Bot 可用。「未配置」项在当前 .mcp.json 中不存在，但仍保留并生效。</small>
+      <small>勾选后该 MCP 服务器的工具（mcp__&lt;server&gt;__*）对该 Bot 可用。「未配置」项当前 .mcp.json 中不存在；勾选状态会保留，待该服务器重新加入 .mcp.json 后自动启用。</small>
     {/if}
   </fieldset>
 

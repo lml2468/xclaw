@@ -1,9 +1,10 @@
 <script lang="ts">
  // Per-bot scheduled task manager. CRUD over the control bus (cron.create /
- // cron.list / cron.update / cron.delete) with a target picker that covers
- // Console (the desktop's own chat session), DM (free-form peer uid + optional
- // recent-DM hint), and Group (dropdown populated by octo-cli group list via
- // the GroupsList Wails method).
+ // cron.list / cron.update / cron.delete) with a target picker covering four
+ // kinds: Console (the desktop's own chat session), Group (the main group
+ // channel), Thread (群内话题/CommunityTopic — pick a group then a thread), and
+ // DM (a private message to the bot OWNER only). Group/Thread dropdowns are
+ // populated by octo-cli via the GroupsList / ThreadsList Wails methods.
  //
  // The cron Manager only arms when agent.cron is true; when it's false this
  // pane shows a banner with a one-click "启用并重启" that flips the flag via
@@ -14,7 +15,7 @@
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { store, CONSOLE_UID } from "../store.svelte";
   import { confirm } from "../confirm.svelte";
-  import { errMsg } from "../errors";
+  import { friendlyErr } from "../errors";
   import { modal } from "../actions/modal";
 
   let { bot = $bindable<BotConfig>(), ondirty, isPreview = false }:
@@ -43,7 +44,7 @@
       await OctoBuddyService.CronList(bot.id);
       listError = "";
     } catch (e) {
-      listError = errMsg(e);
+      listError = friendlyErr(e);
     }
   }
   $effect(() => {
@@ -70,7 +71,7 @@
       groupsError = "";
     } catch (e) {
       groups = [];
-      groupsError = errMsg(e);
+      groupsError = friendlyErr(e);
     }
   }
 
@@ -101,7 +102,7 @@
     } catch (e) {
       threads = [];
       threadsForGroup = groupNo;
-      threadsError = errMsg(e);
+      threadsError = friendlyErr(e);
     } finally {
       threadsLoading = false;
     }
@@ -136,7 +137,7 @@
       await OctoBuddyService.CronUpdate({ botId: bot.id, id: taskId, enabled } as any);
       await refreshList();
     } catch (e) {
-      listError = errMsg(e);
+      listError = friendlyErr(e);
     }
   }
 
@@ -147,7 +148,7 @@
       await OctoBuddyService.CronDelete(bot.id, "", taskId);
       await refreshList();
     } catch (e) {
-      listError = errMsg(e);
+      listError = friendlyErr(e);
     }
   }
 
@@ -277,7 +278,7 @@
       modalOpen = false;
       await refreshList();
     } catch (e) {
-      formError = errMsg(e);
+      formError = friendlyErr(e);
     } finally {
       formBusy = false;
     }
@@ -356,9 +357,9 @@
     <table class="grid">
       <thead><tr>
         <th class="c-en">启用</th>
-        <th class="c-sch">Schedule</th>
+        <th class="c-sch">定时表达式</th>
         <th class="c-tgt">目标</th>
-        <th>Prompt</th>
+        <th>提示词</th>
         <th class="c-when">下次</th>
         <th class="c-when">上次</th>
         <th class="c-act"></th>
@@ -395,7 +396,7 @@
       <header><h3>{editingId ? "编辑定时任务" : "新增定时任务"}</h3><button class="x" onclick={() => !formBusy && (modalOpen = false)} aria-label="关闭">✕</button></header>
       <div class="body">
         <label>
-          Schedule <span class="hint">5 字段 cron 表达式（如 <code>0 9 * * 1-5</code>）或一次性 ISO 时间（如 <code>2026-07-01T09:00:00+08:00</code>）</span>
+          定时表达式 <span class="hint">5 字段 cron 表达式（如 <code>0 9 * * 1-5</code>）或一次性 ISO 时间（如 <code>2026-07-01T09:00:00+08:00</code>）</span>
           <input class="mono" bind:value={formSchedule} placeholder="0 9 * * *" />
         </label>
         <label class="check">
@@ -403,7 +404,7 @@
           重复触发（关闭则触发一次后自动删除）
         </label>
         <label>
-          Prompt <span class="hint">≤ 2048 字符。任务到点时作为入站消息送进 agent</span>
+          提示词 <span class="hint">≤ 2048 字符。任务到点时作为入站消息送给 Agent</span>
           <textarea bind:value={formPrompt} rows="4" placeholder="例如：早安。汇总下昨天的会议纪要"></textarea>
         </label>
         <div class="targetbox">

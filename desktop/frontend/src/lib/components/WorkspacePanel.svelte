@@ -88,7 +88,7 @@
 
   const hasFiles = $derived(kids(tree).length > 0);
   const title = $derived(source === "memory" ? "记忆" : "工作区");
-  const emptyText = $derived(source === "memory" ? "还没有记忆。Agent 写入 session memory 后会显示在这里。" : "还没有文件。Agent 写入工作区后会显示在这里。");
+  const emptyText = $derived(source === "memory" ? "还没有记忆。Agent 写入会话记忆后会显示在这里。" : "还没有文件。Agent 写入工作区后会显示在这里。");
 </script>
 
 <div class="panel">

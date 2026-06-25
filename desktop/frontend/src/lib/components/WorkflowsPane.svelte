@@ -4,7 +4,7 @@
  // just the script list + editor for one bot. Writes through to disk.
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { confirm } from "../confirm.svelte";
-  import { errMsg } from "../errors";
+  import { friendlyErr } from "../errors";
   import { isImeComposing } from "../keys";
   import { untrack } from "svelte";
   import ErrorFooter from "./ErrorFooter.svelte";
@@ -55,7 +55,7 @@
       wfs = next;
       if (wfs.length && !wfs.find((w) => w.name === sel)) select(wfs[0].name);
       else if (!wfs.length) { sel = null; content = ""; }
-    } catch (e) { if (gen === loadGen) error = errMsg(e); }
+    } catch (e) { if (gen === loadGen) error = friendlyErr(e); }
   }
 
   function descOf(src: string): string {
@@ -73,7 +73,7 @@
       if (gen !== selectGen || capturedBot !== botId || sel !== name) return;
       content = text;
       dirty = false;
-    } catch (e) { if (gen === selectGen) error = errMsg(e); }
+    } catch (e) { if (gen === selectGen) error = friendlyErr(e); }
   }
 
   async function save() {
@@ -82,7 +82,7 @@
       if (isPreview) { mockBot[botId][sel] = content; }
       else await OctoBuddyService.BotWorkflowWrite(botId, sel, content);
       dirty = false;
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { error = friendlyErr(e); }
   }
 
   async function createOwn() {
@@ -95,7 +95,7 @@
       if (capturedBot !== botId) return; // bot switched mid-await
       newName = "";
       select(name);
-    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = friendlyErr(e); }
   }
 
   async function remove(w: WfInfo) {
@@ -104,7 +104,7 @@
       if (isPreview) { delete mockBot[botId][w.name]; load(); }
       else { await OctoBuddyService.BotWorkflowDelete(botId, w.name); await load(); }
       if (sel === w.name) { sel = null; content = ""; dirty = false; }
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { error = friendlyErr(e); }
   }
 </script>
 

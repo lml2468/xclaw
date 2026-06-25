@@ -187,7 +187,7 @@
           </div>
         </div>
 
-        <p class="note">每个 Bot 独立持久化、按天分桶。<strong>缓存读</strong>=从提示缓存命中(读取)的输入;<strong>缓存写</strong>=写入缓存的输入。费用为 agent 上报的总额。早于按天统计前的用量只在「全部」区间出现。</p>
+        <p class="note">每个 Bot 独立持久化、按天分桶。<strong>缓存读</strong>=从提示缓存命中(读取)的输入;<strong>缓存写</strong>=写入缓存的输入。费用为 Agent 上报的总额。早于按天统计前的用量只在「全部」区间出现。</p>
       {/if}
     </div>
   </div>

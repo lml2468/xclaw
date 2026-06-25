@@ -5,7 +5,7 @@
  // of the basic/octo "save" dirty flag).
   import { OctoBuddyService } from "../../../bindings/github.com/lml2468/octobuddy/desktop";
   import { confirm } from "../confirm.svelte";
-  import { errMsg } from "../errors";
+  import { friendlyErr } from "../errors";
   import { isImeComposing } from "../keys";
   import { untrack } from "svelte";
   import ErrorFooter from "./ErrorFooter.svelte";
@@ -60,7 +60,7 @@
       skills = next;
       if (skills.length && !skills.find((s) => s.name === sel)) selectSkill(skills[0].name);
       else if (!skills.length) { sel = null; files = []; activeFile = null; content = ""; }
-    } catch (e) { if (gen === loadGen) error = errMsg(e); }
+    } catch (e) { if (gen === loadGen) error = friendlyErr(e); }
   }
 
   function descOf(skillmd: string): string {
@@ -85,7 +85,7 @@
       files = next;
       const first = files.find((f) => f === "SKILL.md") ?? files[0];
       if (first) openFile(first);
-    } catch (e) { if (gen === selectGen) error = errMsg(e); }
+    } catch (e) { if (gen === selectGen) error = friendlyErr(e); }
   }
   let selectGen = 0;
 
@@ -100,7 +100,7 @@
       if (gen !== openGen || capturedBot !== botId || capturedSel !== sel || activeFile !== rel) return;
       content = text;
       dirty = false;
-    } catch (e) { if (gen === openGen) error = errMsg(e); }
+    } catch (e) { if (gen === openGen) error = friendlyErr(e); }
   }
   let openGen = 0;
 
@@ -110,7 +110,7 @@
       if (isPreview) { (mockBot[botId][sel])[activeFile] = content; }
       else await OctoBuddyService.BotSkillWrite(botId, sel, activeFile, content);
       dirty = false;
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { error = friendlyErr(e); }
   }
 
   async function addFile() {
@@ -124,7 +124,7 @@
       newFilePath = "";
       await selectSkill(capturedSel);
       openFile(rel);
-    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = friendlyErr(e); }
   }
 
   async function deleteFile(rel: string) {
@@ -135,7 +135,7 @@
       else await OctoBuddyService.BotSkillDeleteFile(botId, sel, rel);
       if (activeFile === rel) { activeFile = null; content = ""; }
       await selectSkill(sel);
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { error = friendlyErr(e); }
   }
 
   async function createOwn() {
@@ -148,7 +148,7 @@
       if (capturedBot !== botId) return;
       newName = "";
       selectSkill(name);
-    } catch (e) { if (capturedBot === botId) error = errMsg(e); }
+    } catch (e) { if (capturedBot === botId) error = friendlyErr(e); }
   }
 
   async function removeBotSkill(s: SkillInfo) {
@@ -157,7 +157,7 @@
       if (isPreview) { delete mockBot[botId][s.name]; load(); }
       else { await OctoBuddyService.BotSkillDelete(botId, s.name); await load(); }
       if (sel === s.name) { sel = null; files = []; activeFile = null; content = ""; }
-    } catch (e) { error = errMsg(e); }
+    } catch (e) { error = friendlyErr(e); }
   }
 </script>
 
@@ -167,7 +167,7 @@
       <div class="row" class:sel={s.name === sel}>
         <button class="rowmain" onclick={() => selectSkill(s.name)}>
           <span class="nm">{s.name}</span>
-          <span class="ds">{s.description || "无描述"}</span>
+          <span class="ds">{s.description || "暂无描述"}</span>
         </button>
         <button class="del" title="删除" onclick={() => removeBotSkill(s)}>−</button>
       </div>

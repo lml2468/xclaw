@@ -115,6 +115,13 @@ type HistoryMessage struct {
 	// stored name. Empty for assistant rows and legacy rows predating the
 	// store column.
 	FromUID string `json:"fromUid,omitempty"`
+	// Steps is the raw JSON array of process steps (tool calls / thinking) an
+	// assistant row's turn produced, e.g.
+	// `[{"kind":"tool","text":"Read(README.md)"}]`. Passed through verbatim
+	// from the store (not re-modeled here) so the desktop re-renders the step
+	// card above a reloaded reply bubble. Empty for user rows and legacy
+	// assistant rows predating the store column.
+	Steps string `json:"steps,omitempty"`
 }
 
 // HistoryResponse is the session.history response. It echoes the requested botId

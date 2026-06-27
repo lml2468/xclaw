@@ -58,7 +58,7 @@ var roleLabelRE = regexp.MustCompile(`(?im)^([^\S\r\n]*)(\[(?:user|assistant)\b[
 // answered/new group-context segment headers (groupctx.answeredHeader /
 // newHeader) so untrusted background can't forge a segment boundary.
 var sectionMarkerRE = regexp.MustCompile(
-	`(?im)^([^\S\r\n]*)\[(Group context|Group Members|Group Info|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|Group instructions|older messages dropped|older turns dropped)\]`)
+	`(?im)^([^\S\r\n]*)\[(Group context|Group Members|Group Info|Conversation history|Prior conversation history[^\]]*|Current message[^\]]*|Quoted message from [^\]]*|answered history|new messages|Previously answered|New since your last reply|Recent group messages|older messages dropped|older turns dropped)\]`)
 
 // Bracket delimiters + every control / formatting character that could forge a
 // boundary, scramble a terminal, or impersonate structure inside a label:

@@ -209,10 +209,6 @@ type BotEntry struct {
 	Agent     *AgentConfig     `json:"agent,omitempty"`
 	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
 	Context   *ContextConfig   `json:"context,omitempty"`
-	// GroupConfigDir is an operator-controlled directory holding per-conversation
-	// instruction files (<channelId>.md), injected as a trusted [Group instructions]
-	// block. MUST be outside CwdBase — see Resolved.
-	GroupConfigDir string `json:"groupConfigDir,omitempty"`
 	// OnBehalfOf, when its uid is set, marks this bot a persona clone (openclaw OBO).
 	OnBehalfOf *OnBehalfOf `json:"onBehalfOf,omitempty"`
 
@@ -275,14 +271,6 @@ type Resolved struct {
 	// SystemPrompt is the operator-trusted persona/behavior prompt, assembled
 	// from SOUL.md + AGENTS.md in the bot dir (not from config).
 	SystemPrompt string
-
-	// GroupConfigDir is the operator-controlled directory of per-conversation
-	// instruction files (<channelId>.md → trusted [Group instructions] block).
-	// Empty disables the feature. Validated to be outside CwdBase — its files are
-	// injected UNSANITIZED into the system prompt, so it must not be the
-	// agent-writable sandbox (else a user-driven agent could write its own future
-	// instructions). Mirrors cc-channel-octo's assertGroupConfigDirOutsideCwd.
-	GroupConfigDir string
 
 	// OnBehalfOf, when its UID is set, marks this bot as a persona clone of the
 	// named grantor (openclaw OBO). nil/empty UID = a regular bot.

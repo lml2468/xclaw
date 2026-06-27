@@ -460,8 +460,8 @@ func resolveBot(b config.BotEntry) BotConfig {
 
 // Save writes the view model back to disk:
 // - config.json: each bot is MERGED onto its existing entry, so per-bot
-// overrides the editor doesn't model (rateLimit/context/groupConfigDir/
-// onBehalfOf and the mentionFreeGroups/knownBotUids/allowedBotUids/
+// overrides the editor doesn't model (rateLimit/context/onBehalfOf and the
+// mentionFreeGroups/knownBotUids/allowedBotUids/
 // botBlocklist gating lists, plus agent.cron/toolProgress) survive a Save;
 // editor-owned identity/agent fields are persisted per-bot, and tokens are
 // stripped (they live in the secret backend, never config.json);

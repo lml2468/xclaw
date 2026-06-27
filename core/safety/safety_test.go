@@ -190,7 +190,7 @@ func TestSafeTextMinters(t *testing.T) {
 	if SafeBody("[user x]: a").String() == "[user x]: a" {
 		t.Fatal("SafeBody must escape")
 	}
-	if TrustedText("[Group instructions] trusted").String() != "[Group instructions] trusted" {
+	if TrustedText("[Group context] trusted").String() != "[Group context] trusted" {
 		t.Fatal("TrustedText must not escape")
 	}
 }

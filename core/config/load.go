@@ -258,9 +258,6 @@ func buildResolvedBot(global File, bot BotEntry, id, botRoot string) Resolved {
 	// SystemPromptFor(r.BotRoot) so desktop edits apply without a restart.
 	r.SystemPrompt = SystemPromptFor(botRoot)
 
-	// Per-bot groupConfigDir. Empty = feature off.
-	r.GroupConfigDir = bot.GroupConfigDir
-
 	// Persona clone (openclaw OBO): grantor identity comes from config, not
 	// from message payloads. A nil block leaves r.OnBehalfOf zero (regular bot).
 	if bot.OnBehalfOf != nil {
@@ -284,13 +281,6 @@ func validateResolvedBot(r Resolved) error {
 	}
 	if r.Agent.GatewayBaseURL != "" && !IsAllowedURL(r.Agent.GatewayBaseURL) {
 		return fmt.Errorf("bot %q: unsafe gatewayBaseUrl %q (SSRF protection)", r.BotID, r.Agent.GatewayBaseURL)
-	}
-	// groupConfigDir files are injected UNSANITIZED into the system prompt, so
-	// the dir must NOT be the agent-writable sandbox — otherwise a user-driven
-	// agent could write its own future instructions. Mirrors cc-channel-octo's
-	// assertGroupConfigDirOutsideCwd.
-	if err := assertGroupConfigDirOutsideCwd(r.BotID, r.GroupConfigDir, r.CwdBase); err != nil {
-		return err
 	}
 	return validateAgentTooling(r.BotID, r.Agent)
 }

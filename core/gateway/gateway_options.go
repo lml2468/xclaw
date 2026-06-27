@@ -5,7 +5,6 @@ import (
 
 	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/groupctx"
-	"github.com/lml2468/octobuddy/core/groupmd"
 	"github.com/lml2468/octobuddy/core/persona"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/sandbox"
@@ -26,14 +25,6 @@ func New(d agent.Driver, st *store.Store, rt *router.Router, sink Sink) *Gateway
 // WithGroupContext enables group-context injection.
 func (g *Gateway) WithGroupContext(gc *groupctx.GroupContext) *Gateway {
 	g.groups = gc
-	return g
-}
-
-// WithGroupMD enables per-conversation [Group instructions] injection. The
-// loader reads operator-authored files from groupConfigDir; passing a nil or
-// empty-dir loader leaves injection off.
-func (g *Gateway) WithGroupMD(l *groupmd.Loader) *Gateway {
-	g.groupMD = l
 	return g
 }
 

@@ -17,7 +17,6 @@ import (
 	"github.com/lml2468/octobuddy/core/cron"
 	"github.com/lml2468/octobuddy/core/gateway"
 	"github.com/lml2468/octobuddy/core/groupctx"
-	"github.com/lml2468/octobuddy/core/groupmd"
 	"github.com/lml2468/octobuddy/core/im/octo"
 	"github.com/lml2468/octobuddy/core/persona"
 	"github.com/lml2468/octobuddy/core/router"
@@ -367,7 +366,6 @@ func newBotGateway(
 	}
 	gw := gateway.New(drv, st, rt, sinks).
 		WithGroupContext(groupctx.New(cfg.Context.MaxContextChars)).
-		WithGroupMD(groupmd.New(cfg.GroupConfigDir)).
 		WithGroupBackfill(connector.BotUID, connector.BackfillFetch).
 		WithOwner(connector.OwnerUID).
 		WithSystemPromptResolver(botRootFileResolver(cfg, config.SystemPromptFor)).

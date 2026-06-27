@@ -154,53 +154,56 @@ type nameResponse struct {
 }
 
 // GetUserInfo resolves a user uid to its display name (api-fetch.ts
-// fetchUserInfo, GET /v1/bot/user/info?uid={uid}). Returns "" when the server
-// has no record of the uid (404) or any other transient failure — callers fall
-// back to the bare uid for display. A short ctx timeout (e.g. 5s) is the
-// caller's responsibility, matching the upstream TS client.
-func (c *RESTClient) GetUserInfo(ctx context.Context, uid string) string {
+// fetchUserInfo, GET /v1/bot/user/info?uid={uid}). Returns ("", nil) when the
+// server has no record of the uid (404) — a genuine empty the caller
+// negative-caches for negativeTTL. Returns ("", err) on any transient failure
+// (network, 5xx, auth) so the caller can cache it for only a short errorTTL and
+// retry soon instead of sticking the GUI at the bare uid for minutes. A short
+// ctx timeout (e.g. 5s) is the caller's responsibility.
+func (c *RESTClient) GetUserInfo(ctx context.Context, uid string) (string, error) {
 	if uid == "" {
-		return ""
+		return "", nil
 	}
 	var raw nameResponse
 	if err := c.getJSON(ctx, "/v1/bot/user/info?uid="+url.QueryEscape(uid), &raw, true); err != nil {
 		clog.For("octo").Warn("getUserInfo", "uid", uid, "err", err)
-		return ""
+		return "", err
 	}
-	return raw.Name
+	return raw.Name, nil
 }
 
 // GetGroupInfo resolves a bare group_no to its display name (api-fetch.ts
-// getGroupInfo, GET /v1/bot/groups/{groupNo}). Same soft-degrade contract as
-// GetUserInfo. Pass a thread compound id through ExtractParentGroupNo before
-// calling — this endpoint speaks group_no, not the thread "<g>____<s>" form.
-func (c *RESTClient) GetGroupInfo(ctx context.Context, groupNo string) string {
+// getGroupInfo, GET /v1/bot/groups/{groupNo}). Same (name, err) contract as
+// GetUserInfo: 404 → ("", nil), transient failure → ("", err). Pass a thread
+// compound id through ExtractParentGroupNo before calling — this endpoint
+// speaks group_no, not the thread "<g>____<s>" form.
+func (c *RESTClient) GetGroupInfo(ctx context.Context, groupNo string) (string, error) {
 	if groupNo == "" {
-		return ""
+		return "", nil
 	}
 	var raw nameResponse
 	if err := c.getJSON(ctx, "/v1/bot/groups/"+url.PathEscape(groupNo), &raw, true); err != nil {
 		clog.For("octo").Warn("getGroupInfo", "group_no", groupNo, "err", err)
-		return ""
+		return "", err
 	}
-	return raw.Name
+	return raw.Name, nil
 }
 
 // GetThreadInfo resolves a thread (CommunityTopic / 子区) to its display name
 // (api-fetch.ts getThread, GET /v1/bot/groups/{groupNo}/threads/{shortId}).
-// Same soft-degrade contract as GetGroupInfo. The thread's parent group name
+// Same (name, err) contract as GetGroupInfo. The thread's parent group name
 // is a separate call (GetGroupInfo); compositing the two is the caller's job.
-func (c *RESTClient) GetThreadInfo(ctx context.Context, groupNo, shortID string) string {
+func (c *RESTClient) GetThreadInfo(ctx context.Context, groupNo, shortID string) (string, error) {
 	if groupNo == "" || shortID == "" {
-		return ""
+		return "", nil
 	}
 	var raw nameResponse
 	path := "/v1/bot/groups/" + url.PathEscape(groupNo) + "/threads/" + url.PathEscape(shortID)
 	if err := c.getJSON(ctx, path, &raw, true); err != nil {
 		clog.For("octo").Warn("getThreadInfo", "group_no", groupNo, "short_id", shortID, "err", err)
-		return ""
+		return "", err
 	}
-	return raw.Name
+	return raw.Name, nil
 }
 
 func firstNonEmpty(a, b string) string {

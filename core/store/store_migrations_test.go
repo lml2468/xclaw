@@ -212,10 +212,10 @@ func TestSourceRoundTrip(t *testing.T) {
 	}
 	defer s.Close()
 	_ = s.Touch("sess", "ch", 1)
-	if err := s.AppendUser("sess", "real human", "alice", SourceUser); err != nil {
+	if err := s.AppendUser("sess", "real human", "alice", "u:alice", SourceUser); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendUser("sess", "cron fire", "cronbot", SourceCron); err != nil {
+	if err := s.AppendUser("sess", "cron fire", "cronbot", "", SourceCron); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AppendAssistant("sess", "ok", "bot"); err != nil {
@@ -252,7 +252,7 @@ func TestMigrateMessagesAddSourceIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.Touch("sess", "ch", 1)
-	if err := s.AppendUser("sess", "before", "u", SourceUser); err != nil {
+	if err := s.AppendUser("sess", "before", "u", "", SourceUser); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -347,4 +347,44 @@ func createLegacyMessagesDB(t *testing.T, dbPath string) {
 			t.Fatalf("seed row: %v", err)
 		}
 	}
+}
+
+// TestMigrateMessagesAddFromUID proves a legacy messages table (no from_uid
+// column, seeded by createLegacyMessagesDB) gets the column added by Open's
+// migration, that legacy rows round-trip with an empty FromUID, that a new
+// append persists/reads back its uid, and that re-opening is a no-op (the
+// migration is idempotent).
+func TestMigrateMessagesAddFromUID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "octobuddy.db")
+	createLegacyMessagesDB(t, dbPath) // messages table predates from_uid
+
+	s, err := Open(dbPath) // runs migrateMessagesAddFromUID
+	if err != nil {
+		t.Fatalf("open after legacy: %v", err)
+	}
+	cols, err := messagesColumnSet(s.db)
+	if _, has := cols["from_uid"]; err != nil || !has {
+		t.Fatalf("from_uid column present = %v, %v; want true, nil", cols, err)
+	}
+	if err := s.AppendUser("sess", "with uid", "carol", "u:carol", SourceUser); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.RecentMessages("sess", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := msgs[len(msgs)-1] // freshly appended, round-trips uid + name
+	if last.FromUID != "u:carol" || last.FromName != "carol" {
+		t.Fatalf("new row = uid %q name %q, want u:carol/carol", last.FromUID, last.FromName)
+	}
+	if msgs[0].FromUID != "" { // legacy rows carry empty FromUID
+		t.Fatalf("legacy row FromUID = %q, want empty", msgs[0].FromUID)
+	}
+	s.Close()
+
+	s2, err := Open(dbPath) // re-open: migration must be a no-op, not an error
+	if err != nil {
+		t.Fatalf("re-open (idempotent migration): %v", err)
+	}
+	defer s2.Close()
 }

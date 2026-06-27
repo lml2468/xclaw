@@ -98,7 +98,17 @@ func sessionTouchBroadcaster(srv *control.Server, botID string, st *store.Store,
 // query is negligible. No fetch is re-kicked (the cache entry is fresh), so this
 // can't loop.
 func nameResolvedBroadcaster(srv *control.Server, botID string, st *store.Store, conn *octo.Connector) func(octo.NameKind, string, string) {
-	return func(kind octo.NameKind, key, _ string) {
+	return func(kind octo.NameKind, key, name string) {
+		// A resolved group-member name has no session row of its own (the member
+		// authors bubbles, it isn't a channel), so session.upserted can't carry
+		// it. Emit name.resolved so the desktop's uid→name map converges any
+		// already-rendered bubble. Channels fall through to the session re-scan
+		// below — they already converge via session.upserted.
+		if kind == octo.NameKindUser {
+			srv.Broadcast("name.resolved", control.NameResolvedBody{
+				BotID: botID, Kind: "user", ID: key, Name: name,
+			})
+		}
 		sums, err := st.ListSessions()
 		if err != nil {
 			return

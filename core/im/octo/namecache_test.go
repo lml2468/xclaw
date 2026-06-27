@@ -20,8 +20,8 @@ func TestRESTGetUserInfo(t *testing.T) {
 	defer srv.Close()
 
 	c := NewRESTClient(srv.URL, func() string { return "tk" })
-	if got := c.GetUserInfo(t.Context(), "u1"); got != "Alice" {
-		t.Fatalf("GetUserInfo = %q, want %q", got, "Alice")
+	if got, err := c.GetUserInfo(t.Context(), "u1"); err != nil || got != "Alice" {
+		t.Fatalf("GetUserInfo = %q, %v, want %q, nil", got, err, "Alice")
 	}
 	if want := "/v1/bot/user/info?uid=u1"; gotPath != want {
 		t.Fatalf("path = %q, want %q", gotPath, want)
@@ -81,7 +81,7 @@ func TestNameCacheResolvedHookSkipsKnownAndEmpty(t *testing.T) {
 	nc.fetchUser("ghost")
 	// A name already known via free-feed, re-stored with the same value — no change.
 	nc.LearnUser("u2", "Bob")
-	nc.storeName(NameKindUser, "u2", nc.users, "u:u2", "Bob")
+	nc.storeName(NameKindUser, "u2", nc.users, "u:u2", "Bob", false)
 
 	if n := atomic.LoadInt32(&fired); n != 0 {
 		t.Fatalf("hook fired %d times for empty/unchanged names, want 0", n)
@@ -96,8 +96,10 @@ func TestRESTGetUserInfo404(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewRESTClient(srv.URL, func() string { return "tk" })
-	if got := c.GetUserInfo(t.Context(), "u1"); got != "" {
-		t.Fatalf("GetUserInfo on 404 = %q, want empty", got)
+	// 404 is a genuine "no such uid": ("", nil), NOT a transient error — so the
+	// caller negative-caches it for negativeTTL rather than the short errorTTL.
+	if got, err := c.GetUserInfo(t.Context(), "u1"); got != "" || err != nil {
+		t.Fatalf("GetUserInfo on 404 = %q, %v, want \"\", nil", got, err)
 	}
 }
 
@@ -108,8 +110,8 @@ func TestRESTGetGroupInfo(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewRESTClient(srv.URL, func() string { return "tk" })
-	if got := c.GetGroupInfo(t.Context(), "g1"); got != "Engineering" {
-		t.Fatalf("GetGroupInfo = %q, want %q", got, "Engineering")
+	if got, err := c.GetGroupInfo(t.Context(), "g1"); err != nil || got != "Engineering" {
+		t.Fatalf("GetGroupInfo = %q, %v, want %q, nil", got, err, "Engineering")
 	}
 }
 

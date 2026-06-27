@@ -51,7 +51,7 @@
       <EmptyState {onpick} />
     {:else}
       {#each messages as m (m.id)}
-        <Bubble message={m} />
+        <Bubble message={m} botId={session?.botId} />
       {/each}
       {#if session?.awaiting}
  <!-- The answer streams into the status box (process), not here. The chat

@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS messages (
   content    TEXT NOT NULL,
   timestamp  INTEGER NOT NULL,
   from_name  TEXT,
+  -- from_uid is the IM platform's stable id of the human author of a
+  -- user-role row, persisted alongside from_name. The uid is the durable
+  -- identity; from_name is a late-binding projection that can be empty at
+  -- append time (name cache miss) and converge later. Persisting the uid
+  -- lets a chat-window reload re-resolve the live name and keeps the GUI
+  -- from collapsing a nameless bubble to "You". Added by
+  -- migrateMessagesAddFromUID for legacy DBs; legacy rows legitimately
+  -- carry NULL (no uid was recorded).
+  from_uid   TEXT,
   -- source classifies the row's origin: 'user' (human inbound), 'cron'
   -- (scheduler fire), 'assistant' (bot reply), or future origins
   -- (webhook, replay). Persisted so the desktop GUI's "cron" corner
@@ -287,29 +296,57 @@ func addSourceColumn(db *sql.DB, hasLegacyCron bool) error {
 // messagesColumns reports the presence of the new `source` column and the
 // legacy `cron` column.
 func messagesColumns(db *sql.DB) (hasSource, hasLegacyCron bool, err error) {
+	cols, err := messagesColumnSet(db)
+	if err != nil {
+		return false, false, err
+	}
+	_, hasSource = cols["source"]
+	_, hasLegacyCron = cols["cron"]
+	return hasSource, hasLegacyCron, nil
+}
+
+// migrateMessagesAddFromUID adds the messages.from_uid column to DBs created
+// before it existed. No backfill: legacy rows legitimately predate the uid
+// being recorded, so they keep NULL and the GUI falls back to the frozen
+// from_name / "You" for those. Idempotent — a no-op once the column exists.
+func migrateMessagesAddFromUID(db *sql.DB) error {
+	cols, err := messagesColumnSet(db)
+	if err != nil {
+		return err
+	}
+	if _, has := cols["from_uid"]; has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN from_uid TEXT`); err != nil {
+		return fmt.Errorf("migrate messages.from_uid add column: %w", err)
+	}
+	return nil
+}
+
+// messagesColumnSet returns the set of column names on the messages table via
+// PRAGMA table_info. The single place that scans the table shape — both the
+// add-column migrations and the source/cron probe read from it so the scan
+// loop lives in exactly one spot.
+func messagesColumnSet(db *sql.DB) (map[string]struct{}, error) {
 	rows, err := db.Query(`PRAGMA table_info(messages)`)
 	if err != nil {
-		return false, false, fmt.Errorf("migrate messages.source check: %w", err)
+		return nil, fmt.Errorf("messages table_info: %w", err)
 	}
 	defer rows.Close()
+	cols := map[string]struct{}{}
 	for rows.Next() {
 		var cid int
 		var name, ctype, dflt sql.NullString
 		var notnull, pk int
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, false, fmt.Errorf("migrate messages.source scan: %w", err)
+			return nil, fmt.Errorf("messages table_info scan: %w", err)
 		}
-		switch name.String {
-		case "source":
-			hasSource = true
-		case "cron":
-			hasLegacyCron = true
-		}
+		cols[name.String] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return false, false, fmt.Errorf("migrate messages.source rows: %w", err)
+		return nil, fmt.Errorf("messages table_info rows: %w", err)
 	}
-	return hasSource, hasLegacyCron, nil
+	return cols, nil
 }
 
 // dsn carries the connection pragmas in the DSN as _pragma query params so the

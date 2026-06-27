@@ -69,13 +69,11 @@ safety/       prompt-injection defense: SanitizeDisplayName / Escape{Role,Sectio
               + SafeText choke-point + SecurityPrefix. Ported from prompt-safety.ts.
 safepath/     lexical path containment + symlink defense — the single boundary
               every local-file read/write in the daemon routes through (config,
-              skills, workflows, GROUP.md, sandbox cwd, IM media downloads).
+              skills, workflows, sandbox cwd, IM media downloads).
 sandbox/      per-session deterministic cwd + auto-memory dir under each bot's
               data root; SHA-derived names keep sessions isolated on disk.
 groupctx/     per-channel group context window + cursor + @mention resolution;
               renders the [Recent group messages] delta for injection.
-groupmd/      operator-trusted per-channel `<channelId>.md` loader (injected as
-              [Group instructions] when the bot's groupConfigDir is set).
 persona/      OBO persona-clone reply voice (openclaw on_behalf_of relay) — the
               clone speaks for a grantor while routing replies under their uid.
 cron/         per-bot scheduled tasks; owner-gated create/list/delete over the

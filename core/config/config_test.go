@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,51 +320,4 @@ func TestMissingConfigAllowed(t *testing.T) {
 	if len(bots) != 0 {
 		t.Fatalf("expected zero bots, got %d", len(bots))
 	}
-}
-
-func TestGroupConfigDirResolution(t *testing.T) {
-	dir := t.TempDir()
-	gcd := filepath.Join(dir, "groupcfg") // outside any bot's workspace
-	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{
-		"bots":[
-			{"id":"a","apiUrl":"https://o","octoToken":"x"},
-			{"id":"b","octoToken":"y","groupConfigDir":`+jsonStr(gcd)+`}
-		]
-	}`)
-	bots, err := Load(cfg)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if bots[0].GroupConfigDir != "" {
-		t.Fatalf("bot a should not inherit groupConfigDir, got %q", bots[0].GroupConfigDir)
-	}
-	if bots[1].GroupConfigDir != gcd {
-		t.Fatalf("bot b should use its own groupConfigDir, got %q", bots[1].GroupConfigDir)
-	}
-}
-
-func TestGroupConfigDirInsideCwdRejected(t *testing.T) {
-	dir := t.TempDir()
-	// CwdBase for bot "a" is <dir>/a/workspace. A groupConfigDir nested under it
-	// is an injection sink (agent-writable) and must be rejected.
-	bad := filepath.Join(dir, "a", "workspace", "groupcfg")
-	cfg := filepath.Join(dir, "config.json")
-	writeFile(t, cfg, `{"bots":[{"id":"a","apiUrl":"https://o","octoToken":"x","groupConfigDir":`+jsonStr(bad)+`}]}`)
-	if _, err := Load(cfg); err == nil {
-		t.Fatal("groupConfigDir nested under cwdBase must be rejected")
-	}
-
-	// Equal to cwdBase is also rejected.
-	bad2 := filepath.Join(dir, "a", "workspace")
-	writeFile(t, cfg, `{"bots":[{"id":"a","apiUrl":"https://o","octoToken":"x","groupConfigDir":`+jsonStr(bad2)+`}]}`)
-	if _, err := Load(cfg); err == nil {
-		t.Fatal("groupConfigDir equal to cwdBase must be rejected")
-	}
-}
-
-// jsonStr renders s as a JSON string literal (handles Windows backslashes).
-func jsonStr(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }

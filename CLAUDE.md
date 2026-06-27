@@ -85,7 +85,7 @@ Inbound message flows through (`core/gateway/gateway.go` `runTurn`):
 ```
 inbound → router (mention/免@ gate → bot-loop guard → sessionKey → size gate → rate limit → per-session lock)
         → store.GetOrCreate → load resume id → groupctx backfill + answered/new segmentation
-        → materialize attachments into cwd → buildSystemPrompt (SecurityPrefix + SOUL/AGENTS + roster + GROUP.md + persona)
+        → materialize attachments into cwd → buildSystemPrompt (SecurityPrefix + SOUL/AGENTS + roster + persona)
         → driver.Query → stream AgentEvents → sink.OnEvent (typing heartbeat / opt-in tool-progress) → assemble reply
         → persist assistant text + resume id + reply cursor → sink.OnReply (mention resolution / persona voice)
 ```
@@ -180,8 +180,7 @@ Key invariants to preserve:
   a transient terminal error instead of the generic errorReply.
 - **Feature modules layered on the pipeline** (each cites its TS source in its
   package doc): `core/cron/` — per-bot scheduled tasks, owner-gated
-  `cron.create/list/delete` over the control bus; `core/groupmd/` — operator
-  `<channelId>.md` → trusted `[Group instructions]`; `core/persona/` — OBO
+  `cron.create/list/delete` over the control bus; `core/persona/` — OBO
   persona-clone reply voice. Inbound media/markers, outbound @mention
   resolution, threads, and typing/tool-progress all live in `core/im/octo/`.
 
@@ -241,14 +240,12 @@ store, gateway, driver, group-context, Octo connector, each under `~/.octobuddy/
   default (the `File` struct exposes only `rateLimit`/`context`/`toolset`/`bots`).
   Only `rateLimit` and `context` have top-level defaults a per-bot value
   overrides. The group-gating lists (`mentionFreeGroups`, `knownBotUids`,
-  `allowedBotUids`, `botBlocklist`) plus `groupConfigDir` and `onBehalfOf` are
+  `allowedBotUids`, `botBlocklist`) plus `onBehalfOf` are
   also per-bot. (Skills/workflows are **not** config fields; each bot owns its own
   under `~/.octobuddy/<id>/.claude/{skills,workflows}/` — see the skills/workflows
   bullet above.) `core/config.example.json` is the canonical field list.
 - `core/config/` does slug + SSRF validation on URLs — keep that on any new
-  config field that holds a URL. `groupConfigDir` files are injected UNSANITIZED
-  as `[Group instructions]`, so config load rejects a dir at/under a bot's
-  `cwdBase` (else a user-driven agent could write its own future instructions).
+  config field that holds a URL.
 
 ## IM connector
 

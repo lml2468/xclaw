@@ -17,7 +17,6 @@ import (
 
 	"github.com/lml2468/octobuddy/core/agent"
 	"github.com/lml2468/octobuddy/core/groupctx"
-	"github.com/lml2468/octobuddy/core/groupmd"
 	"github.com/lml2468/octobuddy/core/persona"
 	"github.com/lml2468/octobuddy/core/router"
 	"github.com/lml2468/octobuddy/core/sandbox"
@@ -48,10 +47,6 @@ type Gateway struct {
 	// Optional group-context (set via WithGroupContext). When set, group
 	// messages get a [Recent group messages] delta injected into the prompt.
 	groups *groupctx.GroupContext
-	// Optional per-conversation instruction loader (set via WithGroupMD). When
-	// set, group/thread turns get an operator-authored [Group instructions] block
-	// (from groupConfigDir/<channelId>.md) appended to the system prompt.
-	groupMD *groupmd.Loader
 	// Optional cold-start backfill (set via WithGroupBackfill). Returns
 	// recent channel messages from the IM REST API to seed an empty group
 	// window the first time a channel is seen. botUID lets backfill skip

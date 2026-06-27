@@ -35,8 +35,6 @@
           "GH_TOKEN": { "secretRef": "env/GH_TOKEN" }
         }
       },
-      "_comment_groupConfigDir": "Optional operator-controlled directory of per-conversation instruction files. Must be outside this bot's agent-writable workspace.",
-      "groupConfigDir": "/etc/octobuddy/groups/my-bot",
       "_comment_gating": "Optional per-bot group-gating policy (session-router). trigger.mentionFreeGroups = channel ids the bot answers WITHOUT an @mention; knownBotUids/allowedBotUids = bot-loop guard; botBlocklist = uids whose DMs are dropped.",
       "knownBotUids": [],
       "allowedBotUids": [],

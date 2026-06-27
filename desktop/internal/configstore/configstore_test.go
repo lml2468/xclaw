@@ -59,7 +59,6 @@ func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 			ID:             "a",
 			RateLimit:      &config.RateLimitConfig{MaxPerMinute: 7},
 			Context:        &config.ContextConfig{MaxContextChars: 1234},
-			GroupConfigDir: "/srv/groups",
 			OnBehalfOf:     &config.OnBehalfOf{UID: "grantor-9"},
 			Trigger:        &config.TriggerConfig{MentionFreeGroups: []string{"g1", "g2"}},
 			Agent: &config.AgentConfig{
@@ -98,9 +97,6 @@ func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 	}
 	if b.Context == nil || b.Context.MaxContextChars != 1234 {
 		t.Errorf("context dropped: %+v", b.Context)
-	}
-	if b.GroupConfigDir != "/srv/groups" {
-		t.Errorf("groupConfigDir dropped: %q", b.GroupConfigDir)
 	}
 	if b.Trigger == nil || len(b.Trigger.MentionFreeGroups) != 2 {
 		t.Errorf("trigger.mentionFreeGroups dropped: %+v", b.Trigger)

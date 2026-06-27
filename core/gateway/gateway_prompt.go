@@ -92,13 +92,11 @@ func renderGroupPrompt(deltaText, currentText string) string {
 // buildSystemPrompt assembles the frozen system-prompt append: the
 // non-overridable security prefix, the operator-trusted SOUL/config prompt,
 // then (for GROUP/thread turns) the gateway-authored member roster +
-// mention-format hint, the operator-authored [Group instructions] block for
-// this channel, and (for persona clones) the persona instruction. The
+// mention-format hint, and (for persona clones) the persona instruction. The
 // SecurityPrefix always stays first and non-overridable. (The driver's preset
 // base prompt is prepended by the agent CLI.)
 //
-// rosterPrefix is "" for DMs and for groups with no learned members. [Group
-// instructions] is injected only for groups (cc-channel-octo index.ts). Persona
+// rosterPrefix is "" for DMs and for groups with no learned members. Persona
 // injection mirrors openclaw inbound.ts (synthesized group hint + free-form
 // persona prompt). All are config/gateway-authored (never from message
 // payloads), so each is wrapped as safety.TrustedText after the SecurityPrefix.
@@ -110,7 +108,6 @@ func (g *Gateway) buildSystemPrompt(msg router.InboundMessage, rosterPrefix stri
 	if rosterPrefix != "" {
 		parts = append(parts, safety.TrustedText(rosterPrefix))
 	}
-	parts = g.appendGroupInstructions(parts, msg)
 	parts = g.appendPersonaInstructions(parts)
 	parts = g.appendBootstrap(parts, msg)
 	return joinSystemPromptParts(parts)
@@ -144,15 +141,6 @@ func (g *Gateway) effectiveBootstrap() string {
 		return ""
 	}
 	return g.resolveBootstrapFn()
-}
-
-func (g *Gateway) appendGroupInstructions(parts []safety.SafeText, msg router.InboundMessage) []safety.SafeText {
-	if g.groupMD != nil && msg.ChannelType == router.ChannelGroup && msg.ChannelID != "" {
-		if instr, ok := g.groupMD.Load(msg.ChannelID); ok {
-			parts = append(parts, safety.TrustedText("[Group instructions]\n"+instr))
-		}
-	}
-	return parts
 }
 
 func (g *Gateway) appendPersonaInstructions(parts []safety.SafeText) []safety.SafeText {

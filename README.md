@@ -55,7 +55,7 @@ one contract:
   (SKILL.md bundles) and `Workflow` scripts under `~/.octobuddy/<id>/.claude/`; the
   CLI auto-loads them as user-scope assets every spawn. Author and edit them
   in-app — no shared marketplace, no install step.
-- **Batteries** — per-bot scheduled tasks (cron), operator group instructions,
+- **Batteries** — per-bot scheduled tasks (cron),
   on-behalf-of persona clones, opt-in tool-progress notices, and a bundled
   `octo-cli` companion with one-click upgrade.
 - **Secrets stay out of config** — bot tokens live in the OS keychain
@@ -85,7 +85,7 @@ Inbound message → **router** (mention gate · bot-loop guard · sessionKey · 
 limit · per-session lock) → **store** (resume id) → **groupctx** (rolling group
 context + answered/new segmentation) → **sandbox** (cwd + memory) →
 **attachments materialized into cwd** → **buildSystemPrompt** (security prefix +
-SOUL/AGENTS + roster + GROUP.md + persona) → **driver.Query** → stream
+SOUL/AGENTS + roster + persona) → **driver.Query** → stream
 `AgentEvent`s (each resets a per-turn idle deadline) → assemble reply →
 persist + send (sink emits `session.upserted` so the sidebar stays in sync).
 

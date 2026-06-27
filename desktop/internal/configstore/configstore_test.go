@@ -55,12 +55,12 @@ func TestSavePreservesUnmodeledPerBotFields(t *testing.T) {
 	setup(t)
 	writeConfig(t, config.File{
 		Bots: []config.BotEntry{{
-			APIURL:         "https://top.example",
-			ID:             "a",
-			RateLimit:      &config.RateLimitConfig{MaxPerMinute: 7},
-			Context:        &config.ContextConfig{MaxContextChars: 1234},
-			OnBehalfOf:     &config.OnBehalfOf{UID: "grantor-9"},
-			Trigger:        &config.TriggerConfig{MentionFreeGroups: []string{"g1", "g2"}},
+			APIURL:     "https://top.example",
+			ID:         "a",
+			RateLimit:  &config.RateLimitConfig{MaxPerMinute: 7},
+			Context:    &config.ContextConfig{MaxContextChars: 1234},
+			OnBehalfOf: &config.OnBehalfOf{UID: "grantor-9"},
+			Trigger:    &config.TriggerConfig{MentionFreeGroups: []string{"g1", "g2"}},
 			Agent: &config.AgentConfig{
 				Model:              "m",
 				Cron:               ptrTo(true),

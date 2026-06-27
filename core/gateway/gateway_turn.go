@@ -180,10 +180,17 @@ func (g *Gateway) prepareAgentRequest(ctx context.Context, sessionKey string, ms
 	// Its console-ness is a live-trigger concern (the bootstrap gate reads
 	// msg.Source directly below), not a stored distinction.
 	storedSource := string(msg.Source)
+	// Console turns persist as a plain human message (above) AND must drop the
+	// synthetic Console uid ("gui-user"): persisting it would make the desktop
+	// Bubble's showSenderLabel truthy and slap a "gui-user"/"You" label on an
+	// operator-typed message that should stay unlabeled. IM turns keep their
+	// real FromUID so the bubble can re-resolve / converge the display name.
+	fromUID := msg.FromUID
 	if msg.Source == trigger.SourceConsole {
 		storedSource = string(trigger.SourceUser)
+		fromUID = ""
 	}
-	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName, storedSource); err != nil {
+	if err := g.store.AppendUser(sessionKey, msg.Text, msg.FromName, fromUID, storedSource); err != nil {
 		return agent.Request{}, g.failTurn(sessionKey, "store.AppendUser", err)
 	}
 	g.notifySessionTouch(sessionKey, msg.ChannelID, msg.ChannelType)

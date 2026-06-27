@@ -48,7 +48,7 @@ func (c *nameCache) PrewarmChannels(channelIDs []string, timeout time.Duration) 
 	}()
 	go func() {
 		defer wg.Done()
-		c.prewarm(threads, timeout, "c:", NameKindChannel, identity, c.channels, func(ctx context.Context, id string) string {
+		c.prewarm(threads, timeout, "c:", NameKindChannel, identity, c.channels, func(ctx context.Context, id string) (string, error) {
 			return c.rest.GetThreadInfo(ctx, ExtractParentGroupNo(id), extractThreadShortID(id))
 		})
 	}()
@@ -85,7 +85,7 @@ func (c *nameCache) prewarm(
 	kind NameKind,
 	normalize func(string) string,
 	bucket map[string]nameEntry,
-	fetch func(context.Context, string) string,
+	fetch func(context.Context, string) (string, error),
 ) {
 	if len(keys) == 0 || c.rest == nil {
 		return
@@ -128,12 +128,13 @@ func (c *nameCache) prewarm(
 	}
 }
 
-func (c *nameCache) prewarmOne(kind NameKind, key string, bucket map[string]nameEntry, cacheKey string, fetch func(context.Context, string) string) {
+func (c *nameCache) prewarmOne(kind NameKind, key string, bucket map[string]nameEntry, cacheKey string, fetch func(context.Context, string) (string, error)) {
 	// Fetch ctx is independent of the caller's wait budget; the caller may walk
 	// away, but the result still lands in cache for the next caller.
 	ctx, cancel := context.WithTimeout(context.Background(), prewarmFetchTimeout)
 	defer cancel()
-	c.storeName(kind, key, bucket, cacheKey, fetch(ctx, key))
+	name, err := fetch(ctx, key)
+	c.storeName(kind, key, bucket, cacheKey, name, err != nil)
 }
 
 func (c *nameCache) shouldPrewarmKey(cacheKey, key string, bucket map[string]nameEntry) bool {
@@ -141,7 +142,7 @@ func (c *nameCache) shouldPrewarmKey(cacheKey, key string, bucket map[string]nam
 		return false
 	}
 	if e, ok := bucket[key]; ok {
-		return e.name == "" && time.Since(e.fetchedAt) >= negativeTTL
+		return !e.fresh()
 	}
 	return true
 }

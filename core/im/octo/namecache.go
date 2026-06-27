@@ -47,12 +47,40 @@ type nameCache struct {
 type nameEntry struct {
 	name      string
 	fetchedAt time.Time
+	// failed marks an empty entry that came from a transient fetch error
+	// (network / 5xx / auth) rather than a genuine "no such name" (404).
+	// A failed entry re-fetches after the short errorTTL instead of being
+	// stuck for the full negativeTTL, so one blip doesn't pin the GUI to a
+	// bare id for minutes.
+	failed bool
+}
+
+// fresh reports whether the entry can be served without re-fetching: a
+// resolved (non-empty) name never expires; an empty entry is fresh only
+// within its TTL — errorTTL for a transient failure, negativeTTL for a
+// genuine empty. Centralized here so the read path (resolveCachedOrKick /
+// kickIfMissing) and the prewarm path (shouldPrewarmKey) agree.
+func (e nameEntry) fresh() bool {
+	if e.name != "" {
+		return true
+	}
+	ttl := negativeTTL
+	if e.failed {
+		ttl = errorTTL
+	}
+	return time.Since(e.fetchedAt) < ttl
 }
 
 // negativeTTL bounds how long an empty result is cached. Short enough that
 // renaming a group / setting a missing display name shows up within minutes
 // without a daemon restart; long enough to absorb a session.list burst.
 const negativeTTL = 5 * time.Minute
+
+// errorTTL bounds how long a TRANSIENT-failure empty (network / 5xx / auth) is
+// cached before re-fetch. Short so a momentary blip self-heals in seconds
+// rather than pinning the GUI to a bare id for the full negativeTTL; long
+// enough to coalesce a sessions.list burst and not hammer a flapping endpoint.
+const errorTTL = 30 * time.Second
 
 func newNameCache(rest *RESTClient) *nameCache {
 	return &nameCache{
@@ -77,12 +105,14 @@ func (c *nameCache) SetResolvedHook(fn func(NameKind, string, string)) {
 // cached value — fires the resolved hook. Notifying only on a real change keeps
 // a session-list prewarm burst from re-broadcasting rows whose names were
 // already known (and a "" fetch result from clobbering a row back to its id).
-// Shared by every fetch path (fetchUser/fetchGroup/fetchThread + prewarm) so
-// the notify semantics live in exactly one place.
-func (c *nameCache) storeName(kind NameKind, key string, bucket map[string]nameEntry, inflightKey, name string) {
+// failed marks an empty result that came from a transient error (vs a genuine
+// 404) so the entry expires after the short errorTTL. Shared by every fetch
+// path (fetchUser/fetchGroup/fetchThread + prewarm) so the notify + TTL
+// semantics live in exactly one place.
+func (c *nameCache) storeName(kind NameKind, key string, bucket map[string]nameEntry, inflightKey, name string, failed bool) {
 	c.mu.Lock()
 	prev := bucket[key].name
-	bucket[key] = nameEntry{name: name, fetchedAt: time.Now()}
+	bucket[key] = nameEntry{name: name, fetchedAt: time.Now(), failed: failed && name == ""}
 	delete(c.inflight, inflightKey)
 	hook := c.onResolved
 	c.mu.Unlock()
@@ -153,7 +183,7 @@ func (c *nameCache) resolveCachedOrKick(
 ) string {
 	c.mu.Lock()
 	e, ok := bucket[key]
-	fresh := ok && (e.name != "" || time.Since(e.fetchedAt) < negativeTTL)
+	fresh := ok && e.fresh()
 	c.mu.Unlock()
 	if fresh {
 		return e.name
@@ -173,11 +203,9 @@ func (c *nameCache) kickIfMissing(
 	fetch func(string),
 ) {
 	c.mu.Lock()
-	if e, ok := bucket[key]; ok {
-		if e.name != "" || time.Since(e.fetchedAt) < negativeTTL {
-			c.mu.Unlock()
-			return
-		}
+	if e, ok := bucket[key]; ok && e.fresh() {
+		c.mu.Unlock()
+		return
 	}
 	if _, busy := c.inflight[prefix+key]; busy {
 		c.mu.Unlock()
@@ -191,18 +219,20 @@ func (c *nameCache) kickIfMissing(
 func (c *nameCache) fetchUser(uid string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c.storeName(NameKindUser, uid, c.users, "u:"+uid, c.rest.GetUserInfo(ctx, uid))
+	name, err := c.rest.GetUserInfo(ctx, uid)
+	c.storeName(NameKindUser, uid, c.users, "u:"+uid, name, err != nil)
 }
 
 func (c *nameCache) fetchGroup(groupNo string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c.storeName(NameKindChannel, groupNo, c.channels, "c:"+groupNo, c.rest.GetGroupInfo(ctx, groupNo))
+	name, err := c.rest.GetGroupInfo(ctx, groupNo)
+	c.storeName(NameKindChannel, groupNo, c.channels, "c:"+groupNo, name, err != nil)
 }
 
 func (c *nameCache) fetchThread(channelID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	name := c.rest.GetThreadInfo(ctx, ExtractParentGroupNo(channelID), extractThreadShortID(channelID))
-	c.storeName(NameKindChannel, channelID, c.channels, "c:"+channelID, name)
+	name, err := c.rest.GetThreadInfo(ctx, ExtractParentGroupNo(channelID), extractThreadShortID(channelID))
+	c.storeName(NameKindChannel, channelID, c.channels, "c:"+channelID, name, err != nil)
 }

@@ -38,6 +38,13 @@ type Message struct {
 	Content   string
 	Timestamp int64
 	FromName  string
+	// FromUID is the IM platform's stable id of the human author of a
+	// user-role row. The durable identity behind FromName (which can be
+	// empty at append time and converge later): persisted so a reload can
+	// re-resolve the live display name and never collapses a nameless
+	// bubble to "You". Empty for assistant rows and legacy rows predating
+	// the column.
+	FromUID string
 	// Source classifies the row's origin. SourceUser (default human
 	// inbound), SourceCron (scheduler fire), SourceAssistant (bot reply).
 	// Persisted so the desktop GUI's "cron" corner badge survives a
@@ -89,6 +96,9 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if err := migrateMessagesAddSource(db); err != nil {
+		return nil, err
+	}
+	if err := migrateMessagesAddFromUID(db); err != nil {
 		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
@@ -149,22 +159,22 @@ func (s *Store) GetOrCreate(id, channelID string, channelType int) (Session, err
 
 // --- messages ---
 
-func (s *Store) AppendUser(sessionID, content, fromName, source string) error {
+func (s *Store) AppendUser(sessionID, content, fromName, fromUID, source string) error {
 	if source == "" {
 		source = SourceUser
 	}
-	return s.appendMessage(sessionID, RoleUser, content, fromName, source)
+	return s.appendMessage(sessionID, RoleUser, content, fromName, fromUID, source)
 }
 
 func (s *Store) AppendAssistant(sessionID, content, botName string) error {
-	return s.appendMessage(sessionID, RoleAssistant, content, botName, SourceAssistant)
+	return s.appendMessage(sessionID, RoleAssistant, content, botName, "", SourceAssistant)
 }
 
-func (s *Store) appendMessage(sessionID string, role Role, content, fromName, source string) error {
+func (s *Store) appendMessage(sessionID string, role Role, content, fromName, fromUID, source string) error {
 	now := s.now().Unix()
 	_, err := s.db.Exec(
-		`INSERT INTO messages(session_id, role, content, timestamp, from_name, source) VALUES(?,?,?,?,?,?)`,
-		sessionID, string(role), content, now, fromName, source)
+		`INSERT INTO messages(session_id, role, content, timestamp, from_name, from_uid, source) VALUES(?,?,?,?,?,?,?)`,
+		sessionID, string(role), content, now, fromName, fromUID, source)
 	if err != nil {
 		return fmt.Errorf("append %s: %w", role, err)
 	}
@@ -181,7 +191,7 @@ func (s *Store) appendMessage(sessionID string, role Role, content, fromName, so
 // order (oldest first), for first-turn history injection.
 func (s *Store) RecentMessages(sessionID string, limit int) ([]Message, error) {
 	rows, err := s.db.Query(
-		`SELECT role, content, timestamp, COALESCE(from_name,''), COALESCE(source,'user')
+		`SELECT role, content, timestamp, COALESCE(from_name,''), COALESCE(from_uid,''), COALESCE(source,'user')
 		 FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?`,
 		sessionID, limit)
 	if err != nil {
@@ -192,7 +202,7 @@ func (s *Store) RecentMessages(sessionID string, limit int) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		var role string
-		if err := rows.Scan(&role, &m.Content, &m.Timestamp, &m.FromName, &m.Source); err != nil {
+		if err := rows.Scan(&role, &m.Content, &m.Timestamp, &m.FromName, &m.FromUID, &m.Source); err != nil {
 			return nil, err
 		}
 		m.Role = Role(role)

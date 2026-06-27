@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { Message } from "../store.svelte";
+  import { store } from "../store.svelte";
   import { renderMarkdown, onMarkdownCopyClick } from "../markdown";
   import Avatar from "./Avatar.svelte";
 
-  let { message }: { message: Message } = $props();
+  let { message, botId }: { message: Message; botId?: string } = $props();
 
   const isUser = $derived(message.role === "user");
   const isTool = $derived(message.role === "tool");
@@ -14,11 +15,18 @@
     return `${(n / 1024 / 1024).toFixed(1)} MB`;
   }
  // senderLabel resolves the human author of a user-role bubble. Fallback
- // chain: name (resolved via the daemon's nameCache for IM senders) → uid
- // (when name is unknown) → "You" (Console messages have neither). Group
- // chats route N humans through one session — the name is what tells them
- // apart in the transcript.
-  const senderLabel = $derived(message.senderName || message.senderUid || "You");
+ // chain: the LIVE name from store.userNames (keyed on the authoring bot —
+ // passed in as a prop, not read from global selection — plus senderUid;
+ // this is what lets a bubble that first rendered with a bare uid converge
+ // once the daemon's name.resolved event lands, AND what re-resolves a
+ // reloaded row whose stored name was empty) → senderName (the name frozen
+ // at append time) → senderUid (name still unknown) → "You" (Console
+ // messages have neither). Reading store.userNames inside this $derived is
+ // what subscribes the bubble to later map writes.
+  const liveName = $derived(
+    botId && message.senderUid ? store.userNames[botId]?.[message.senderUid] : undefined,
+  );
+  const senderLabel = $derived(liveName || message.senderName || message.senderUid || "You");
  // Show the sender name as a small label above the bubble ONLY when it
  // came from IM (senderName/senderUid present). Console-typed user
  // messages have neither and stay unlabeled — the operator knows they

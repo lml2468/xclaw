@@ -108,6 +108,13 @@ type HistoryMessage struct {
 	// Empty for assistant rows and for legacy rows persisted before this
 	// field was added.
 	FromName string `json:"fromName,omitempty"`
+	// FromUID is the IM author's stable id for a user-role row. The durable
+	// handle behind FromName: the desktop keys its converging name map on it
+	// so a bubble whose name resolved late (or was empty at append time)
+	// re-resolves on the next name.resolved event instead of freezing the
+	// stored name. Empty for assistant rows and legacy rows predating the
+	// store column.
+	FromUID string `json:"fromUid,omitempty"`
 }
 
 // HistoryResponse is the session.history response. It echoes the requested botId
@@ -161,4 +168,23 @@ type SessionSummary struct {
 type SessionUpsertedBody struct {
 	BotID   string         `json:"botId,omitempty"`
 	Session SessionSummary `json:"session"`
+}
+
+// NameResolvedBody is broadcast as the "name.resolved" event when a background
+// name fetch lands a DM/group-member display name. It exists only for the user
+// (group-member) dimension: a group member is the author of message bubbles but
+// has no session row of its own, so session.upserted (which converges channel
+// names) can't carry it. The desktop folds this into a uid→name map its bubbles
+// read reactively, so a bubble that first rendered with a bare uid converges to
+// the name without a reload. Channel names are NOT re-broadcast here — they
+// already converge via session.upserted.
+type NameResolvedBody struct {
+	BotID string `json:"botId,omitempty"`
+	// Kind is "user" — the only kind emitted. Reserved for forward-compat so a
+	// client can switch on it rather than assume.
+	Kind string `json:"kind"`
+	// ID is the resolved IM uid; Name is its display name (always non-empty —
+	// the daemon only emits on a resolved, changed name).
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }

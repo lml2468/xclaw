@@ -170,6 +170,13 @@ class Store {
  // create/update/delete responses re-issue CronList rather than splicing the
  // single mutated row (round-trip cost is trivial, list ops are infrequent).
   schedules = $state<Record<string, any[]>>({});
+ // Per-bot map of IM uid → resolved display name, folded from name.resolved
+ // events. Group-member names have no session row of their own (a member
+ // authors bubbles, it isn't a channel), so session.upserted can't carry
+ // them — this map is how a bubble that first rendered with a bare uid
+ // converges to the name without a reload. Bubble reads it inside a $derived
+ // keyed on store.selectedBotId so a later write re-renders it.
+  userNames = $state<Record<string, Record<string, string>>>({});
   selectedBotId = $state<string | null>(null);
   selectedKey = $state<string | null>(null);
   private loadedSessionRosters = $state<Record<string, boolean>>({});
@@ -516,6 +523,17 @@ class Store {
  // same row-merge path as the sessions.list pull so first paint behavior
  // matches incremental updates.
         this.applySessionsList(env.body.botId, [env.body.session]);
+      } else if (env.type === "name.resolved" && env.body && env.body.id && env.body.name) {
+ // A group-member display name resolved on the daemon. Fold it into the
+ // per-bot uid→name map; Bubble reads this map reactively so any already-
+ // rendered bubble authored by this uid converges from the bare uid to the
+ // name. Channel names are NOT carried here — they converge via
+ // session.upserted above. Reassign the inner record so the $state proxy
+ // tracks the change for both new and updated uids.
+        const bid = env.body.botId || this.defaultBotId();
+        if (bid) {
+          this.userNames[bid] = { ...(this.userNames[bid] ?? {}), [env.body.id]: env.body.name };
+        }
       } else if (env.type === "cron.list" && env.body && env.body.botId && Array.isArray(env.body.tasks)) {
  // Wrapped response carries botId so a fast bot-switch mid-fetch routes
  // to the right per-bot bucket. cron.create/update/delete responses
@@ -766,6 +784,11 @@ class Store {
       // binary's history responses still badge correctly.
       cron: (r as any).source === "cron" || !!(r as any).cron,
       senderName: r.fromName || undefined,
+      // Persisted uid is the durable handle: keep it so the bubble's
+      // $derived can re-resolve the live name from userNames (the stored
+      // fromName may have been empty at append time) and a nameless group
+      // row never collapses to "You" on reload.
+      senderUid: r.fromUid || undefined,
     }));
     if (s.messages.length === 0) {
       s.messages = persisted;
@@ -775,12 +798,12 @@ class Store {
  // (role, text, floored-ts) tuple — a Set would incorrectly dedupe two
  // distinct user messages with identical text that landed in the same
  // wall-clock second (e.g. an operator retry "ok"/"ok"). Stash a list per
- // tuple so we can also MERGE fields: the live session.user_message
- // carries `senderUid` AND `senderName`, but the persisted row carries
- // only `senderName` (the store has no from_uid column). Without the
- // merge, the dedup would drop the local copy and lose `senderUid` —
- // a future render that wanted the uid fallback (cached name resolved
- // later) would see only the now-empty field.
+ // tuple so we can also MERGE fields: both the live session.user_message
+ // and (post from_uid column) the persisted row carry `senderUid` +
+ // `senderName`, but a row persisted before that column exists carries only
+ // `senderName`. Without the merge, the dedup would drop the local copy and
+ // lose `senderUid` — a future render that wanted the uid fallback (cached
+ // name resolved later) would see only the now-empty field.
     const slots = new Map<string, Message[]>();
     for (const m of persisted) {
       const k = `${m.role}\x00${m.text}\x00${Math.floor(m.ts)}`;

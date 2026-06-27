@@ -323,6 +323,10 @@ func historyFromMessages(msgs []store.Message) []control.HistoryMessage {
 		row := control.HistoryMessage{Role: string(m.Role), Content: m.Content, TS: m.Timestamp, Source: src}
 		if m.Role == store.RoleUser {
 			row.FromName = safety.SanitizeDisplayName(m.FromName, "")
+			// Forward the durable uid so the desktop can re-resolve the live
+			// name through its converging name map — the stored from_name may
+			// have been empty (cache miss) at append time.
+			row.FromUID = m.FromUID
 		}
 		out = append(out, row)
 	}

@@ -85,6 +85,10 @@ type agentAttemptResult struct {
 type turnStep struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`
+	// Detail is the raw Name(params) shown when a tool step is expanded in the
+	// desktop card. Empty (omitted) for thinking steps and for tool calls whose
+	// summary already IS the Name(params) — those render non-expandable.
+	Detail string `json:"detail,omitempty"`
 }
 
 func (g *Gateway) consumeAgentAttempt(sessionKey string, events <-chan agent.AgentEvent, idle *idleGuard, gated bool) agentAttemptResult {
@@ -145,9 +149,15 @@ func (g *Gateway) consumeAgentEvent(sessionKey string, ev agent.AgentEvent, idle
 	case agent.KindTextDelta:
 		reply.WriteString(ev.Text)
 	case agent.KindToolUse:
-		// Mirror the desktop's live step text (store.svelte.ts: `name(params)`)
-		// so the persisted card matches what streamed during the turn.
-		res.steps = append(res.steps, turnStep{Kind: "tool", Text: ev.ToolName + "(" + ev.ToolParams + ")"})
+		// Persist the readable summary as the step text + the raw Name(params)
+		// as expandable detail (computed once in claude_parse, same values the
+		// live session.tool carries). Detail is elided when it equals the
+		// summary (no description) so the card renders it non-expandable.
+		step := turnStep{Kind: "tool", Text: ev.ToolSummary}
+		if ev.ToolDetail != ev.ToolSummary {
+			step.Detail = ev.ToolDetail
+		}
+		res.steps = append(res.steps, step)
 	case agent.KindThinking:
 		// Coalesce consecutive thinking markers into one step, mirroring the
 		// desktop fold(). The literal "thinking…" matches the FE's live label.

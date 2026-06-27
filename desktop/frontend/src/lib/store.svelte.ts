@@ -80,6 +80,11 @@ export interface ProcStep {
   id: string;
   kind: "tool" | "thinking";
   text: string;
+  // detail is the raw Name(params) shown when a tool step is expanded; the
+  // readable summary lives in `text`. Absent for thinking steps, for tool
+  // calls whose summary already is the Name(params), and for legacy persisted
+  // steps — all render non-expandable.
+  detail?: string;
   // status drives the per-row affordance: "running" → spinner ◌, "done" → ✓.
   // Live steps start "running" and flip to "done" when the next step begins
   // (or the turn ends); steps snapshotted onto an assistant Message and steps
@@ -181,7 +186,7 @@ const parseSteps = (raw: unknown): ProcStep[] | undefined => {
     if (!Array.isArray(arr)) return undefined;
     const steps = arr
       .filter((e) => e && (e.kind === "tool" || e.kind === "thinking") && typeof e.text === "string")
-      .map((e) => ({ id: newId(), kind: e.kind as "tool" | "thinking", text: e.text as string, status: "done" as const }));
+      .map((e) => ({ id: newId(), kind: e.kind as "tool" | "thinking", text: e.text as string, detail: typeof e.detail === "string" && e.detail ? e.detail : undefined, status: "done" as const }));
     return steps.length ? steps : undefined;
   } catch {
     return undefined;
@@ -339,7 +344,7 @@ class Store {
  // answer-in-progress is NOT here — the chat shows a working indicator
  // until the whole reply arrives in session.reply.
         steps: [
-          { id: newId(), kind: "tool", text: "Bash(ls -la)", status: "done" },
+          { id: newId(), kind: "tool", text: "List directory contents", detail: "Bash(ls -la)", status: "done" },
           { id: newId(), kind: "thinking", text: "thinking…", status: "done" },
           { id: newId(), kind: "tool", text: "Read(proto/README.md)", status: "running" },
         ],
@@ -347,8 +352,8 @@ class Store {
       inputTokens: 1450, outputTokens: 92, cachedInputTokens: 1200, costUsd: 0.0123, lastActivity: Date.now(), messages: [
         { id: newId(), role: "user", text: "List the files in the project root and summarize what this repo does.", ts: 0 },
         { id: newId(), role: "assistant", text: "It's a **Go + Svelte** monorepo:\n\n- `core/` — the `octobuddy-daemon` gateway daemon\n- `desktop/` — this Wails app\n- `proto/` — the control-bus contract\n\n```go\nfunc main() {\n    app.Run()\n}\n```\n\nWant me to open the README?", ts: 0, steps: [
-          { id: newId(), kind: "tool", text: "Bash(ls -la)", status: "done" },
-          { id: newId(), kind: "tool", text: "Read(README.md)", status: "done" },
+          { id: newId(), kind: "tool", text: "List directory contents", detail: "Bash(ls -la)", status: "done" },
+          { id: newId(), kind: "tool", text: "Read project README", detail: "Read(README.md)", status: "done" },
         ] },
         { id: newId(), role: "user", text: "yes, and the proto contract too", ts: 0 },
       ],
@@ -659,7 +664,15 @@ class Store {
  // this tool as the new running step (◌).
         s.proc.active = true;
         finishLastStep(s.proc);
-        s.proc.steps.push({ id: newId(), kind: "tool", text: `${env.body.name}(${env.body.params ?? ""})`, status: "running" });
+ // Prefer the daemon's readable summary; fall back to name(params) for an
+ // older daemon. detail (raw name(params)) drives the expand affordance.
+        s.proc.steps.push({
+          id: newId(),
+          kind: "tool",
+          text: env.body.summary ?? `${env.body.name}(${env.body.params ?? ""})`,
+          detail: env.body.detail || undefined,
+          status: "running",
+        });
         s.lastActivity = Date.now();
         break;
       }

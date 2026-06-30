@@ -167,6 +167,72 @@ type TokenUsage struct {
 	CostUSD float64
 }
 
+// SystemPrompt carries the SEMANTIC ROLE of each system-prompt segment, not a
+// flattened blob. Each driver decides how to map these onto its own CLI flags,
+// but every driver MUST honor one invariant: Mandatory leads Persona and can
+// never be displaced by the agent's built-in base prompt. Escaping of untrusted
+// content (the Background segments) is the caller's job (the gateway, via the
+// safety package) — this leaf type only receives already-safe strings, keeping
+// agent dependency-free (same philosophy as AgentEvent: no wire deps).
+//
+// Why this exists: a single flattened string loses the distinction between
+// "non-overridable security prefix", "operator-trusted persona", and "untrusted
+// background". ClaudeDriver could work with a blob only because the gateway
+// implicitly knew Claude's flag behavior; a second driver (Codex/Gemini) cannot
+// recover those roles from a blob. Structuring the intent keeps the security
+// contract enforceable across drivers.
+type SystemPrompt struct {
+	// Mandatory is the non-overridable security prefix. It must appear first in
+	// the final prompt and must not be displaced by the agent's base prompt.
+	Mandatory string
+	// Persona is the operator-trusted persona/behavior (SOUL.md + AGENTS.md +
+	// group roster + persona-clone + bootstrap). A driver may append these on top
+	// of its base prompt or use them to replace it.
+	Persona []string
+	// Background is untrusted, already-escaped context (the per-group GROUP.md
+	// handbook). A driver should keep it after the trusted segments.
+	Background []string
+}
+
+// Flatten joins the segments in Mandatory → Persona → Background order with a
+// blank line between non-empty parts. Drivers that take a single system-prompt
+// string call this; structure-aware drivers read the fields directly.
+func (p SystemPrompt) Flatten() string {
+	parts := make([]string, 0, 1+len(p.Persona)+len(p.Background))
+	if p.Mandatory != "" {
+		parts = append(parts, p.Mandatory)
+	}
+	for _, s := range p.Persona {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	for _, s := range p.Background {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// IsZero reports whether every segment is empty — i.e. Flatten would return "".
+func (p SystemPrompt) IsZero() bool {
+	if p.Mandatory != "" {
+		return false
+	}
+	for _, s := range p.Persona {
+		if s != "" {
+			return false
+		}
+	}
+	for _, s := range p.Background {
+		if s != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // Request is the agent-agnostic ask. Drivers map these onto their CLI
 // flags.
 type Request struct {
@@ -176,12 +242,17 @@ type Request struct {
 	MemoryDir string // per-session auto-memory dir ("" = driver default)
 	Model     string // optional model override
 
-	// SystemPrompt is the operator-trusted system prompt assembled by
-	// the gateway (SecurityPrefix + SOUL.md + AGENTS.md + group hints).
-	// Driver behavior depends on its prompt mode: in claude's minimal
-	// mode this REPLACES the built-in system prompt entirely; in
-	// claude_code mode it is appended on top of the built-in one.
+	// SystemPrompt is the legacy flattened operator-trusted system prompt.
+	// Retained as a fallback for callers that have not yet moved to the
+	// structured System field (REPL / older embedders). When System is non-zero
+	// it takes precedence; see Request.sysPrompt in claude.go. Removed once all
+	// callers populate System (migration Phase 3).
 	SystemPrompt string
+
+	// System is the structured system-prompt intent (Mandatory / Persona /
+	// Background). Preferred over SystemPrompt; the gateway populates it so
+	// drivers can preserve segment roles instead of parsing a blob.
+	System SystemPrompt
 
 	// AllowedTools scopes the tools the agent may call.
 	//   nil          → driver default whitelist
@@ -195,6 +266,17 @@ type Request struct {
 	// names (claude: "user", "project"). Empty → driver default ("user"
 	// for claude). The driver maps to its own flag (`--setting-sources`).
 	SettingSources []string
+}
+
+// sysPrompt returns the effective system-prompt string for a driver that takes
+// a single flattened value: the structured System when set, else the legacy
+// flat SystemPrompt. Bridges callers mid-migration (some set System, some still
+// set SystemPrompt) so the driver has one source of truth.
+func (r Request) sysPrompt() string {
+	if !r.System.IsZero() {
+		return r.System.Flatten()
+	}
+	return r.SystemPrompt
 }
 
 // Capabilities advertises what a driver supports, so the gateway can adapt.

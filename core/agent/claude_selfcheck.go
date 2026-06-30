@@ -14,12 +14,10 @@ import (
 //
 //	[selfcheck] bot=<id> claude=<path-or-MISSING> auth=<masked-or-UNSET>
 //	            base_url=<url> cwd=<path> writable=<bool>
-//	            mode=<minimal|claude_code> tools=<count-or-DEFAULT>
+//	            tools=<count-or-DEFAULT>
 //
 // `tools` reflects what `--tools` actually carried for this turn (req's
-// override, or the driver default in minimal mode). In claude_code mode
-// the field is "BYPASS" since --tools is not passed (bypassPermissions
-// grants every tool).
+// override, or the driver default).
 func (d *ClaudeDriver) logSelfcheck(env []string, req Request) {
 	envMap := map[string]string{}
 	for _, kv := range env {
@@ -46,19 +44,15 @@ func (d *ClaudeDriver) logSelfcheck(env []string, req Request) {
 	clog.For("selfcheck").Info("driver invocation environment",
 		"bot", botID, "claude", binStr, "auth", auth, "base_url", baseURL,
 		"cwd", req.Cwd, "writable", isDirWritable(req.Cwd),
-		"mode", string(d.mode()), "tools", d.selfcheckToolsField(req.AllowedTools))
+		"tools", d.selfcheckToolsField(req.AllowedTools))
 }
 
 // selfcheckToolsField reports the tool surface as it actually reaches the
-// spawned CLI on this turn. "BYPASS" in claude_code mode flags that no
-// whitelist applies; "NONE" for an explicit empty list; "probed:N" when the
-// nil request resolved to the binary's headless-safe set; "CLI-DEFAULT" when
-// the probe was unavailable (the CLI's own default set is used); otherwise the
-// explicit override count.
+// spawned CLI on this turn. "NONE" for an explicit empty list; "probed:N" when
+// the nil request resolved to the binary's headless-safe set; "CLI-DEFAULT"
+// when the probe was unavailable (the CLI's own default set is used); otherwise
+// the explicit override count.
 func (d *ClaudeDriver) selfcheckToolsField(override []string) string {
-	if d.mode() == PromptModeClaudeCode {
-		return "BYPASS"
-	}
 	if override == nil {
 		if safe := d.headlessTools(); len(safe) > 0 {
 			return "probed:" + strconv.Itoa(len(safe))

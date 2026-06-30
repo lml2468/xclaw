@@ -16,30 +16,6 @@ import (
 	"github.com/lml2468/octobuddy/core/clog"
 )
 
-// PromptMode controls how ClaudeDriver assembles the system prompt and
-// tool surface. Minimal aligns with the Agent SDK's reference invocation
-// (replace the built-in prompt, silence cwd config, explicit tool
-// whitelist). claude_code keeps Claude Code's built-in preamble and
-// blanket tool access — escape hatch for SOUL.md authored against the
-// preamble.
-type PromptMode string
-
-const (
-	// PromptModeMinimal is the default: Request.SystemPrompt REPLACES
-	// the built-in system prompt; cwd .claude/ is not auto-loaded; the
-	// tool surface is the whitelist in Request.AllowedTools (or the
-	// driver default if nil). Interactive tools are always disallowed.
-	// Runs under bypassPermissions (headless has no approver) — the
-	// --tools whitelist, not the permission mode, is what scopes capability.
-	PromptModeMinimal PromptMode = "minimal"
-	// PromptModeClaudeCode preserves the previous behavior: prompt is
-	// APPENDED to the built-in one, cwd .claude/ auto-loads, and the full
-	// built-in tool set is granted (no --tools whitelist). Like minimal it
-	// runs under bypassPermissions. Use only for bots whose SOUL.md was
-	// authored assuming Claude Code's preamble.
-	PromptModeClaudeCode PromptMode = "claude_code"
-)
-
 // interactiveExclusions are built-in tools that need an interactive terminal
 // to function. In a headless `-p` turn the model would call them and stall
 // (there's no UI to render the question / plan / worktree picker), so they
@@ -81,8 +57,6 @@ type ClaudeDriver struct {
 	// install (~/.octobuddy/bin/claude from the desktop's claudecli) is
 	// picked up on the next user message — without waiting for restart.
 	BinFn func() string
-	// Mode selects between minimal (default) and claude_code prompt modes.
-	Mode PromptMode
 	// ExtraArgs are appended verbatim.
 	ExtraArgs []string
 	// Env are extra KEY=VALUE entries layered onto os.Environ for the spawned
@@ -101,8 +75,8 @@ type ClaudeDriver struct {
 
 	// selfcheckOnce gates a one-time diagnostic line emitted on the
 	// FIRST Query: claude path resolution, masked ANTHROPIC_AUTH_TOKEN,
-	// ANTHROPIC_BASE_URL, CLAUDE_CONFIG_DIR + writability, effective
-	// PromptMode + allowed-tools count. Single most useful line for
+	// ANTHROPIC_BASE_URL, CLAUDE_CONFIG_DIR + writability, and the
+	// allowed-tools count. Single most useful line for
 	// diagnosing "出错了，请稍后重试" from a fresh install.
 	selfcheckOnce sync.Once
 
@@ -143,22 +117,13 @@ func NewClaudeDriver(bin string) *ClaudeDriver {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &ClaudeDriver{Bin: bin, Mode: PromptModeMinimal}
+	return &ClaudeDriver{Bin: bin}
 }
 
 func (d *ClaudeDriver) Name() string { return "claude" }
 
 func (d *ClaudeDriver) Capabilities() Capabilities {
 	return Capabilities{Streaming: true, Resume: true, ToolEvents: true}
-}
-
-// mode returns d.Mode, defaulting to PromptModeMinimal when unset so a
-// zero-value ClaudeDriver stays headless-safe.
-func (d *ClaudeDriver) mode() PromptMode {
-	if d.Mode == PromptModeClaudeCode {
-		return PromptModeClaudeCode
-	}
-	return PromptModeMinimal
 }
 
 func (d *ClaudeDriver) buildArgs(req Request) []string {
@@ -178,11 +143,7 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 	if d.MCPConfigFn != nil {
 		mcpPath = d.MCPConfigFn()
 	}
-	if d.mode() == PromptModeMinimal {
-		args = d.appendMinimalModeArgs(args, req, mcpPath != "")
-	} else {
-		args = d.appendClaudeCodeModeArgs(args, req)
-	}
+	args = d.appendMinimalModeArgs(args, req, mcpPath != "")
 	// Pin auto-memory to the per-session dir. --settings MERGES into the
 	// defaults (does not replace), so project-scope skill discovery still
 	// works. JSON-encode so a path with special chars can't break the flag.
@@ -285,39 +246,14 @@ func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request, mcpActi
 // can actually call its configured servers (ProbeTools runs without
 // --mcp-config, so the probed set never carries mcp__* names). It is applied
 // ONLY to the nil-policy default — never to an explicit operator whitelist,
-// where mcp__* admission is the operator's decision (see appendMinimalModeArgs /
-// appendClaudeCodeModeArgs). No-op when mcp is inactive or the list already has
+// where mcp__* admission is the operator's decision (see appendMinimalModeArgs).
+// No-op when mcp is inactive or the list already has
 // an mcp__* glob. Returns a fresh slice; does not mutate the input.
 func withMCPWildcard(tools []string, mcpActive bool) []string {
 	if !mcpActive || slices.Contains(tools, "mcp__*") {
 		return tools
 	}
 	return append(slices.Clone(tools), "mcp__*")
-}
-
-// appendClaudeCodeModeArgs preserves the previous behavior — append on top of
-// the built-in prompt. Unlike minimal mode it does NOT replace the system
-// prompt or restrict setting sources (the built-in preamble + its default
-// scopes are the point of this mode). It DOES honor an explicit tool whitelist:
-// the per-bot/per-channel policy must apply regardless of prompt mode, or a
-// muzzle the operator set would silently grant the full surface. An unset
-// policy (req.AllowedTools == nil) keeps blanket tool access (no --tools, so MCP
-// tools are already included).
-func (d *ClaudeDriver) appendClaudeCodeModeArgs(args []string, req Request) []string {
-	args = append(args, "--permission-mode", "bypassPermissions")
-	if sp := req.System.Flatten(); sp != "" {
-		args = append(args, "--append-system-prompt", sp)
-	}
-	// nil = no opinion → leave the full built-in surface in force (no --tools;
-	// MCP tools are part of it). A non-nil policy is applied, filtered against the
-	// interactive denylist for the same headless-stall reason as minimal mode.
-	// mcp__* is NOT auto-added: an explicit whitelist is the operator's exact
-	// surface (a per-bot .mcp.json is shared across channels), so the operator
-	// lists "mcp__*" themselves to allow MCP in a given channel.
-	if req.AllowedTools != nil {
-		args = append(args, "--tools", strings.Join(filterTools(req.AllowedTools), ","))
-	}
-	return args
 }
 
 // headlessTools returns the headless-safe tool surface for the driver's
@@ -419,11 +355,8 @@ type initInfo struct {
 // MCP server with a cwd-relative command/path resolves the same way a real turn
 // (which runs in the session sandbox) would; "" inherits the daemon's cwd.
 //
-// NOTE: probeInit always passes --setting-sources=user. For a claude_code-mode
-// bot (which runs with the built-in setting scopes and may auto-load
-// project-scope MCP), the probed health can therefore differ from a live turn;
-// the probe reflects the user-scope .mcp.json load path, which is the one
-// minimal-mode bots actually use.
+// NOTE: probeInit always passes --setting-sources=user, matching the user-scope
+// .mcp.json load path every turn uses.
 func probeInit(ctx context.Context, bin, cwd string, env, extraArgs []string) (initInfo, error) {
 	args := append([]string{
 		"-p", "-", "--output-format", "stream-json", "--verbose",

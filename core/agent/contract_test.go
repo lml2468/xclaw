@@ -5,12 +5,10 @@ import (
 	"testing"
 )
 
-// anySystemPromptArg returns the value of whichever system-prompt flag the
-// driver emitted — minimal mode uses --system-prompt, claude_code mode uses
-// --append-system-prompt. Mode-agnostic so the contract below holds across both.
-func anySystemPromptArg(args []string) (string, bool) {
+// systemPromptValue returns the value the driver emitted for --system-prompt.
+func systemPromptValue(args []string) (string, bool) {
 	for i, a := range args {
-		if (a == "--system-prompt" || a == "--append-system-prompt") && i+1 < len(args) {
+		if a == "--system-prompt" && i+1 < len(args) {
 			return args[i+1], true
 		}
 	}
@@ -29,18 +27,9 @@ type contractDriver struct {
 func contractDrivers() []contractDriver {
 	return []contractDriver{
 		{
-			name: "claude/minimal",
+			name: "claude",
 			newAgent: func() *ClaudeDriver {
-				d := newTestDriver() // minimal mode, probe pre-seeded
-				return d
-			},
-		},
-		{
-			name: "claude/claude_code",
-			newAgent: func() *ClaudeDriver {
-				d := newTestDriver()
-				d.Mode = PromptModeClaudeCode
-				return d
+				return newTestDriver() // probe pre-seeded
 			},
 		},
 	}
@@ -68,7 +57,7 @@ func TestDriverHonorsMandatoryPrefix(t *testing.T) {
 	for _, cd := range contractDrivers() {
 		t.Run(cd.name, func(t *testing.T) {
 			args := cd.newAgent().buildArgs(req)
-			sp, ok := anySystemPromptArg(args)
+			sp, ok := systemPromptValue(args)
 			if !ok {
 				t.Fatalf("%s: no system-prompt flag emitted: %v", cd.name, args)
 			}
@@ -98,7 +87,7 @@ func TestDriverMandatoryNotDisplacedByEmptyPersona(t *testing.T) {
 	for _, cd := range contractDrivers() {
 		t.Run(cd.name, func(t *testing.T) {
 			args := cd.newAgent().buildArgs(req)
-			sp, ok := anySystemPromptArg(args)
+			sp, ok := systemPromptValue(args)
 			if !ok {
 				t.Fatalf("%s: no system-prompt flag emitted: %v", cd.name, args)
 			}

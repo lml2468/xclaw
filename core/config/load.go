@@ -287,12 +287,6 @@ func validateResolvedBot(r Resolved) error {
 
 var toolNameRE = regexp.MustCompile(`^[A-Za-z0-9_.*-]+$`)
 
-// promptModeClaudeCode is the on-disk SystemPromptMode value that selects
-// claude_code mode (mirrors agent.PromptModeClaudeCode). Kept as a literal here
-// because config must not import agent (dependency direction); the string is the
-// wire contract between the two.
-const promptModeClaudeCode = "claude_code"
-
 // validateAgentTooling rejects malformed settingSources and tool names. Tool
 // names are joined comma-separated into a single --tools value, so a comma or
 // space in a name would silently split it; settingSources is restricted to the
@@ -303,14 +297,10 @@ func validateAgentTooling(botID string, a AgentConfig) error {
 			return fmt.Errorf("bot %q: invalid settingSources %q (allowed: user, project)", botID, s)
 		}
 	}
-	// "user" must be present whenever sources are configured AND the bot uses
-	// minimal mode: dropping it there disables CLAUDE_CONFIG_DIR-based per-bot
-	// skill discovery (a project-only scope), which is never intended. In
-	// claude_code mode the driver ignores settingSources entirely (it uses the
-	// built-in scopes), so a leftover project-only value is inert — rejecting it
-	// would fail a config that works. Empty is always fine (defaults to ["user"]).
-	if a.SystemPromptMode != promptModeClaudeCode &&
-		len(a.SettingSources) > 0 && !slices.Contains(a.SettingSources, "user") {
+	// "user" must be present whenever sources are configured: dropping it
+	// disables CLAUDE_CONFIG_DIR-based per-bot skill discovery (a project-only
+	// scope), which is never intended. Empty is fine (defaults to ["user"]).
+	if len(a.SettingSources) > 0 && !slices.Contains(a.SettingSources, "user") {
 		return fmt.Errorf("bot %q: settingSources must include \"user\" (project-only drops per-bot skill discovery)", botID)
 	}
 	if a.Tools == nil {
@@ -399,9 +389,6 @@ func mergeAgentScalars(dst *AgentConfig, src *AgentConfig) {
 	}
 	if src.DispatchTimeoutSec > 0 {
 		dst.DispatchTimeoutSec = src.DispatchTimeoutSec
-	}
-	if src.SystemPromptMode != "" {
-		dst.SystemPromptMode = src.SystemPromptMode
 	}
 }
 

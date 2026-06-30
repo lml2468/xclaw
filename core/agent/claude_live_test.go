@@ -63,19 +63,19 @@ func spawnReadInit(t *testing.T, args []string) map[string]any {
 }
 
 // TestClaudeMinimalModeAppliesBypass is a live wiring check: it spawns the real
-// claude binary with the driver's minimal-mode argv and asserts the binary
+// claude binary with the driver's argv and asserts the binary
 // actually APPLIED --permission-mode bypassPermissions. Argv-only tests
 // (TestClaudeArgsMinimalMode) prove we PASS the flag; this proves the binary
 // HONORS it — the regression guard for the headless invariant.
 func TestClaudeMinimalModeAppliesBypass(t *testing.T) {
 	// Seed the probe cache so buildArgs() doesn't itself spawn a probe; we only
-	// care that minimal mode requests bypassPermissions.
+	// care that the turn requests bypassPermissions.
 	d := newTestDriver()
 	args := d.buildArgs(Request{Prompt: "hi", System: SystemPrompt{Persona: []string{"t"}}})
 
 	init := spawnReadInit(t, args)
 	if got, _ := init["permissionMode"].(string); got != "bypassPermissions" {
-		t.Fatalf("minimal mode must run under bypassPermissions, got %q\ninit: %v", got, init)
+		t.Fatalf("must run under bypassPermissions, got %q\ninit: %v", got, init)
 	}
 }
 

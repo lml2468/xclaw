@@ -257,7 +257,7 @@ type Request struct {
 	AllowedTools []string
 
 	// SettingSources selects which filesystem setting scopes the driver
-	// loads (claude minimal mode only). Values are driver-specific scope
+	// loads. Values are driver-specific scope
 	// names (claude: "user", "project"). Empty → driver default ("user"
 	// for claude). The driver maps to its own flag (`--setting-sources`).
 	SettingSources []string

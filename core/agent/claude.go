@@ -137,7 +137,7 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 		args = append(args, "--model", req.Model)
 	}
 	// Resolve the MCP config path up front: the tool surface depends on
-	// whether MCP is active this turn (the minimal-mode default whitelist must
+	// whether MCP is active this turn (the default whitelist must
 	// admit mcp__* so configured servers are actually callable).
 	mcpPath := ""
 	if d.MCPConfigFn != nil {
@@ -456,7 +456,7 @@ func ProbeTools(ctx context.Context, bin string, env []string) ([]string, error)
 // tools it contributed — the backend for the desktop's MCP "test connection"
 // feature. It exercises claude's real user-scope MCP-load path (--mcp-config +
 // --strict-mcp-config, tool surface scoped to mcp__*), so the reported status
-// matches what a real minimal-mode turn would see. No API spend. A server
+// matches what a real turn would see. No API spend. A server
 // reporting a non-"connected" status (with empty Tools) is the failure signal.
 //
 // cwd should be the session sandbox dir a real turn would run in, so a server

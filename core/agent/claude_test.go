@@ -236,10 +236,10 @@ func TestClaudeArgsMinimalMode(t *testing.T) {
 		t.Fatalf("--tools missing (the surface-restrict flag — --allowedTools is auto-approve, not restrict): %v", args)
 	}
 	if contains(args, "--allowedTools") {
-		t.Fatalf("minimal mode must NOT use --allowedTools (does not actually restrict surface): %v", args)
+		t.Fatalf("must NOT use --allowedTools (does not actually restrict surface): %v", args)
 	}
 	if contains(args, "--disallowedTools") {
-		t.Fatalf("minimal mode uses --tools to restrict surface; --disallowedTools is redundant: %v", args)
+		t.Fatalf("--tools restricts surface; --disallowedTools is redundant: %v", args)
 	}
 	if contains(args, "--append-system-prompt") {
 		t.Fatalf("must NOT use --append-system-prompt (system prompt always REPLACES via --system-prompt): %v", args)
@@ -390,7 +390,7 @@ func TestHeadlessToolsEmptyProbeIsRetryable(t *testing.T) {
 	}
 }
 
-// newTestDriver returns a minimal-mode ClaudeDriver with the headless tool
+// newTestDriver returns a ClaudeDriver with the headless tool
 // probe pre-seeded, so buildArgs() in unit tests is deterministic and never
 // spawns the real claude binary. Tests that care about the nil-tools probe
 // resolution seed their own cache instead.
@@ -400,7 +400,7 @@ func newTestDriver() *ClaudeDriver {
 	return d
 }
 
-// TestClaudeArgsAllowedTools pins the AllowedTools semantics in minimal mode:
+// TestClaudeArgsAllowedTools pins the AllowedTools semantics:
 // nil → the binary's probed headless-safe set; empty slice → no tools at all
 // (--tools ""); non-empty → exact list; nil with an unavailable probe → the
 // CLI's own "default" set (no hand-maintained Go fallback).
@@ -448,7 +448,7 @@ func TestClaudeArgsAllowedTools(t *testing.T) {
 	}
 }
 
-// TestClaudeArgsSettingSources pins minimal-mode --setting-sources: empty
+// TestClaudeArgsSettingSources pins --setting-sources: empty
 // request → "user" default; an explicit list is comma-joined.
 func TestClaudeArgsSettingSources(t *testing.T) {
 	d := newTestDriver()

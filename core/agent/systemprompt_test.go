@@ -58,7 +58,7 @@ func TestDriverConsumesSystemStruct(t *testing.T) {
 	}})
 	got, ok := systemPromptArg(args)
 	if !ok {
-		t.Fatal("expected --system-prompt in minimal mode")
+		t.Fatal("expected --system-prompt")
 	}
 	if got != "SEC\n\nSOUL" {
 		t.Fatalf("driver should flatten System: got %q", got)

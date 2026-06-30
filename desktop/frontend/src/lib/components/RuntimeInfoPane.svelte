@@ -88,12 +88,10 @@
     }
   }
 
-  // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
-  // reading bot.* in markup isn't reactive. Mirror the editable agent fields
-  // into local $state (seeded once at mount, like the env `rows`) and commit
-  // back to bot on every change — same approach the env editor uses.
-
   // --- setting sources (user always on; project opt-in with warning) ---
+  // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
+  // reading bot.* in markup isn't reactive. Mirror the editable field into local
+  // $state and commit back to bot on change — same approach the env editor uses.
   let projectOn = $state<boolean>((bot.settingSources ?? []).includes("project"));
   function toggleProject() {
     projectOn = !projectOn;

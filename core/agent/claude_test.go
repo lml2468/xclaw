@@ -222,7 +222,7 @@ func TestFullTurnSequence(t *testing.T) {
 // is restricted via --tools.
 func TestClaudeArgsMinimalMode(t *testing.T) {
 	d := newTestDriver()
-	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: "you are X"})
+	args := d.buildArgs(Request{Prompt: "hi", System: SystemPrompt{Persona: []string{"you are X"}}})
 	if !contains(args, "--system-prompt") {
 		t.Fatalf("--system-prompt missing: %v", args)
 	}
@@ -236,13 +236,13 @@ func TestClaudeArgsMinimalMode(t *testing.T) {
 		t.Fatalf("--tools missing (the surface-restrict flag — --allowedTools is auto-approve, not restrict): %v", args)
 	}
 	if contains(args, "--allowedTools") {
-		t.Fatalf("minimal mode must NOT use --allowedTools (does not actually restrict surface): %v", args)
+		t.Fatalf("must NOT use --allowedTools (does not actually restrict surface): %v", args)
 	}
 	if contains(args, "--disallowedTools") {
-		t.Fatalf("minimal mode uses --tools to restrict surface; --disallowedTools is redundant: %v", args)
+		t.Fatalf("--tools restricts surface; --disallowedTools is redundant: %v", args)
 	}
 	if contains(args, "--append-system-prompt") {
-		t.Fatalf("minimal mode must NOT use --append-system-prompt: %v", args)
+		t.Fatalf("must NOT use --append-system-prompt (system prompt always REPLACES via --system-prompt): %v", args)
 	}
 }
 
@@ -252,7 +252,7 @@ func TestClaudeArgsMinimalMode(t *testing.T) {
 // caller doesn't silently fall back to claude's built-in default.
 func TestClaudeArgsMinimalModeEmptyPromptStillReplaces(t *testing.T) {
 	d := newTestDriver()
-	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: ""})
+	args := d.buildArgs(Request{Prompt: "hi", System: SystemPrompt{}})
 	idx := -1
 	for i, a := range args {
 		if a == "--system-prompt" {
@@ -267,31 +267,6 @@ func TestClaudeArgsMinimalModeEmptyPromptStillReplaces(t *testing.T) {
 	}
 }
 
-// TestClaudeArgsClaudeCodeModeEscapeHatch asserts the escape hatch
-// preserves the previous behavior: append on top of the built-in prompt,
-// blanket permissions, no surface-restrict / setting-sources / system-
-// prompt flags. Used by bots whose SOUL.md assumed the Claude Code preamble.
-func TestClaudeArgsClaudeCodeModeEscapeHatch(t *testing.T) {
-	d := NewClaudeDriver("claude")
-	d.Mode = PromptModeClaudeCode
-	args := d.buildArgs(Request{Prompt: "hi", SystemPrompt: "soul"})
-	if !contains(args, "--append-system-prompt") {
-		t.Fatalf("claude_code mode must use --append-system-prompt: %v", args)
-	}
-	if !contains(args, "bypassPermissions") {
-		t.Fatalf("claude_code mode must use bypassPermissions: %v", args)
-	}
-	if contains(args, "--system-prompt") {
-		t.Fatalf("claude_code mode must NOT use --system-prompt: %v", args)
-	}
-	if contains(args, "--setting-sources=user") {
-		t.Fatalf("claude_code mode must NOT use --setting-sources=user: %v", args)
-	}
-	if contains(args, "--tools") {
-		t.Fatalf("claude_code mode must NOT use --tools (bypassPermissions grants everything): %v", args)
-	}
-}
-
 // toolsArg returns the value following --tools in args, or ("", false) if
 // absent.
 func toolsArg(args []string) (string, bool) {
@@ -303,28 +278,15 @@ func toolsArg(args []string) (string, bool) {
 	return "", false
 }
 
-// TestClaudeCodeModeHonorsExplicitTools pins fix #3: claude_code mode ignores
-// AllowedTools when unset (blanket access) but APPLIES an explicit policy — a
-// muzzle the operator set must not silently grant the full surface just because
-// the bot uses the claude_code preamble. Interactive tools are filtered out for
-// the same headless-stall reason as minimal mode.
-func TestClaudeCodeModeHonorsExplicitTools(t *testing.T) {
-	d := NewClaudeDriver("claude")
-	d.Mode = PromptModeClaudeCode
-
-	// nil → no --tools (blanket access).
-	if _, ok := toolsArg(d.buildArgs(Request{Prompt: "hi"})); ok {
-		t.Fatal("claude_code with nil AllowedTools must not emit --tools")
+// systemPromptArg returns the value following --system-prompt, mirroring
+// toolsArg. Matches the exact flag.
+func systemPromptArg(args []string) (string, bool) {
+	for i, a := range args {
+		if a == "--system-prompt" && i+1 < len(args) {
+			return args[i+1], true
+		}
 	}
-	// explicit muzzle (empty) → --tools "".
-	if got, ok := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{}})); !ok || got != "" {
-		t.Fatalf("claude_code muzzle: --tools=%q ok=%v, want \"\"", got, ok)
-	}
-	// explicit list with an interactive tool → filtered.
-	got, ok := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{"Read", "AskUserQuestion", "Bash"}}))
-	if !ok || got != "Read,Bash" {
-		t.Fatalf("claude_code explicit list filtered: --tools=%q ok=%v, want Read,Bash", got, ok)
-	}
+	return "", false
 }
 
 // TestMinimalModeFiltersExplicitInteractiveTools pins fix #4: an operator-
@@ -373,28 +335,25 @@ func TestMCPActiveEmptyProbeFallsBackToDefault(t *testing.T) {
 
 // TestExplicitWhitelistDoesNotAutoAdmitMCP pins that an explicit tool whitelist
 // is the operator's EXACT surface: mcp__* is NOT auto-added even when a .mcp.json
-// is loaded (in either mode), so a per-channel whitelist genuinely controls MCP
-// access. The operator lists mcp__* themselves to allow it.
+// is loaded, so a per-channel whitelist genuinely controls MCP access. The
+// operator lists mcp__* themselves to allow it.
 func TestExplicitWhitelistDoesNotAutoAdmitMCP(t *testing.T) {
-	for _, mode := range []PromptMode{PromptModeMinimal, PromptModeClaudeCode} {
-		d := NewClaudeDriver("claude")
-		d.Mode = mode
-		d.MCPConfigFn = func() string { return "/tmp/x/.mcp.json" }
+	d := NewClaudeDriver("claude")
+	d.MCPConfigFn = func() string { return "/tmp/x/.mcp.json" }
 
-		// Whitelist that omits mcp__* must NOT gain it — the channel stays scoped.
-		got, ok := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{"Read", "Bash"}}))
-		if !ok || got != "Read,Bash" {
-			t.Fatalf("mode %s whitelist + MCP must NOT auto-admit mcp__*: --tools=%q, want Read,Bash", mode, got)
-		}
-		// An operator who lists mcp__* explicitly keeps it (passed through verbatim).
-		got, _ = toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{"Read", "mcp__*"}}))
-		if got != "Read,mcp__*" {
-			t.Fatalf("mode %s explicit mcp__* must survive: --tools=%q, want Read,mcp__*", mode, got)
-		}
-		// A muzzle stays a muzzle.
-		if got, _ := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{}})); got != "" {
-			t.Fatalf("mode %s muzzle + MCP: --tools=%q, want \"\"", mode, got)
-		}
+	// Whitelist that omits mcp__* must NOT gain it — the channel stays scoped.
+	got, ok := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{"Read", "Bash"}}))
+	if !ok || got != "Read,Bash" {
+		t.Fatalf("whitelist + MCP must NOT auto-admit mcp__*: --tools=%q, want Read,Bash", got)
+	}
+	// An operator who lists mcp__* explicitly keeps it (passed through verbatim).
+	got, _ = toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{"Read", "mcp__*"}}))
+	if got != "Read,mcp__*" {
+		t.Fatalf("explicit mcp__* must survive: --tools=%q, want Read,mcp__*", got)
+	}
+	// A muzzle stays a muzzle.
+	if got, _ := toolsArg(d.buildArgs(Request{Prompt: "hi", AllowedTools: []string{}})); got != "" {
+		t.Fatalf("muzzle + MCP: --tools=%q, want \"\"", got)
 	}
 }
 
@@ -431,7 +390,7 @@ func TestHeadlessToolsEmptyProbeIsRetryable(t *testing.T) {
 	}
 }
 
-// newTestDriver returns a minimal-mode ClaudeDriver with the headless tool
+// newTestDriver returns a ClaudeDriver with the headless tool
 // probe pre-seeded, so buildArgs() in unit tests is deterministic and never
 // spawns the real claude binary. Tests that care about the nil-tools probe
 // resolution seed their own cache instead.
@@ -441,7 +400,7 @@ func newTestDriver() *ClaudeDriver {
 	return d
 }
 
-// TestClaudeArgsAllowedTools pins the AllowedTools semantics in minimal mode:
+// TestClaudeArgsAllowedTools pins the AllowedTools semantics:
 // nil → the binary's probed headless-safe set; empty slice → no tools at all
 // (--tools ""); non-empty → exact list; nil with an unavailable probe → the
 // CLI's own "default" set (no hand-maintained Go fallback).
@@ -489,7 +448,7 @@ func TestClaudeArgsAllowedTools(t *testing.T) {
 	}
 }
 
-// TestClaudeArgsSettingSources pins minimal-mode --setting-sources: empty
+// TestClaudeArgsSettingSources pins --setting-sources: empty
 // request → "user" default; an explicit list is comma-joined.
 func TestClaudeArgsSettingSources(t *testing.T) {
 	d := newTestDriver()

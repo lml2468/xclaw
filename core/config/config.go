@@ -74,22 +74,12 @@ type AgentConfig struct {
 	// tools that can stay silent for >20 min (e.g. a slow Bash); set lower for
 	// snappy DMs where a stuck turn should surface fast.
 	DispatchTimeoutSec int `json:"dispatchTimeoutSec,omitempty"`
-	// SystemPromptMode picks the ClaudeDriver prompt shape:
-	//   - "minimal" (default): SOUL.md+AGENTS.md REPLACE the built-in
-	//     prompt; cwd .claude/ is not auto-loaded; tool surface is the
-	//     headless whitelist.
-	//   - "claude_code": SOUL.md+AGENTS.md is APPENDED to the built-in
-	//     prompt; cwd .claude/ auto-loads; every tool runs under
-	//     bypassPermissions. Escape hatch for bots whose SOUL was
-	//     authored assuming the built-in preamble.
-	// Empty / invalid → minimal (warn on invalid).
-	SystemPromptMode string `json:"systemPromptMode,omitempty"`
 	// Tools scopes the tool surface the agent may call, per bot and
 	// optionally per channel/DM. Nil = the binary's probed headless-safe
 	// set (the driver default). See ToolPolicy.
 	Tools *ToolPolicy `json:"tools,omitempty"`
-	// SettingSources selects which claude filesystem setting scopes load
-	// (minimal mode only). Allowed values: "user", "project". Empty →
+	// SettingSources selects which claude filesystem setting scopes load.
+	// Allowed values: "user", "project". Empty →
 	// ["user"] (the default: keeps CLAUDE_CONFIG_DIR-based per-bot skills,
 	// drops project/local so a planted CLAUDE.md in the sandbox cwd can't
 	// influence the model). Adding "project" re-enables cwd .claude/ +

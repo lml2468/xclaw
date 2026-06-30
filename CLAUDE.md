@@ -139,11 +139,11 @@ Key invariants to preserve:
   `claude -p - --output-format stream-json --verbose --permission-mode bypassPermissions`,
   feeding the prompt on **stdin** (`-p -`, not an argv element, so a large prompt
   can't hit ARG_MAX — and never inherits the daemon's fd 0, which carries the
-  control-bus cap token; MLT-40). Bypass is mandatory in **both** prompt modes —
+  control-bus cap token; MLT-40). Bypass is mandatory —
   there is no terminal to answer approval prompts, so any other mode auto-denies
   write-class tools or hangs the turn. The tool SURFACE is scoped by `--tools`
   (orthogonal to the permission mode), NOT `--allowedTools` (which is only the
-  auto-approve list under prompt-based modes and doesn't restrict what the model
+  auto-approve list under prompt-based permission modes and doesn't restrict what the model
   sees). The headless-safe default tool set is **probed from the live binary**
   (`ProbeTools` reads the `system/init` line's `tools` array) minus a small
   `interactiveExclusions` denylist — never a hand-maintained Go allowlist (it
@@ -152,8 +152,8 @@ Key invariants to preserve:
   `mcp__*` (the probe runs without `--mcp-config`, so it carries no MCP names —
   without this the servers connect but stay uncallable). Per-bot / per-channel
   whitelists + setting-source scopes flow through `agent.Request` (`AllowedTools`,
-  `SettingSources`); the tool policy applies in **both** prompt modes (a muzzle
-  must hold regardless of mode) and any explicit list is re-filtered against
+  `SettingSources`); the tool policy applies regardless of permission mode (a muzzle
+  must hold always) and any explicit list is re-filtered against
   `interactiveExclusions`. The per-turn tool resolver re-reads `config.json`
   (`config.ToolPolicyFor` → the single `config.ToolPolicy.Resolve`), so a desktop
   edit to `tools.channels` applies on the next turn without a daemon restart —
@@ -168,10 +168,10 @@ Key invariants to preserve:
   stream-json** (one event
   per complete content block) — the driver does NOT request
   `--include-partial-messages`, so there is no token-level delta path or dedup.
-  `--append-system-prompt` (claude_code mode) is re-sent every turn including
+  `--system-prompt` (REPLACE) is re-sent every turn including
   resumes: it does NOT persist across `--resume`, so skipping it would drop the
   non-overridable `SecurityPrefix` + SOUL (its tokens are a prompt-cache hit
-  anyway); minimal mode uses `--system-prompt` (REPLACE) instead. The `result`
+  anyway). The `result`
   line populates `TokenUsage` with cached-input tokens
   (`cache_read_input_tokens`) and `CostUSD` (`total_cost_usd`). Upstream
   rate-limit / overload / usage-cap conditions (HTTP 429/503/529, "usage limit
@@ -235,7 +235,7 @@ store, gateway, driver, group-context, Octo connector, each under `~/.octobuddy/
   self-knowledge lives in SOUL/AGENTS.
 - Each `bots[]` entry is `id` + `octoToken`. `apiUrl` and the whole `agent` block
   (model, gateway URL/token, env, and the capability switches `cron`,
-  `toolProgress`, `inheritUserConfig`, `dispatchTimeoutSec`, `systemPromptMode`,
+  `toolProgress`, `inheritUserConfig`, `dispatchTimeoutSec`,
   `settingSources`, `tools`) are **per-bot only** — there is no top-level `agent`
   default (the `File` struct exposes only `rateLimit`/`context`/`toolset`/`bots`).
   Only `rateLimit` and `context` have top-level defaults a per-bot value

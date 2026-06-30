@@ -35,12 +35,6 @@ export class BotConfig {
     "cron": boolean;
 
     /**
-     * SystemPromptMode mirrors agent.systemPromptMode ("minimal" | "claude_code";
-     * "" = minimal). Editable on the 基础信息 pane.
-     */
-    "systemPromptMode": string;
-
-    /**
      * SettingSources mirrors agent.settingSources (subset of {user, project};
      * empty = ["user"]). Editable on the 基础信息 pane.
      */
@@ -89,9 +83,6 @@ export class BotConfig {
         }
         if (!("cron" in $$source)) {
             this["cron"] = false;
-        }
-        if (!("systemPromptMode" in $$source)) {
-            this["systemPromptMode"] = "";
         }
         if (!("settingSources" in $$source)) {
             this["settingSources"] = [];

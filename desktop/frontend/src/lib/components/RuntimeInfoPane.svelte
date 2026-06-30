@@ -88,24 +88,11 @@
     }
   }
 
-  // --- system-prompt mode (segmented) ---
-  // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
-  // reading bot.* in markup isn't reactive. Mirror the editable agent fields
-  // into local $state (seeded once at mount, like the env `rows`) and commit
-  // back to bot on every change — same approach the env editor uses.
-  let promptMode = $state<string>(bot.systemPromptMode || "minimal");
-  function setPromptMode(mode: string) {
-    promptMode = mode;
-    bot.systemPromptMode = mode === "minimal" ? "" : mode; // "" = default(minimal)
-    ondirty();
-  }
-
   // --- setting sources (user always on; project opt-in with warning) ---
-  // In claude_code mode the driver does NOT pass --setting-sources (the CLI
-  // default user+project+local applies), so this toggle is a no-op there — we
-  // disable it and say so rather than letting the operator think it bites.
+  // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
+  // reading bot.* in markup isn't reactive. Mirror the editable field into local
+  // $state and commit back to bot on change — same approach the env editor uses.
   let projectOn = $state<boolean>((bot.settingSources ?? []).includes("project"));
-  const settingSourcesActive = $derived(promptMode === "minimal");
   function toggleProject() {
     projectOn = !projectOn;
     bot.settingSources = projectOn ? ["user", "project"] : ["user"];
@@ -252,21 +239,10 @@
 
 <div class="pane" oninput={ondirty} onchange={ondirty}>
   <fieldset>
-    <legend>System Prompt 模式</legend>
-    <div class="modeseg">
-      <button type="button" class:active={promptMode === "minimal"} onclick={() => setPromptMode("minimal")}>minimal</button>
-      <button type="button" class:active={promptMode === "claude_code"} onclick={() => setPromptMode("claude_code")}>claude_code</button>
-    </div>
-    <small>minimal（默认）：SOUL+AGENTS <strong>替换</strong>内置提示词。claude_code：<strong>追加</strong>到内置提示词。仅当 SOUL 是按内置提示词编写时才用 claude_code。cwd 下 <code>.claude/</code> 是否加载由下方「配置来源」的 project 决定（claude_code 模式恒为加载）。</small>
-  </fieldset>
-
-  <fieldset>
     <legend>配置来源（Setting Sources）</legend>
     <label class="chk"><input type="checkbox" checked disabled /> user（始终启用：加载 CLAUDE_CONFIG_DIR 下每个 Bot 的技能）</label>
-    <label class="chk"><input type="checkbox" checked={projectOn} disabled={!settingSourcesActive} onchange={toggleProject} /> project（加载沙箱 cwd 的 .claude/ 与 CLAUDE.md）</label>
-    {#if !settingSourcesActive}
-      <small>claude_code 模式使用 CLI 默认配置来源，此处设置不生效（cwd 的 .claude/ 恒为加载）。</small>
-    {:else if projectOn}
+    <label class="chk"><input type="checkbox" checked={projectOn} onchange={toggleProject} /> project（加载沙箱 cwd 的 .claude/ 与 CLAUDE.md）</label>
+    {#if projectOn}
       <small class="warn">⚠️ 开启 project 会加载 Agent 可写的沙箱目录中的指令/技能——群聊中可被不可信用户影响，存在提示词注入风险。仅建议单运营者可信 Bot 开启。</small>
     {/if}
   </fieldset>
@@ -375,10 +351,6 @@
   small.hint { padding-top: 4px; }
   small.warn { color: var(--danger); }
 
-  .modeseg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden; align-self: flex-start; }
-  .modeseg button { padding: 6px 16px; font-size: 12px; font-weight: 550; background: transparent; color: var(--ink-soft); border: none; border-right: 1px solid var(--hairline); }
-  .modeseg button:last-child { border-right: none; }
-  .modeseg button.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-strong, var(--accent)); }
 
   .chk { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
   .chk input { width: auto; }

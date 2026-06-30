@@ -63,7 +63,6 @@ func runBot(ctx context.Context, configPath string, cfg config.Resolved, reg *bo
 	// Phase 1 ships the claude driver only; the agent.Driver seam keeps adding
 	// another (Codex, …) additive to the gateway.
 	drv := agent.NewClaudeDriver("")
-	drv.Mode = resolvePromptMode(cfg.Agent.SystemPromptMode, cfg.BotID)
 	// BinFn runs per Query so a freshly-landed background install
 	// (~/.octobuddy/bin/claude from claudecli) is picked up on the very
 	// next turn — no restart required.
@@ -303,22 +302,6 @@ func existingDir(root, rel string) string {
 		return filepath.Join(root, rel)
 	}
 	return ""
-}
-
-// resolvePromptMode maps the on-disk string to ClaudeDriver's typed
-// PromptMode constant. Unset → minimal. Unknown values warn and default
-// to minimal so a typo can't silently change behavior.
-func resolvePromptMode(raw, botID string) agent.PromptMode {
-	switch raw {
-	case "", string(agent.PromptModeMinimal):
-		return agent.PromptModeMinimal
-	case string(agent.PromptModeClaudeCode):
-		return agent.PromptModeClaudeCode
-	default:
-		clog.For("config").Warn("agent.systemPromptMode unknown; defaulting to minimal",
-			"bot", botID, "got", raw)
-		return agent.PromptModeMinimal
-	}
 }
 
 // resolveClaudeBin returns the desktop-managed binary at

@@ -1,8 +1,8 @@
 // Geometry probe for the BasicInfo per-bot config sections added in E2:
-// System Prompt mode, Setting Sources, tool picker, and the MCP editor. Opens
+// Setting Sources, tool picker, and the MCP editor. Opens
 // SettingsModal in preview mode (mock data, no daemon) and asserts the new
 // fieldsets render, fit their container (no horizontal overflow), and the
-// segmented control + checkboxes are present and tappable. Run with the vite
+// checkboxes are present and tappable. Run with the vite
 // dev server up (npm run dev) on :9245.
 import { chromium } from "playwright-core";
 
@@ -23,14 +23,9 @@ const modal = page.locator(".pane").first();
 check(await modal.count() > 0, "BasicInfo pane rendered");
 
 // New section legends present.
-for (const legend of ["System Prompt 模式", "配置来源", "可用工具", "MCP 服务器"]) {
+for (const legend of ["配置来源", "可用工具", "MCP 服务器"]) {
   check(await page.locator("legend", { hasText: legend }).count() > 0, `section present: ${legend}`);
 }
-
-// Segmented prompt-mode control: two buttons, one active.
-const seg = page.locator(".modeseg button");
-check(await seg.count() === 2, "prompt-mode has 2 segments");
-check(await page.locator(".modeseg button.active").count() === 1, "exactly one prompt-mode active");
 
 // Tool picker: in preview the mock toolset is scoped-off → shows the "限定" button.
 check(await page.locator("button", { hasText: "限定可用工具" }).count() > 0, "tool picker offers scoping");

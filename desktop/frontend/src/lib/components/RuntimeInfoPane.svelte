@@ -88,7 +88,6 @@
     }
   }
 
-  // --- system-prompt mode (segmented) ---
   // bot is a BotConfig class instance, which Svelte does NOT deep-proxy, so
   // reading bot.* in markup isn't reactive. Mirror the editable agent fields
   // into local $state (seeded once at mount, like the env `rows`) and commit

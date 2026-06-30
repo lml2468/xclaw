@@ -143,7 +143,7 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 	if d.MCPConfigFn != nil {
 		mcpPath = d.MCPConfigFn()
 	}
-	args = d.appendMinimalModeArgs(args, req, mcpPath != "")
+	args = d.appendHeadlessArgs(args, req, mcpPath != "")
 	// Pin auto-memory to the per-session dir. --settings MERGES into the
 	// defaults (does not replace), so project-scope skill discovery still
 	// works. JSON-encode so a path with special chars can't break the flag.
@@ -168,22 +168,22 @@ func (d *ClaudeDriver) buildArgs(req Request) []string {
 	return args
 }
 
-// appendMinimalModeArgs emits the SDK-aligned flag set: replace the
+// appendHeadlessArgs emits the SDK-aligned flag set: replace the
 // system prompt, silence project/local config so a planted CLAUDE.md /
 // skills / agents under the sandbox cwd can't influence the model,
 // keep user-scope so per-bot skills under CLAUDE_CONFIG_DIR still load,
 // restrict the tool SURFACE via --tools (not --allowedTools, which is
-// the auto-approve list under prompt-based modes and does not actually
+// the auto-approve list under prompt-based permission modes and does not actually
 // scope what the model can see — confirmed against claude 2.1.187).
 //
-// Permission mode is bypassPermissions even in minimal mode: headless
+// Permission mode is bypassPermissions: headless
 // `-p` has no TTY to answer approval prompts and we pass no --allowedTools
 // auto-approve list, so under --permission-mode default (or any
 // prompt-based mode) the CLI auto-denies — or hangs on — every
 // write-class tool (Bash/Write/Edit), silently breaking the turn. The
 // tool SURFACE is scoped by --tools, which is orthogonal to the
 // permission mode, so capability restriction is unaffected.
-func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request, mcpActive bool) []string {
+func (d *ClaudeDriver) appendHeadlessArgs(args []string, req Request, mcpActive bool) []string {
 	args = append(args, "--permission-mode", "bypassPermissions")
 	// =user keeps CLAUDE_CONFIG_DIR-based skill discovery alive while
 	// dropping project (cwd .claude/) and local (cwd .claude.local) so a
@@ -195,7 +195,7 @@ func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request, mcpActi
 		sources = []string{"user"}
 	}
 	args = append(args, "--setting-sources="+strings.Join(sources, ","))
-	// Always emit --system-prompt in minimal mode (even with an empty
+	// Always emit --system-prompt (even with an empty
 	// value) so a missing prompt is loud, not a silent fallback to
 	// claude's built-in default that would drop SecurityPrefix.
 	args = append(args, "--system-prompt", req.System.Flatten())
@@ -246,7 +246,7 @@ func (d *ClaudeDriver) appendMinimalModeArgs(args []string, req Request, mcpActi
 // can actually call its configured servers (ProbeTools runs without
 // --mcp-config, so the probed set never carries mcp__* names). It is applied
 // ONLY to the nil-policy default — never to an explicit operator whitelist,
-// where mcp__* admission is the operator's decision (see appendMinimalModeArgs).
+// where mcp__* admission is the operator's decision (see appendHeadlessArgs).
 // No-op when mcp is inactive or the list already has
 // an mcp__* glob. Returns a fresh slice; does not mutate the input.
 func withMCPWildcard(tools []string, mcpActive bool) []string {

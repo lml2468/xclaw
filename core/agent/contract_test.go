@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// systemPromptValue returns the value the driver emitted for --system-prompt.
-func systemPromptValue(args []string) (string, bool) {
-	for i, a := range args {
-		if a == "--system-prompt" && i+1 < len(args) {
-			return args[i+1], true
-		}
-	}
-	return "", false
-}
-
 // contractDriver is one driver configuration under test. Each builds a turn's
 // argv from a Request and exposes the system-prompt value it produced. Adding a
 // second driver (Codex/Gemini) is a one-line append here — the contract assertion
@@ -57,7 +47,7 @@ func TestDriverHonorsMandatoryPrefix(t *testing.T) {
 	for _, cd := range contractDrivers() {
 		t.Run(cd.name, func(t *testing.T) {
 			args := cd.newAgent().buildArgs(req)
-			sp, ok := systemPromptValue(args)
+			sp, ok := systemPromptArg(args)
 			if !ok {
 				t.Fatalf("%s: no system-prompt flag emitted: %v", cd.name, args)
 			}
@@ -87,7 +77,7 @@ func TestDriverMandatoryNotDisplacedByEmptyPersona(t *testing.T) {
 	for _, cd := range contractDrivers() {
 		t.Run(cd.name, func(t *testing.T) {
 			args := cd.newAgent().buildArgs(req)
-			sp, ok := systemPromptValue(args)
+			sp, ok := systemPromptArg(args)
 			if !ok {
 				t.Fatalf("%s: no system-prompt flag emitted: %v", cd.name, args)
 			}
